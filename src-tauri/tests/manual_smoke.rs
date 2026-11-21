@@ -18,7 +18,12 @@ fn capture_and_ocr_smoke() {
     let region = std::env::var("LANGCEPTION_SMOKE_REGION")
         .ok()
         .and_then(|text| parse_region(&text))
-        .unwrap_or(Region { x: 0, y: 0, width: 800, height: 300 });
+        .unwrap_or(Region {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 300,
+        });
 
     let capture = langception::capture::GdiCaptureSource::new();
     let image = tokio::runtime::Runtime::new()
@@ -32,13 +37,23 @@ fn capture_and_ocr_smoke() {
         (region.width * region.height * 4) as usize
     );
     println!("captured {}x{} BGRA OK", image.width, image.height);
+    // LANGCEPTION_SMOKE_DUMP=path writes the raw BGRA frame for inspection
+    // (raw width*height*4 bytes, top-down); convert e.g. with PIL:
+    // Image.frombuffer("RGBA", (w, h), data, "raw", "BGRA").save(path)
+    if let Ok(dump) = std::env::var("LANGCEPTION_SMOKE_DUMP") {
+        std::fs::write(&dump, &image.bgra).expect("should write the capture dump");
+        println!("dumped {} bytes to {}", image.bgra.len(), dump);
+    }
 
     let ocr = langception::ocr::WindowsOcrEngine::new(SourceLanguage::En);
     let blocks = tokio::runtime::Runtime::new()
         .unwrap()
         .block_on(ocr.recognize(&image, SourceLanguage::En))
         .expect("Windows OCR should run with an installed English pack");
-    println!("OCR blocks: {} (0 is fine — depends what is on screen)", blocks.len());
+    println!(
+        "OCR blocks: {} (0 is fine — depends what is on screen)",
+        blocks.len()
+    );
     for block in &blocks {
         println!("  {:?} at {},{}", block.text, block.x, block.y);
     }

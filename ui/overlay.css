@@ -1,0 +1,38 @@
+/* Langception In-place Overlay — transparent page over the whole monitor.
+   Blocks are absolutely positioned divs; the window itself is click-through
+   (set_ignore_cursor_events), and pointer-events:none is belt & braces. */
+
+/* Bundled Noto Sans Thai (SIL OFL 1.1, see fonts/LICENSE.txt) so Thai
+   glyphs always render; served from the app's own files, no network. */
+@font-face {
+  font-family: "Noto Sans Thai";
+  src: url("fonts/NotoSansThai-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+html,
+body {
+  background: transparent;
+  overflow: hidden;
+}
+
+body {
+  pointer-events: none;
+  user-select: none;
+  cursor: none;
+}
+
+.overlay-block {
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  max-width: 300px;
+  line-height: 1.3;
+  font-weight: 400;
+  /* Outline paints before the fill so wide strokes never eat the glyphs
+     (Chromium/WebView2 supports paint-order on HTML text). */
+  paint-order: stroke fill;
+  -webkit-text-stroke-width: 2px;
+}

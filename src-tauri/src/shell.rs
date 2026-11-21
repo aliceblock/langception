@@ -1,14 +1,15 @@
 //! The Tauri shell: tray-first control, global hotkeys (rebindable via
-//! config), the Capture Zone picker overlay (Alt+Z / Alt+Q), the Results
-//! Window event bridge, and the config file lifecycle. Thin adapter —
-//! exercised by the manual smoke checklist.
+//! config), the Capture Zone picker overlay (Alt+Z / Alt+Q), the per-monitor
+//! In-place Overlay (ticket 03), the Results Window event bridge, and the
+//! config file lifecycle. Thin adapter — exercised by the manual smoke
+//! checklist.
 
-use langception_core::config::{AppConfig, HotkeySettings};
+use langception_core::config::{AppConfig, HotkeySettings, TextStyle};
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
-use langception_core::orchestrator::{LoopConfig, Orchestrator, SystemClock};
+use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, SystemClock};
 use langception_core::ports::{Region, Zone, TARGET_LANGUAGE};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -48,6 +49,7 @@ pub struct Status {
     pub cadence_ms: u32,
     pub glossary_terms: usize,
     pub hotkeys: HotkeyStatus,
+    pub text_style: TextStyleDto,
     pub target_language: &'static str,
     pub config_path: String,
 }
@@ -67,6 +69,54 @@ pub struct HotkeyStatus {
     pub new_zone: String,
     pub pause: String,
     pub one_shot: String,
+}
+
+/// The overlay's text style, as the settings surface reads and writes it
+/// (camelCase JSON). The config file keeps its own snake_case TOML shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextStyleDto {
+    pub font_family: String,
+    pub font_size: f32,
+    pub color: String,
+    pub outline_width: f32,
+    pub outline_color: String,
+    pub background: bool,
+    pub background_opacity: f32,
+}
+
+impl From<&TextStyle> for TextStyleDto {
+    fn from(style: &TextStyle) -> Self {
+        Self {
+            font_family: style.font_family.clone(),
+            font_size: style.font_size,
+            color: style.color.clone(),
+            outline_width: style.outline_width,
+            outline_color: style.outline_color.clone(),
+            background: style.background,
+            background_opacity: style.background_opacity,
+        }
+    }
+}
+
+impl From<TextStyleDto> for TextStyle {
+    fn from(dto: TextStyleDto) -> Self {
+        Self {
+            font_family: dto.font_family,
+            font_size: dto.font_size,
+            color: dto.color,
+            outline_width: dto.outline_width,
+            outline_color: dto.outline_color,
+            background: dto.background,
+            background_opacity: dto.background_opacity,
+        }
+    }
+}
+
+impl Default for TextStyleDto {
+    fn default() -> Self {
+        Self::from(&TextStyle::default())
+    }
 }
 
 impl Default for HotkeyStatus {
@@ -146,7 +196,9 @@ pub fn run() {
             open_zone_picker,
             get_picker_mode,
             commit_zone_drag,
-            cancel_zone_drag
+            cancel_zone_drag,
+            get_text_style,
+            set_text_style
         ])
         .on_window_event(|window, event| {
             // The picker overlay is ephemeral; however it dies, the session
@@ -248,7 +300,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     // Tray menu events are handled here only (not via Builder::on_menu_event)
     // so each item fires exactly once.
     let tray = TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().expect("bundled window icon").clone())
+        .icon(
+            app.default_window_icon()
+                .expect("bundled window icon")
+                .clone(),
+        )
         .tooltip("Langception — stopped")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -426,7 +482,7 @@ fn status_for(app: &AppHandle) -> Status {
     let config_path = state.config_path.display().to_string();
 
     let default_hotkeys = HotkeyStatus::default();
-    let (config_error, language, zones, cadence_ms, glossary_terms, hotkeys) =
+    let (config_error, language, zones, cadence_ms, glossary_terms, hotkeys, text_style) =
         match &*state.config.lock().unwrap() {
             Some(Ok(config)) => (
                 None,
@@ -451,6 +507,7 @@ fn status_for(app: &AppHandle) -> Status {
                     pause: config.hotkeys.pause_translation.clone(),
                     one_shot: config.hotkeys.one_shot_capture.clone(),
                 },
+                TextStyleDto::from(&config.text_style),
             ),
             Some(Err(message)) => (
                 Some(message.clone()),
@@ -459,6 +516,7 @@ fn status_for(app: &AppHandle) -> Status {
                 0,
                 0,
                 default_hotkeys,
+                TextStyleDto::default(),
             ),
             None => (
                 Some("config not loaded yet".into()),
@@ -467,6 +525,7 @@ fn status_for(app: &AppHandle) -> Status {
                 0,
                 0,
                 default_hotkeys,
+                TextStyleDto::default(),
             ),
         };
 
@@ -480,6 +539,7 @@ fn status_for(app: &AppHandle) -> Status {
         cadence_ms,
         glossary_terms,
         hotkeys,
+        text_style,
         target_language: TARGET_LANGUAGE,
         config_path,
     }
@@ -511,18 +571,44 @@ fn build_pipeline(config: &AppConfig) -> Result<Pipeline, String> {
     })
 }
 
-/// Bridges orchestrator events to the Results Window. Exits on its own when
-/// the last event sender drops (loop stopped, or a one-shot pass finished).
+/// Bridges orchestrator events to the display layer: the Results Window
+/// (translations + errors) and the In-place Overlay (zone translations in
+/// place, routed per monitor). Exits on its own when the last event sender
+/// drops (loop stopped, or a one-shot pass finished).
 fn spawn_forwarder(
     app: &AppHandle,
-    mut events_rx: mpsc::UnboundedReceiver<langception_core::orchestrator::LoopEvent>,
+    mut events_rx: mpsc::UnboundedReceiver<LoopEvent>,
+    overlays: Vec<(String, Monitor)>,
 ) -> tauri::async_runtime::JoinHandle<()> {
     let bridge_app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let mut router = crate::overlay::OverlayRouter::new(overlays);
         while let Some(event) = events_rx.recv().await {
-            if let Some(window) = bridge_app.get_webview_window("results") {
-                // Window temporarily unavailable (user hid it): keep the loop.
-                let _ = window.emit("loop-event", &event);
+            match &event {
+                LoopEvent::Translated {
+                    key,
+                    block,
+                    translation,
+                    origin,
+                    ..
+                } => {
+                    router.show_translation(&bridge_app, origin, key, block, translation);
+                }
+                LoopEvent::BlocksRemoved { origin, keys, .. } => {
+                    router.hide_blocks(&bridge_app, origin, keys);
+                }
+                LoopEvent::Error { .. } => {}
+            }
+            // The overlay handles its own events; the Results Window is a
+            // history log and does not care about removals.
+            if matches!(
+                event,
+                LoopEvent::Translated { .. } | LoopEvent::Error { .. }
+            ) {
+                if let Some(window) = bridge_app.get_webview_window("results") {
+                    // Window temporarily unavailable (user hid it): keep the loop.
+                    let _ = window.emit("loop-event", &event);
+                }
             }
         }
     })
@@ -558,6 +644,17 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     let pipeline = build_pipeline(&config)?;
     let (events_tx, events_rx) = mpsc::unbounded_channel();
 
+    // Per-monitor overlays show the translations in place. Creation failure
+    // never stops the loop: the Results Window still works, and the warning
+    // stays visible.
+    let overlays = match crate::overlay::ensure_overlays(app) {
+        Ok(overlays) => overlays,
+        Err(message) => {
+            push_warning(&state, format!("In-place Overlay unavailable: {message}"));
+            Vec::new()
+        }
+    };
+
     let orchestrator = Orchestrator::new(
         pipeline.capture,
         pipeline.ocr,
@@ -570,7 +667,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         events_tx,
     );
     let orchestrator_task = tauri::async_runtime::spawn(orchestrator.run());
-    let forwarder_task = spawn_forwarder(app, events_rx);
+    let forwarder_task = spawn_forwarder(app, events_rx, overlays);
 
     *running = Some(RunningLoop {
         orchestrator: orchestrator_task,
@@ -591,16 +688,22 @@ fn stop_loop(app: &AppHandle) {
     // Pause is a sub-state of running: stopping clears it.
     *state.paused.lock().unwrap() = false;
     let _ = state.paused_tx.send(false);
+    // Nothing new is translated and stale Thai must not linger on screen.
+    crate::overlay::clear_and_hide(app);
     apply_state(app);
 }
 
+/// Adds a warning unless the exact same one is already shown (start/stop
+/// cycles must not pile up duplicates).
+fn push_warning(state: &AppState, message: String) {
+    let mut warnings = state.warnings.lock().unwrap();
+    if !warnings.iter().any(|w| w == &message) {
+        warnings.push(message);
+    }
+}
+
 fn toggle_translation(app: &AppHandle) -> Result<(), String> {
-    let running = app
-        .state::<AppState>()
-        .running
-        .lock()
-        .unwrap()
-        .is_some();
+    let running = app.state::<AppState>().running.lock().unwrap().is_some();
     if running {
         stop_loop(app);
         Ok(())
@@ -641,34 +744,36 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
         return Ok(());
     }
 
+    // The dim + selection must not fight with already-rendered translations.
+    crate::overlay::hide_all(app);
+
     let monitor = primary_monitor(app)?;
     let size = monitor.size();
     let origin = monitor.position();
 
     *app.state::<AppState>().picker_mode.lock().unwrap() = Some(mode);
 
-    let window = WebviewWindowBuilder::new(
-        app,
-        PICKER_LABEL,
-        WebviewUrl::App("picker.html".into()),
-    )
-    .title("Langception — Capture Zone")
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .resizable(false)
-    .maximizable(false)
-    .minimizable(false)
-    .visible(false)
-    .build()
-    .map_err(|e| {
-        *app.state::<AppState>().picker_mode.lock().unwrap() = None;
-        format!("cannot open the capture overlay: {e}")
-    })?;
+    let window =
+        WebviewWindowBuilder::new(app, PICKER_LABEL, WebviewUrl::App("picker.html".into()))
+            .title("Langception — Capture Zone")
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .maximizable(false)
+            .minimizable(false)
+            .visible(false)
+            .build()
+            .map_err(|e| {
+                *app.state::<AppState>().picker_mode.lock().unwrap() = None;
+                format!("cannot open the capture overlay: {e}")
+            })?;
 
     window
-        .set_position(Position::Physical(PhysicalPosition::new(origin.x, origin.y)))
+        .set_position(Position::Physical(PhysicalPosition::new(
+            origin.x, origin.y,
+        )))
         .map_err(|e| format!("cannot place the capture overlay: {e}"))?;
     window
         .set_size(Size::Physical(PhysicalSize::new(size.width, size.height)))
@@ -684,6 +789,10 @@ fn close_picker(app: &AppHandle) {
     *app.state::<AppState>().picker_mode.lock().unwrap() = None;
     if let Some(window) = app.get_webview_window(PICKER_LABEL) {
         let _ = window.destroy();
+    }
+    // Back to in-place translations (only meaningful while the loop runs).
+    if app.state::<AppState>().running.lock().unwrap().is_some() {
+        crate::overlay::show_all(app);
     }
 }
 
@@ -708,11 +817,8 @@ fn region_from_css(monitor: &Monitor, x: i32, y: i32, width: i32, height: i32) -
 }
 
 fn save_config(config: &AppConfig, path: &Path) -> Result<(), String> {
-    let text = config
-        .to_toml_string()
-        .map_err(|e| e.to_string())?;
-    std::fs::write(path, text)
-        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+    let text = config.to_toml_string().map_err(|e| e.to_string())?;
+    std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }
 
 /// The next free "Zone N" name (existing names win, so deletes never cause
@@ -816,6 +922,8 @@ fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
         Ok(())
     })?;
     let _ = state.zones_tx.send(zones);
+    // Its translations must not linger on the overlay either.
+    crate::overlay::clear_zone(&app, &id);
     apply_state(&app);
     Ok(())
 }
@@ -882,7 +990,9 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
             // translation (matches the tray's Start).
             if state.running.lock().unwrap().is_none() {
                 if let Err(e) = start_loop(&app) {
-                    state.warnings.lock().unwrap().push(format!("failed to start translation after creating a zone: {e}"));
+                    state.warnings.lock().unwrap().push(format!(
+                        "failed to start translation after creating a zone: {e}"
+                    ));
                 }
             }
             apply_state(&app);
@@ -908,6 +1018,33 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
 #[tauri::command]
 fn cancel_zone_drag(app: AppHandle) {
     close_picker(&app)
+}
+
+/// The overlay page pulls the current style once on load (the push path is
+/// `overlay-style` events). A broken config still yields usable defaults —
+/// the overlay must never go blank because of config trouble.
+#[tauri::command]
+fn get_text_style(app: AppHandle) -> TextStyleDto {
+    match &*app.state::<AppState>().config.lock().unwrap() {
+        Some(Ok(config)) => TextStyleDto::from(&config.text_style),
+        _ => TextStyleDto::default(),
+    }
+}
+
+/// The Results Window's Text Style panel persists a new style and pushes it
+/// to the overlays live. Pre-validated against core's rules so a rejected
+/// edit never lands in the in-memory config (same pattern as rename_zone).
+#[tauri::command]
+fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
+    let text_style = TextStyle::from(style);
+    text_style.validate().map_err(|e| e.to_string())?;
+    with_config_mut(&app, |config| {
+        config.text_style = text_style.clone();
+        Ok(())
+    })?;
+    crate::overlay::broadcast_style(&app, &text_style);
+    apply_state(&app);
+    Ok(())
 }
 
 /// One OCR+translate pass into the Results Window, independent of the
@@ -936,5 +1073,7 @@ fn run_one_shot(app: &AppHandle, pipeline: Pipeline, region: Region) {
         orchestrator.capture_once(region).await;
         // events_tx drops with the orchestrator: the forwarder drains and exits.
     });
-    spawn_forwarder(app, events_rx);
+    // One-shot events never reach the overlay (Results Window only), so the
+    // forwarder needs no overlay list.
+    spawn_forwarder(app, events_rx, Vec::new());
 }

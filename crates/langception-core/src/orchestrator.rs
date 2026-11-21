@@ -13,7 +13,7 @@ use crate::ports::{
 };
 use async_trait::async_trait;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -46,16 +46,28 @@ pub enum EventOrigin {
     OneShot,
 }
 
-/// Everything the Results Window needs, streamed per pipeline tick.
+/// Everything the display layer needs, streamed per pipeline tick.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LoopEvent {
     Translated {
+        /// The block's display identity ([`block_key_string`]) so the
+        /// In-place Overlay can update its element in place instead of
+        /// recreating it. Ignored by the Results Window.
+        key: String,
         block: TextBlock,
         translation: String,
         via: Via,
         at_ms: u64,
         origin: EventOrigin,
+    },
+    /// Text Blocks that vanished from a region's latest pass: the overlay
+    /// clears their translations (stale text must not linger on screen
+    /// after the source text is gone). Keys match [`LoopEvent::Translated`].
+    BlocksRemoved {
+        origin: EventOrigin,
+        keys: Vec<String>,
+        at_ms: u64,
     },
     Error {
         stage: Stage,
@@ -78,8 +90,19 @@ pub struct LoopConfig {
 /// this text-hash dedup with per-block image hashing.
 const BLOCK_GRID_PX: i32 = 4;
 
+/// How many consecutive OCR passes must miss a block before it counts as
+/// removed from the screen (Windows OCR flakiness guard; see `misses`).
+const REMOVAL_MISSES: u32 = 2;
+
 fn block_key(block: &TextBlock) -> (i32, i32) {
     (block.x / BLOCK_GRID_PX, block.y / BLOCK_GRID_PX)
+}
+
+/// A block's identity for the display layer, shared by
+/// [`LoopEvent::Translated`] and [`LoopEvent::BlocksRemoved`].
+fn block_key_string(block: &TextBlock) -> String {
+    let (gx, gy) = block_key(block);
+    format!("{gx},{gy}")
 }
 
 /// Runs the Auto-translate loop against injected ports and streams
@@ -99,6 +122,12 @@ pub struct Orchestrator {
     /// dead engine is not hammered every tick (retried when the text changes
     /// or the zone is redrawn). State for removed zones is pruned per tick.
     translated: HashMap<String, HashMap<(i32, i32), String>>,
+    /// Zone id → block keys that vanished from the latest pass, with how
+    /// many consecutive passes have missed them. Windows OCR intermittently
+    /// returns empty results on a healthy image, so a block is only reported
+    /// as removed ([`LoopEvent::BlocksRemoved`]) after TWO consecutive
+    /// misses — a one-tick glitch must not clear a visible translation.
+    misses: HashMap<String, HashMap<(i32, i32), u32>>,
 }
 
 impl Orchestrator {
@@ -124,6 +153,7 @@ impl Orchestrator {
             paused_rx,
             events,
             translated: HashMap::new(),
+            misses: HashMap::new(),
         }
     }
 
@@ -135,6 +165,7 @@ impl Orchestrator {
         let zones = self.zones_rx.borrow().clone();
         if zones.is_empty() {
             self.translated.clear(); // no zones → no state worth keeping
+            self.misses.clear();
             return;
         }
         for zone in &zones {
@@ -143,14 +174,25 @@ impl Orchestrator {
                 id: zone.id.clone(),
                 name: zone.name.clone(),
             };
-            let state = self
-                .process_region(&zone.region, state, origin, &format!("zone \"{}\"", zone.name))
+            let misses = self.misses.remove(&zone.id).unwrap_or_default();
+            let (state, misses) = self
+                .process_region(
+                    &zone.region,
+                    state,
+                    misses,
+                    origin,
+                    &format!("zone \"{}\"", zone.name),
+                )
                 .await;
             self.translated.insert(zone.id.clone(), state);
+            self.misses.insert(zone.id.clone(), misses);
         }
         // Drop tracking state of zones that no longer exist, so a redrawn
         // zone (same id pattern, new id) starts fresh.
-        self.translated.retain(|id, _| zones.iter().any(|z| &z.id == id));
+        self.translated
+            .retain(|id, _| zones.iter().any(|z| &z.id == id));
+        self.misses
+            .retain(|id, _| zones.iter().any(|z| &z.id == id));
     }
 
     /// One OCR+translate pass over `region` — the One-shot Capture: events
@@ -158,42 +200,56 @@ impl Orchestrator {
     /// retained, and the running loop's state is untouched.
     pub async fn capture_once(&self, region: Region) {
         let _ = self
-            .process_region(&region, HashMap::new(), EventOrigin::OneShot, "One-shot capture")
+            .process_region(
+                &region,
+                HashMap::new(),
+                HashMap::new(),
+                EventOrigin::OneShot,
+                "One-shot capture",
+            )
             .await;
     }
 
     /// The pipeline for one screen region. `state` is the region's block-key
-    /// → last-text map (empty for a fresh region); the updated map is
-    /// returned. `label` names the region in error events.
+    /// → last-text map and `misses` its consecutive-miss counts (both empty
+    /// for a fresh region); the updated pair is returned. `label` names the
+    /// region in error events.
     async fn process_region(
         &self,
         region: &Region,
         mut state: HashMap<(i32, i32), String>,
+        mut misses: HashMap<(i32, i32), u32>,
         origin: EventOrigin,
         label: &str,
-    ) -> HashMap<(i32, i32), String> {
+    ) -> (HashMap<(i32, i32), String>, HashMap<(i32, i32), u32>) {
         let image = match self.capture.capture(*region).await {
             Ok(image) => image,
             Err(e) => {
                 self.emit(Stage::Capture, format!("{label}: {e}"));
-                return state;
+                return (state, misses);
             }
         };
 
-        let blocks = match self.ocr.recognize(&image, self.config.source_language).await {
+        let blocks = match self
+            .ocr
+            .recognize(&image, self.config.source_language)
+            .await
+        {
             Ok(blocks) => blocks,
             Err(e) => {
                 self.emit(Stage::Ocr, format!("{label}: {e}"));
-                return state;
+                return (state, misses);
             }
         };
 
+        let mut seen: HashSet<(i32, i32)> = HashSet::new();
         for block in blocks {
             let text = block.text.trim().to_string();
             if text.is_empty() {
                 continue;
             }
             let key = block_key(&block);
+            seen.insert(key);
             if state.get(&key).is_some_and(|last| *last == text) {
                 continue; // unchanged block: never re-translate
             }
@@ -225,6 +281,10 @@ impl Orchestrator {
                 Ok((translation, via)) => {
                     self.events
                         .send(LoopEvent::Translated {
+                            // The region-relative key, exactly what the
+                            // dedup state and BlocksRemoved use — the
+                            // overlay's element identity must match both.
+                            key: block_key_string(&block),
                             block: screen_block,
                             translation,
                             via,
@@ -237,7 +297,41 @@ impl Orchestrator {
             }
             state.insert(key, text);
         }
-        state
+
+        // Blocks seen before but not in this pass are candidates for removal
+        // (gone from the screen). Only computed after a successful OCR pass
+        // — a failed capture/OCR keeps whatever was last seen (nothing
+        // provably disappeared). Two consecutive passes must miss a block
+        // before it is reported: Windows OCR intermittently returns empty
+        // results on a healthy image, and a one-tick glitch must not clear
+        // a visible translation.
+        // Keys that came back lose their miss count; still-missing keys keep counting.
+        misses.retain(|key, _| !seen.contains(key));
+        let mut gone: Vec<(i32, i32)> = Vec::new();
+        for key in state.keys() {
+            if seen.contains(key) {
+                continue;
+            }
+            let count = misses.entry(*key).or_insert(0);
+            *count += 1;
+            if *count >= REMOVAL_MISSES {
+                gone.push(*key);
+            }
+        }
+        let removed: Vec<String> = gone.iter().map(|&(gx, gy)| format!("{gx},{gy}")).collect();
+        for key in &gone {
+            misses.remove(key);
+        }
+        if !removed.is_empty() {
+            self.events
+                .send(LoopEvent::BlocksRemoved {
+                    origin,
+                    keys: removed,
+                    at_ms: self.clock.now_ms(),
+                })
+                .ok();
+        }
+        (state, misses)
     }
 
     /// Runs the loop forever, pacing ticks with the clock and holding still

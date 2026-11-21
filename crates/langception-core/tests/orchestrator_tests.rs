@@ -5,7 +5,9 @@
 
 use async_trait::async_trait;
 use langception_core::glossary::Glossary;
-use langception_core::orchestrator::{EventOrigin, LoopConfig, LoopEvent, Orchestrator, Stage, Via};
+use langception_core::orchestrator::{
+    EventOrigin, LoopConfig, LoopEvent, Orchestrator, Stage, Via,
+};
 use langception_core::ports::{
     CaptureError, CaptureSource, CapturedImage, Clock, OcrEngine, OcrError, Region, SourceLanguage,
     TextBlock, TranslateEngine, TranslateError, Zone,
@@ -92,7 +94,12 @@ struct FakeOcr {
 impl FakeOcr {
     fn new() -> (mpsc::Sender<Result<Vec<TextBlock>, OcrError>>, Self) {
         let (tx, rx) = mpsc::channel(16);
-        (tx, Self { results: AsyncMutex::new(rx) })
+        (
+            tx,
+            Self {
+                results: AsyncMutex::new(rx),
+            },
+        )
     }
 }
 
@@ -286,12 +293,20 @@ async fn changed_text_translates_exactly_once_per_change() {
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Hello"]);
     match next_event(&mut h.events).await {
-        LoopEvent::Translated { translation, via, origin, .. } => {
+        LoopEvent::Translated {
+            translation,
+            via,
+            origin,
+            ..
+        } => {
             assert_eq!(translation, "[TH] Hello");
             assert_eq!(via, Via::Engine);
             assert_eq!(
                 origin,
-                EventOrigin::Zone { id: "z1".into(), name: "Zone 1".into() }
+                EventOrigin::Zone {
+                    id: "z1".into(),
+                    name: "Zone 1".into()
+                }
             );
         }
         other => panic!("expected Translated, got {other:?}"),
@@ -323,13 +338,23 @@ async fn blocks_are_tracked_independently() {
     let (h, mut orch) = harness().await;
 
     // Two blocks, both translated.
-    feed_tick(&h, 1, vec![block(100, 200, "Alpha"), block(100, 500, "Beta")]).await;
+    feed_tick(
+        &h,
+        1,
+        vec![block(100, 200, "Alpha"), block(100, 500, "Beta")],
+    )
+    .await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Alpha", "Beta"]);
 
     // Only the first block changed → only it is re-translated. Its position
     // also moved 2px, inside the quantization grid, so it is the same block.
-    feed_tick(&h, 1, vec![block(102, 200, "Alpha Prime"), block(100, 500, "Beta")]).await;
+    feed_tick(
+        &h,
+        1,
+        vec![block(102, 200, "Alpha Prime"), block(100, 500, "Beta")],
+    )
+    .await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Alpha", "Beta", "Alpha Prime"]);
 }
@@ -340,15 +365,37 @@ async fn zones_are_tracked_independently() {
     set_zones(
         &h,
         vec![
-            zone("z1", "Left", Region { x: 0, y: 0, width: 200, height: 100 }),
-            zone("z2", "Right", Region { x: 400, y: 0, width: 200, height: 100 }),
+            zone(
+                "z1",
+                "Left",
+                Region {
+                    x: 0,
+                    y: 0,
+                    width: 200,
+                    height: 100,
+                },
+            ),
+            zone(
+                "z2",
+                "Right",
+                Region {
+                    x: 400,
+                    y: 0,
+                    width: 200,
+                    height: 100,
+                },
+            ),
         ],
     );
 
     // Both zones OCR the same text at the same region-relative position.
     feed_tick(&h, 2, vec![block(10, 10, "Hello")]).await;
     orch.tick().await;
-    assert_eq!(h.translate.calls(), ["Hello", "Hello"], "each zone translates its own blocks");
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello", "Hello"],
+        "each zone translates its own blocks"
+    );
     let _ = next_event(&mut h.events).await; // drain tick 1's two events
     let _ = next_event(&mut h.events).await;
 
@@ -377,14 +424,29 @@ async fn zone_added_later_translates_while_existing_zones_keep_dedup() {
         &h,
         vec![
             zone("z1", "Zone 1", REGION),
-            zone("z2", "Zone 2", Region { x: 800, y: 0, width: 200, height: 100 }),
+            zone(
+                "z2",
+                "Zone 2",
+                Region {
+                    x: 800,
+                    y: 0,
+                    width: 200,
+                    height: 100,
+                },
+            ),
         ],
     );
     // Zone 1 sees the same text (must stay deduped); zone 2 sees new text.
     h.images.send(image()).await.unwrap();
-    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    h.ocr_results
+        .send(Ok(vec![block(0, 0, "Hello")]))
+        .await
+        .unwrap();
     h.images.send(image()).await.unwrap();
-    h.ocr_results.send(Ok(vec![block(0, 0, "World")])).await.unwrap();
+    h.ocr_results
+        .send(Ok(vec![block(0, 0, "World")]))
+        .await
+        .unwrap();
     orch.tick().await;
 
     assert_eq!(h.translate.calls(), ["Hello", "World"]);
@@ -434,13 +496,24 @@ async fn paused_loop_skips_ticks_and_keeps_dedup_across_pause() {
     h.clock.release_tick();
     h.clock.release_tick();
     tokio::time::sleep(Duration::from_millis(150)).await;
-    assert_eq!(*h.capture_calls.lock().unwrap(), 0, "paused loop must not capture");
+    assert_eq!(
+        *h.capture_calls.lock().unwrap(),
+        0,
+        "paused loop must not capture"
+    );
 
     // Resume: the queued image/OCR is consumed by the first tick.
     h.paused_tx.send(false).unwrap();
     h.images.send(image()).await.unwrap();
-    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
-    wait_until(|| h.translate.calls() == ["Hello"], "translated after resume").await;
+    h.ocr_results
+        .send(Ok(vec![block(0, 0, "Hello")]))
+        .await
+        .unwrap();
+    wait_until(
+        || h.translate.calls() == ["Hello"],
+        "translated after resume",
+    )
+    .await;
 
     // Pause again, release the loop into the pause, then resume: unchanged
     // text is still deduped (pause never resets tracking state).
@@ -448,7 +521,10 @@ async fn paused_loop_skips_ticks_and_keeps_dedup_across_pause() {
     h.clock.release_tick();
     tokio::time::sleep(Duration::from_millis(150)).await;
     h.images.send(image()).await.unwrap();
-    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    h.ocr_results
+        .send(Ok(vec![block(0, 0, "Hello")]))
+        .await
+        .unwrap();
     h.paused_tx.send(false).unwrap();
     wait_until(
         || *h.capture_calls.lock().unwrap() >= 2,
@@ -468,7 +544,9 @@ async fn paused_loop_skips_ticks_and_keeps_dedup_across_pause() {
 #[tokio::test]
 async fn glossary_match_shows_glossary_thai_and_never_calls_engine() {
     let mut glossary = Glossary::default();
-    glossary.0.insert("VERTIN".to_string(), "เวอร์ติน".to_string());
+    glossary
+        .0
+        .insert("VERTIN".to_string(), "เวอร์ติน".to_string());
     let (mut h, mut orch) = harness_with(glossary).await;
 
     feed_tick(&h, 1, vec![block(0, 0, "  vertin  ")]).await;
@@ -480,7 +558,9 @@ async fn glossary_match_shows_glossary_thai_and_never_calls_engine() {
         h.translate.calls()
     );
     match next_event(&mut h.events).await {
-        LoopEvent::Translated { translation, via, .. } => {
+        LoopEvent::Translated {
+            translation, via, ..
+        } => {
             assert_eq!(translation, "เวอร์ติน");
             assert_eq!(via, Via::Glossary);
         }
@@ -569,6 +649,182 @@ async fn capture_and_ocr_errors_surface_with_their_stage_and_zone() {
 }
 
 #[tokio::test]
+async fn disappeared_blocks_are_removed_with_matching_keys() {
+    let (mut h, mut orch) = harness().await;
+
+    // Tick 1: "Hello" at (100, 200) → grid key "25,50".
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { key, block, .. } => {
+            assert_eq!(key, "25,50", "region-relative grid key");
+            assert_eq!(block.x, 200, "screen coordinates");
+            assert_eq!(block.y, 300);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+
+    // Tick 2: the block is gone — first miss clears nothing yet.
+    feed_tick(&h, 1, vec![]).await;
+    orch.tick().await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "one missed pass must not remove a block yet"
+    );
+
+    // Tick 3: still gone — the second consecutive miss removes it.
+    feed_tick(&h, 1, vec![]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::BlocksRemoved { origin, keys, .. } => {
+            assert_eq!(
+                origin,
+                EventOrigin::Zone {
+                    id: "z1".into(),
+                    name: "Zone 1".into()
+                }
+            );
+            assert_eq!(keys, vec!["25,50".to_string()]);
+        }
+        other => panic!("expected BlocksRemoved, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn one_flaky_empty_pass_does_not_clear_a_block() {
+    let (mut h, mut orch) = harness().await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated
+
+    // One pass OCRs nothing (Windows OCR glitch), then the block is back.
+    // The glitch must not remove anything, and the returning block must
+    // still be deduped (same text → no re-translation).
+    feed_tick(&h, 1, vec![]).await;
+    orch.tick().await;
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "a flaky empty pass must produce no events"
+    );
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello"],
+        "no re-translation after the glitch"
+    );
+}
+
+#[tokio::test]
+async fn removals_list_only_blocks_that_disappeared() {
+    let (mut h, mut orch) = harness().await;
+
+    // Two blocks: "Alpha" at (0, 0) → "0,0"; "Beta" at (0, 50) → "0,12".
+    feed_tick(&h, 1, vec![block(0, 0, "Alpha"), block(0, 50, "Beta")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Alpha
+    let _ = next_event(&mut h.events).await; // Beta
+
+    // Only Beta disappears: two missed passes later the removal names Beta
+    // alone, and unchanged Alpha produces no Translated event.
+    feed_tick(&h, 1, vec![block(0, 0, "Alpha")]).await;
+    orch.tick().await;
+    feed_tick(&h, 1, vec![block(0, 0, "Alpha")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::BlocksRemoved { keys, .. } => assert_eq!(keys, vec!["0,12".to_string()]),
+        other => panic!("expected BlocksRemoved, got {other:?}"),
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "surviving blocks must not emit Translated events"
+    );
+}
+
+#[tokio::test]
+async fn failed_capture_or_ocr_keeps_previous_blocks_visible() {
+    let (mut h, mut orch) = harness().await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // drain Translated
+
+    // Capture fails this tick: nothing provably disappeared, so no removal.
+    drop(h.images);
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Error { stage, .. } => assert_eq!(stage, Stage::Capture),
+        other => panic!("expected Error, got {other:?}"),
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "a failed capture must not remove blocks"
+    );
+
+    // Same for a failed OCR pass: fresh harness, image queued, OCR errors.
+    let (mut h2, mut orch2) = harness().await;
+    feed_tick(&h2, 1, vec![block(0, 0, "Hello")]).await;
+    orch2.tick().await;
+    let _ = next_event(&mut h2.events).await;
+    h2.images.send(image()).await.unwrap();
+    h2.ocr_results
+        .send(Err(OcrError::new("pack missing")))
+        .await
+        .unwrap();
+    orch2.tick().await;
+    match next_event(&mut h2.events).await {
+        LoopEvent::Error { stage, .. } => assert_eq!(stage, Stage::Ocr),
+        other => panic!("expected Error, got {other:?}"),
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h2.events.recv())
+            .await
+            .is_err(),
+        "a failed OCR pass must not remove blocks"
+    );
+}
+
+#[tokio::test]
+async fn blocks_moving_or_changing_produce_new_keys_and_remove_the_old_ones() {
+    let (mut h, mut orch) = harness().await;
+
+    // "Hello" sits at (0, 0); next ticks it moved 100px down (new grid cell).
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+
+    feed_tick(&h, 1, vec![block(0, 100, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { key, .. } => assert_eq!(key, "0,25"),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "the first missed pass at the old position removes nothing yet"
+    );
+
+    // Second pass at the new position: the old key hits its second miss.
+    feed_tick(&h, 1, vec![block(0, 100, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::BlocksRemoved { keys, .. } => assert_eq!(keys, vec!["0,0".to_string()]),
+        other => panic!("expected BlocksRemoved for the old position, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn whitespace_blocks_are_ignored() {
     let (mut h, mut orch) = harness().await;
 
@@ -617,11 +873,7 @@ async fn run_loop_paces_ticks_with_the_clock_and_keeps_dedup_across_ticks() {
         .await
         .unwrap();
     h.clock.release_tick();
-    wait_until(
-        || *h.capture_calls.lock().unwrap() >= 2,
-        "second tick ran",
-    )
-    .await;
+    wait_until(|| *h.capture_calls.lock().unwrap() >= 2, "second tick ran").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
         h.translate.calls(),
@@ -650,7 +902,10 @@ async fn capture_once_translates_with_oneshot_origin_and_no_dedup() {
     let (mut h, mut orch) = harness().await;
 
     h.images.send(image()).await.unwrap();
-    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    h.ocr_results
+        .send(Ok(vec![block(0, 0, "Hello")]))
+        .await
+        .unwrap();
     orch.capture_once(REGION).await;
     assert_eq!(h.translate.calls(), ["Hello"]);
     match next_event(&mut h.events).await {
@@ -660,7 +915,10 @@ async fn capture_once_translates_with_oneshot_origin_and_no_dedup() {
 
     // One-shot has no dedup state: the same text translates again.
     h.images.send(image()).await.unwrap();
-    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    h.ocr_results
+        .send(Ok(vec![block(0, 0, "Hello")]))
+        .await
+        .unwrap();
     orch.capture_once(REGION).await;
     assert_eq!(h.translate.calls(), ["Hello", "Hello"]);
 
@@ -676,7 +934,16 @@ async fn captured_blocks_are_reported_in_screen_coordinates() {
     let (mut h, mut orch) = harness().await;
     set_zones(
         &h,
-        vec![zone("z1", "Zone 1", Region { x: 1000, y: 500, width: 200, height: 100 })],
+        vec![zone(
+            "z1",
+            "Zone 1",
+            Region {
+                x: 1000,
+                y: 500,
+                width: 200,
+                height: 100,
+            },
+        )],
     );
 
     feed_tick(&h, 1, vec![block(10, 20, "Hello")]).await;

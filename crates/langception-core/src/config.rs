@@ -40,6 +40,86 @@ fn default_cadence_ms() -> u32 {
     500
 }
 
+/// How translated text is drawn on the In-place Overlay (CONTEXT.md):
+/// font, colors, outline, and the background pill. `font_family` is any
+/// font name the system or the bundled fonts resolve (Noto Sans Thai ships
+/// with the app so Thai glyphs always render); everything else is clamped
+/// by [`AppConfig::validate`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TextStyle {
+    pub font_family: String,
+    pub font_size: f32,
+    pub color: String,
+    pub outline_width: f32,
+    pub outline_color: String,
+    pub background: bool,
+    pub background_opacity: f32,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        Self {
+            font_family: DEFAULT_FONT_FAMILY.to_string(),
+            font_size: 16.0,
+            color: "#ffffff".to_string(),
+            outline_width: 2.0,
+            outline_color: "#000000".to_string(),
+            background: true,
+            background_opacity: 0.6,
+        }
+    }
+}
+
+/// Bundled with the app (`ui/fonts/`) and always in the overlay's font
+/// fallback chain, so Thai renders even when the chosen font has no Thai.
+pub const DEFAULT_FONT_FAMILY: &str = "Noto Sans Thai";
+
+/// `#rgb` / `#rrggbb` (leading `#` optional) — everything the overlay's
+/// CSS needs for text/outline colors.
+pub fn is_valid_hex_color(value: &str) -> bool {
+    let body = value.strip_prefix('#').unwrap_or(value);
+    (body.len() == 3 || body.len() == 6) && body.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+impl TextStyle {
+    /// Range/shape checks with `[text_style]`-prefixed messages, shared by
+    /// config loading and the settings surface's live edits.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.font_family.trim().is_empty() {
+            return Err(ConfigError::Validation(
+                "[text_style] font_family must not be empty".into(),
+            ));
+        }
+        if !(6.0..=96.0).contains(&self.font_size) {
+            return Err(ConfigError::Validation(
+                "[text_style] font_size must be between 6 and 96".into(),
+            ));
+        }
+        if !(0.0..=8.0).contains(&self.outline_width) {
+            return Err(ConfigError::Validation(
+                "[text_style] outline_width must be between 0 and 8".into(),
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.background_opacity) {
+            return Err(ConfigError::Validation(
+                "[text_style] background_opacity must be between 0 and 1".into(),
+            ));
+        }
+        for (field, value) in [
+            ("color", &self.color),
+            ("outline_color", &self.outline_color),
+        ] {
+            if !is_valid_hex_color(value) {
+                return Err(ConfigError::Validation(format!(
+                    "[text_style] {field} = \"{value}\" is not a hex color like \"#ffffff\""
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Global hotkeys (spec: toggle / zone / pause / one-shot), rebindable here.
 /// Values are accelerator strings like "Alt+T" or "Ctrl+Shift+Z"; parsing
 /// happens where they are registered (the shell, at startup), so only
@@ -82,6 +162,8 @@ pub struct AppConfig {
     pub capture: CaptureSettings,
     #[serde(default)]
     pub hotkeys: HotkeySettings,
+    #[serde(default)]
+    pub text_style: TextStyle,
     #[serde(default)]
     pub glossary: Glossary,
     #[serde(default)]
@@ -132,6 +214,7 @@ impl AppConfig {
                 "[capture] cadence_ms must be at least 50".into(),
             ));
         }
+        self.text_style.validate()?;
         for (action, key) in [
             ("toggle_translation", &self.hotkeys.toggle_translation),
             ("new_zone", &self.hotkeys.new_zone),
@@ -177,7 +260,7 @@ impl AppConfig {
     /// The file written on first launch. Zones drawn with Alt+Z are appended
     /// automatically as `[[zones]]` tables; the shape is documented here so
     /// the file stays hand-editable.
-    pub const DEFAULT_TEMPLATE: &str = r#"# Langception configuration.
+    pub const DEFAULT_TEMPLATE: &str = r##"# Langception configuration.
 # Capture Zones you draw (Alt+Z) are saved into this file automatically.
 # You can also edit it by hand; restart the app after changing [hotkeys].
 
@@ -188,6 +271,21 @@ language = "en"
 [capture]
 # How often each Capture Zone is re-checked, in milliseconds.
 cadence_ms = 500
+
+[text_style]
+# How Thai text is drawn on the In-place Overlay, in place over the
+# original. font_family may be any installed font; "Noto Sans Thai" is
+# bundled with the app and always tried as a fallback, so Thai glyphs
+# render even when the chosen font lacks them.
+font_family = "Noto Sans Thai"
+font_size = 16.0
+color = "#ffffff"
+# Outline around each glyph; 0 disables it.
+outline_width = 2.0
+outline_color = "#000000"
+# Background pill behind each translation, with its opacity (0-1).
+background = true
+background_opacity = 0.6
 
 [hotkeys]
 # Global hotkeys, rebindable. Format: modifiers + key, e.g. "Alt+T",
@@ -215,7 +313,7 @@ one_shot_capture = "Alt+Q"
 # y = 100
 # width = 640
 # height = 180
-"#;
+"##;
 }
 
 #[cfg(test)]
@@ -239,10 +337,106 @@ mod tests {
         let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
         assert_eq!(config.source.language, SourceLanguage::En);
         assert_eq!(config.capture.cadence_ms, 500);
+        assert_eq!(config.text_style, TextStyle::default());
         assert!(config.glossary.0.is_empty());
         assert!(config.zones.is_empty());
         assert!(config.region.is_none());
         assert_eq!(config.hotkeys, HotkeySettings::default());
+    }
+
+    #[test]
+    fn text_style_defaults_when_section_missing() {
+        let text = r#"
+[source]
+language = "en"
+"#;
+        let config = AppConfig::from_toml_str(text).unwrap();
+        assert_eq!(config.text_style, TextStyle::default());
+    }
+
+    #[test]
+    fn text_style_roundtrips_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace(
+                "font_family = \"Noto Sans Thai\"",
+                "font_family = \"Leelawadee UI\"",
+            )
+            .replace("font_size = 16.0", "font_size = 24.0")
+            .replace("color = \"#ffffff\"", "color = \"#0af\"")
+            .replace("outline_width = 2.0", "outline_width = 0.0")
+            .replace("outline_color = \"#000000\"", "outline_color = \"#123456\"")
+            .replace("background = true", "background = false")
+            .replace("background_opacity = 0.6", "background_opacity = 0.25");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(
+            config.text_style,
+            TextStyle {
+                font_family: "Leelawadee UI".into(),
+                font_size: 24.0,
+                color: "#0af".into(),
+                outline_width: 0.0,
+                outline_color: "#123456".into(),
+                background: false,
+                background_opacity: 0.25,
+            }
+        );
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn integer_font_size_is_accepted() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("font_size = 16.0", "font_size = 18");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.text_style.font_size, 18.0);
+    }
+
+    #[test]
+    fn absurd_text_style_values_are_rejected() {
+        let cases: Vec<(&str, &str, &str)> = vec![
+            (
+                "font_family = \"Noto Sans Thai\"",
+                "font_family = \"   \"",
+                "font_family",
+            ),
+            ("font_size = 16.0", "font_size = 4.0", "font_size"),
+            ("font_size = 16.0", "font_size = 200.0", "font_size"),
+            (
+                "outline_width = 2.0",
+                "outline_width = 9.0",
+                "outline_width",
+            ),
+            (
+                "outline_width = 2.0",
+                "outline_width = -1.0",
+                "outline_width",
+            ),
+            (
+                "background_opacity = 0.6",
+                "background_opacity = 1.5",
+                "background_opacity",
+            ),
+            ("color = \"#ffffff\"", "color = \"white\"", "color"),
+            (
+                "outline_color = \"#000000\"",
+                "outline_color = \"#12345\"",
+                "outline_color",
+            ),
+        ];
+        for (original, replacement, field) in cases {
+            let text = if replacement.is_empty() {
+                AppConfig::DEFAULT_TEMPLATE.replace(original, "")
+            } else {
+                AppConfig::DEFAULT_TEMPLATE.replace(original, replacement)
+            };
+            let err =
+                AppConfig::from_toml_str(&text).expect_err(&format!("{field} should be rejected"));
+            assert!(
+                err.to_string().contains(field),
+                "error should name {field}, was: {err}"
+            );
+        }
     }
 
     #[test]
@@ -251,7 +445,15 @@ mod tests {
         assert_eq!(config.zones.len(), 1);
         assert_eq!(config.zones[0].id, "z1");
         assert_eq!(config.zones[0].name, "Chat box");
-        assert_eq!(config.zones[0].region, Region { x: 100, y: 100, width: 640, height: 180 });
+        assert_eq!(
+            config.zones[0].region,
+            Region {
+                x: 100,
+                y: 100,
+                width: 640,
+                height: 180
+            }
+        );
 
         let roundtripped = config.to_toml_string().unwrap();
         let reparsed = AppConfig::from_toml_str(&roundtripped).unwrap();
@@ -277,7 +479,10 @@ mod tests {
         let text = template_with_zone()
             .replace("language = \"en\"", "language = \"ja\"")
             .replace("# Vertin = \"เวอร์ติน\"", "Vertin = \"เวอร์ติน\"")
-            .replace("toggle_translation = \"Alt+T\"", "toggle_translation = \"F9\"");
+            .replace(
+                "toggle_translation = \"Alt+T\"",
+                "toggle_translation = \"F9\"",
+            );
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.source.language, SourceLanguage::Ja);
         assert_eq!(config.hotkeys.toggle_translation, "F9");
@@ -318,7 +523,12 @@ height = 180
         let mut config = AppConfig::from_toml_str(text).unwrap();
         assert_eq!(
             config.region,
-            Some(Region { x: 100, y: 100, width: 640, height: 180 })
+            Some(Region {
+                x: 100,
+                y: 100,
+                width: 640,
+                height: 180
+            })
         );
         assert!(config.migrate_legacy_region());
         assert!(config.region.is_none());
@@ -326,7 +536,12 @@ height = 180
         assert_eq!(config.zones[0].name, "Configured region");
         assert_eq!(
             config.zones[0].region,
-            Region { x: 100, y: 100, width: 640, height: 180 }
+            Region {
+                x: 100,
+                y: 100,
+                width: 640,
+                height: 180
+            }
         );
 
         // Migration is idempotent: a second call changes nothing.
@@ -336,8 +551,16 @@ height = 180
     #[test]
     fn legacy_region_is_kept_when_zones_already_exist() {
         let mut config = AppConfig::from_toml_str(&template_with_zone()).unwrap();
-        config.region = Some(Region { x: 1, y: 2, width: 30, height: 40 });
-        assert!(!config.migrate_legacy_region(), "zones win over the legacy region");
+        config.region = Some(Region {
+            x: 1,
+            y: 2,
+            width: 30,
+            height: 40,
+        });
+        assert!(
+            !config.migrate_legacy_region(),
+            "zones win over the legacy region"
+        );
         assert_eq!(config.zones.len(), 1);
         assert!(config.region.is_some());
     }
@@ -372,7 +595,8 @@ height = 180
 
     #[test]
     fn duplicate_zone_names_are_rejected() {
-        let text = template_with_second_zone().replace("name = \"Quest log\"", "name = \"Chat box\"");
+        let text =
+            template_with_second_zone().replace("name = \"Quest log\"", "name = \"Chat box\"");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(err.to_string().contains("must be unique"), "was: {err}");
     }
@@ -386,7 +610,8 @@ height = 180
 
     #[test]
     fn empty_hotkey_is_rejected() {
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("pause_translation = \"Alt+P\"", "pause_translation = \" \"");
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("pause_translation = \"Alt+P\"", "pause_translation = \" \"");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(err.to_string().contains("pause_translation"), "was: {err}");
     }

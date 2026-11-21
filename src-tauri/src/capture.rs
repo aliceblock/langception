@@ -2,7 +2,7 @@
 //! tests (per the spec's testing decisions); exercised by the manual smoke
 //! checklist.
 
-use langception_core::ports::{CapturedImage, CaptureError, CaptureSource, Region};
+use langception_core::ports::{CaptureError, CaptureSource, CapturedImage, Region};
 
 pub struct GdiCaptureSource;
 
@@ -25,8 +25,7 @@ impl CaptureSource for GdiCaptureSource {
 fn capture_region_blocking(region: Region) -> Result<CapturedImage, CaptureError> {
     use windows::Win32::Graphics::Gdi::{
         BitBlt, CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC,
-        SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, CAPTUREBLT, DIB_RGB_COLORS, HGDIOBJ,
-        HDC, SRCCOPY,
+        SelectObject, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HDC, HGDIOBJ, SRCCOPY,
     };
 
     let width = region.width.max(1);
@@ -59,21 +58,23 @@ fn capture_region_blocking(region: Region) -> Result<CapturedImage, CaptureError
                 };
 
                 let mut bits: *mut core::ffi::c_void = std::ptr::null_mut();
-                let hbitmap = CreateDIBSection(
-                    Some(hdc_mem),
-                    &bmi,
-                    DIB_RGB_COLORS,
-                    &mut bits,
-                    None,
-                    0,
-                )
-                .map_err(|e| CaptureError::new(format!("failed to create DIB section: {e}")))?;
+                let hbitmap =
+                    CreateDIBSection(Some(hdc_mem), &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
+                        .map_err(|e| {
+                            CaptureError::new(format!("failed to create DIB section: {e}"))
+                        })?;
 
                 if bits.is_null() {
                     return Err(CaptureError::new("DIB section has no pixel buffer"));
                 }
 
                 let old = SelectObject(hdc_mem, HGDIOBJ(hbitmap.0));
+                // Plain SRCCOPY, deliberately WITHOUT CAPTUREBLT (ADR-0003):
+                // our own In-place Overlay is excluded from capture via
+                // WDA_EXCLUDEFROMCAPTURE — but CAPTUREBLT + an excluded
+                // window on screen poisons the whole blit (black capture),
+                // so the layered-window flag must stay off. Plain SRCCOPY
+                // captures normal windows fine and skips the overlay.
                 let blt = BitBlt(
                     hdc_mem,
                     0,
@@ -83,7 +84,7 @@ fn capture_region_blocking(region: Region) -> Result<CapturedImage, CaptureError
                     Some(hdc_screen),
                     region.x,
                     region.y,
-                    SRCCOPY | CAPTUREBLT, // CAPTUREBLT includes layered windows
+                    SRCCOPY,
                 );
 
                 let out = if blt.is_ok() {

@@ -22,18 +22,31 @@ const zonesTitle = document.getElementById("zones-title");
 const zonesList = document.getElementById("zones-list");
 const zonesEmpty = document.getElementById("zones-empty");
 const newZoneBtn = document.getElementById("new-zone-btn");
+const styleFont = document.getElementById("style-font");
+const styleSize = document.getElementById("style-size");
+const styleColor = document.getElementById("style-color");
+const styleOutlineWidth = document.getElementById("style-outline-width");
+const styleOutlineColor = document.getElementById("style-outline-color");
+const styleBackground = document.getElementById("style-background");
+const styleOpacity = document.getElementById("style-opacity");
 
 let running = false;
 let paused = false;
 let zones = [];
 let hotkeys = { toggle: "Alt+T", newZone: "Alt+Z", pause: "Alt+P", oneShot: "Alt+Q" };
 let lastError = null; // { stage, message } — stays visible until the next success
+let styleLoaded = false; // inputs initialize from the first status snapshot only
+let styleSaveTimer = null;
 
 function renderStatus(status) {
   running = status.running;
   paused = status.paused;
   zones = status.zones || [];
   if (status.hotkeys) hotkeys = status.hotkeys;
+  if (!styleLoaded && status.textStyle) {
+    styleLoaded = true;
+    loadStyleInputs(status.textStyle);
+  }
 
   if (status.configError) {
     statusPill.textContent = "Config error";
@@ -168,6 +181,57 @@ function beginRename(row, zone, nameBtn) {
   input.select();
 }
 
+// ---- Text Style panel (the minimal settings surface; the full settings
+// window arrives with ticket 06). Every change persists via set_text_style
+// and is pushed to the overlays live. ----
+
+// `type=color` inputs need #rrggbb; config allows the short form.
+function normalizeHex(value, fallback) {
+  let v = (value || "").trim();
+  if (!v.startsWith("#")) v = "#" + v;
+  if (/^#[0-9a-fA-F]{3}$/.test(v)) {
+    v = "#" + [...v.slice(1)].map((c) => c + c).join("");
+  }
+  return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : fallback;
+}
+
+function loadStyleInputs(style) {
+  styleFont.value = style.fontFamily;
+  styleSize.value = style.fontSize;
+  styleColor.value = normalizeHex(style.color, "#ffffff");
+  styleOutlineWidth.value = style.outlineWidth;
+  styleOutlineColor.value = normalizeHex(style.outlineColor, "#000000");
+  styleBackground.checked = style.background;
+  styleOpacity.value = style.backgroundOpacity;
+}
+
+function collectStyle() {
+  return {
+    fontFamily: styleFont.value.trim() || "Noto Sans Thai",
+    fontSize: Number(styleSize.value) || 16,
+    color: normalizeHex(styleColor.value, "#ffffff"),
+    outlineWidth: Number(styleOutlineWidth.value) || 0,
+    outlineColor: normalizeHex(styleOutlineColor.value, "#000000"),
+    background: styleBackground.checked,
+    backgroundOpacity: Number(styleOpacity.value) || 0,
+  };
+}
+
+// Sliders fire a burst of input events; a short trailing debounce keeps the
+// live feel without hammering config.toml per pixel.
+function scheduleStyleSave() {
+  clearTimeout(styleSaveTimer);
+  styleSaveTimer = setTimeout(saveStyle, 250);
+}
+
+async function saveStyle() {
+  try {
+    await invoke("set_text_style", { style: collectStyle() });
+  } catch (e) {
+    showError("text-style", String(e));
+  }
+}
+
 // ---- Loop events ----
 
 function addEntry(block, translation, origin, atMs) {
@@ -277,4 +341,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       newZoneBtn.disabled = false;
     }
   });
+
+  for (const control of [styleFont, styleSize, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity]) {
+    control.addEventListener("input", scheduleStyleSave);
+    control.addEventListener("change", scheduleStyleSave);
+  }
 });
