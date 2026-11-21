@@ -23,6 +23,12 @@ pub const OVERLAY_LABEL_PREFIX: &str = "overlay-";
 /// their monitors (the layout may have changed since creation) and shows
 /// them. Returns each window's label with its monitor, in the same order,
 /// for an [`OverlayRouter`].
+///
+/// Threading: MUST NOT run on the main thread. Window creation and window
+/// methods dispatch through the main event loop and block until it pumps;
+/// from the main thread that loop is the blocked caller itself, so the
+/// call hangs forever with no error (see `run_off_main` in shell.rs —
+/// every caller goes through it).
 pub fn ensure_overlays(app: &AppHandle) -> Result<Vec<(String, Monitor)>, String> {
     let monitors = app
         .available_monitors()

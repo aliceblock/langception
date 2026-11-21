@@ -396,36 +396,31 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "toggle" => {
-                let _ = toggle_translation(app);
-            }
+            // Every item that reaches the overlay/picker windows runs off the
+            // main thread (see run_off_main); failures surface as warnings.
+            "toggle" => spawn_off_main(app, toggle_translation),
             "pause" => toggle_pause(app),
-            "adjust" => {
-                let state = app.state::<AppState>();
-                let next = !*state.adjust_mode.lock().unwrap();
+            "adjust" => spawn_off_main(app, |app| {
+                let next = !*app.state::<AppState>().adjust_mode.lock().unwrap();
                 set_adjust_mode(app, next);
-            }
+                Ok(())
+            }),
             "fullscreen" => {
                 // The checkmark flips to the other target.
-                let state = app.state::<AppState>();
-                let current = match &*state.config.lock().unwrap() {
-                    Some(Ok(config)) => config.mode.target,
-                    _ => CaptureMode::Zones,
-                };
-                let next = match current {
-                    CaptureMode::Zones => CaptureMode::FullScreen,
-                    CaptureMode::FullScreen => CaptureMode::Zones,
-                };
-                if let Err(message) = set_capture_mode_inner(app, next, None) {
-                    push_warning(&state, message);
-                }
+                spawn_off_main(app, |app| {
+                    let current = match &*app.state::<AppState>().config.lock().unwrap() {
+                        Some(Ok(config)) => config.mode.target,
+                        _ => CaptureMode::Zones,
+                    };
+                    let next = match current {
+                        CaptureMode::Zones => CaptureMode::FullScreen,
+                        CaptureMode::FullScreen => CaptureMode::Zones,
+                    };
+                    set_capture_mode_inner(app, next, None)
+                });
             }
-            "new-zone" => {
-                let _ = open_picker(app, PickerMode::Zone);
-            }
-            "one-shot" => {
-                let _ = open_picker(app, PickerMode::OneShot);
-            }
+            "new-zone" => spawn_off_main(app, |app| open_picker(app, PickerMode::Zone)),
+            "one-shot" => spawn_off_main(app, |app| open_picker(app, PickerMode::OneShot)),
             "open-config" => open_config_folder(app),
             "quit" => app.exit(0),
             _ => {}
@@ -438,10 +433,14 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                if let Some(window) = tray.app_handle().get_webview_window("results") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
+                let app = tray.app_handle().clone();
+                spawn_off_main(&app, |app| {
+                    if let Some(window) = app.get_webview_window("results") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    Ok(())
+                });
             }
         })
         .build(app)?;
@@ -537,21 +536,17 @@ fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) 
     drop(registered);
 
     match action {
-        Some(Bind::Toggle) => {
-            let _ = toggle_translation(app);
-        }
+        // Hotkeys fire on the main thread; anything that reaches the
+        // overlay/picker windows runs off it (see run_off_main).
+        Some(Bind::Toggle) => spawn_off_main(app, toggle_translation),
         Some(Bind::Pause) => toggle_pause(app),
-        Some(Bind::NewZone) => {
-            let _ = open_picker(app, PickerMode::Zone);
-        }
-        Some(Bind::Adjust) => {
-            let state = app.state::<AppState>();
-            let next = !*state.adjust_mode.lock().unwrap();
+        Some(Bind::NewZone) => spawn_off_main(app, |app| open_picker(app, PickerMode::Zone)),
+        Some(Bind::Adjust) => spawn_off_main(app, |app| {
+            let next = !*app.state::<AppState>().adjust_mode.lock().unwrap();
             set_adjust_mode(app, next);
-        }
-        Some(Bind::OneShot) => {
-            let _ = open_picker(app, PickerMode::OneShot);
-        }
+            Ok(())
+        }),
+        Some(Bind::OneShot) => spawn_off_main(app, |app| open_picker(app, PickerMode::OneShot)),
         None => {}
     }
 }
@@ -847,7 +842,9 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     // never stops the loop: the Results Window still works, and the warning
     // stays visible.
     let overlays = match crate::overlay::ensure_overlays(app) {
-        Ok(overlays) => overlays,
+        Ok(overlays) => {
+            overlays
+        }
         Err(message) => {
             push_warning(&state, format!("In-place Overlay unavailable: {message}"));
             Vec::new()
@@ -1182,6 +1179,9 @@ fn refresh_adjust_overlays(app: &AppHandle) {
 // ---- Capture Zone picker overlay ----
 
 /// Opens (or toggles closed) the fullscreen picker overlay.
+///
+/// Threading: MUST NOT run on the main thread (creates/destroys windows —
+/// see `run_off_main`; all callers route through it or `spawn_off_main`).
 fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
     // A hotkey or menu item while the overlay is open cancels the session.
     if let Some(existing) = app.get_webview_window(PICKER_LABEL) {
@@ -1317,14 +1317,56 @@ fn with_config_mut(
 
 // ---- Commands invoked from the Results Window and the picker ----
 
-#[tauri::command]
-fn start_translation(app: AppHandle) -> Result<(), String> {
-    start_loop(&app)
+/// Runs a shell operation on a blocking worker thread and awaits its
+/// result. Window creation and window manipulation dispatch through the
+/// main event loop and block the caller until that loop pumps — calling
+/// them from a synchronous command deadlocks forever: sync commands run
+/// ON the main thread, `WebviewWindowBuilder::build()` waits for the very
+/// loop that is blocked, the invoke never settles, nothing errors, and
+/// the button that issued it stays frozen. Every command path that can
+/// create or move the overlay/picker windows goes through here (or
+/// [`spawn_off_main`] when no answer is needed).
+async fn run_off_main<T, F>(app: AppHandle, f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&AppHandle) -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || f(&app))
+        .await
+        .map_err(|e| format!("background task failed: {e}"))
+        .and_then(|r| r)
+}
+
+/// Fire-and-forget variant of [`run_off_main`] for the main-thread event
+/// handlers (tray menu, global shortcuts): they cannot await, so failures
+/// surface as a visible warning instead of a lost Result.
+fn spawn_off_main<F>(app: &AppHandle, f: F)
+where
+    F: FnOnce(&AppHandle) -> Result<(), String> + Send + 'static,
+{
+    let task_app = app.clone();
+    let warn_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(message) = tauri::async_runtime::spawn_blocking(move || f(&task_app))
+            .await
+            .map_err(|e| format!("background task failed: {e}"))
+            .and_then(|r| r)
+        {
+            let state = warn_app.state::<AppState>();
+            push_warning(&state, message);
+        }
+    });
 }
 
 #[tauri::command]
-fn stop_translation(app: AppHandle) {
-    stop_loop(&app)
+async fn start_translation(app: AppHandle) -> Result<(), String> {
+    run_off_main(app, start_loop).await
+}
+
+#[tauri::command]
+async fn stop_translation(app: AppHandle) {
+    // stop_loop hides overlay windows — off the main thread, see run_off_main.
+    let _ = tauri::async_runtime::spawn_blocking(move || stop_loop(&app)).await;
 }
 
 #[tauri::command]
@@ -1391,13 +1433,13 @@ fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_zone_picker(app: AppHandle, mode: String) -> Result<(), String> {
+async fn open_zone_picker(app: AppHandle, mode: String) -> Result<(), String> {
     let mode = match mode.as_str() {
         "zone" => PickerMode::Zone,
         "oneshot" => PickerMode::OneShot,
         other => return Err(format!("unknown picker mode \"{other}\"")),
     };
-    open_picker(&app, mode)
+    run_off_main(app, move |app| open_picker(app, mode)).await
 }
 
 /// The picker overlay asks once it has loaded what session it is serving.
@@ -1414,7 +1456,29 @@ fn get_picker_mode(app: AppHandle) -> String {
 /// The picker overlay confirms a drag: coordinates are CSS px relative to
 /// the overlay's viewport (= the primary monitor's top-left).
 #[tauri::command]
-fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+async fn commit_zone_drag(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
+    run_off_main(app, move |app| {
+        commit_zone_drag_inner(app, x, y, width, height)
+    })
+    .await
+}
+
+/// Sync body of [`commit_zone_drag`]: closes the picker window, and in the
+/// zone branch may start the loop (which creates the overlay windows) —
+/// all off the main thread.
+fn commit_zone_drag_inner(
+    app: &AppHandle,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
     let state = app.state::<AppState>();
     let Some(mode) = state.picker_mode.lock().unwrap().take() else {
         return Err("no capture session is open".into());
@@ -1422,10 +1486,10 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
 
     // A click without a drag cancels the session (standard snip behavior).
     if width < MIN_DRAG_CSS_PX || height < MIN_DRAG_CSS_PX {
-        close_picker(&app);
+        close_picker(app);
         return Ok(());
     }
-    let monitor = primary_monitor(&app)?;
+    let monitor = primary_monitor(app)?;
     let region = region_from_css(&monitor, x, y, width, height);
 
     match mode {
@@ -1434,7 +1498,7 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
             // with the error visible in it. The picker covers the primary
             // monitor, so the new zone remembers it.
             let name = monitor_name(&monitor);
-            let config = with_config_mut(&app, |config| {
+            let config = with_config_mut(app, |config| {
                 config.zones.push(Zone {
                     id: format!(
                         "z{}",
@@ -1449,18 +1513,18 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
                 });
                 Ok(())
             })?;
-            close_picker(&app);
-            let _ = state.zones_tx.send(active_zones(&app, &config));
+            close_picker(app);
+            let _ = state.zones_tx.send(active_zones(app, &config));
             // Zones are what the loop watches: creating the first one starts
             // translation (matches the tray's Start).
             if state.running.lock().unwrap().is_none() {
-                if let Err(e) = start_loop(&app) {
+                if let Err(e) = start_loop(app) {
                     state.warnings.lock().unwrap().push(format!(
                         "failed to start translation after creating a zone: {e}"
                     ));
                 }
             }
-            apply_state(&app);
+            apply_state(app);
             Ok(())
         }
         PickerMode::OneShot => {
@@ -1473,8 +1537,8 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
             };
             let pipeline = build_pipeline(&config)?;
             let exclusions = active_exclusions(&config);
-            close_picker(&app);
-            run_one_shot(&app, pipeline, region, exclusions);
+            close_picker(app);
+            run_one_shot(app, pipeline, region, exclusions);
             Ok(())
         }
     }
@@ -1482,8 +1546,9 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
 
 /// The picker overlay cancelled (Esc / click without drag).
 #[tauri::command]
-fn cancel_zone_drag(app: AppHandle) {
-    close_picker(&app)
+async fn cancel_zone_drag(app: AppHandle) {
+    // close_picker destroys the picker window — off the main thread.
+    let _ = tauri::async_runtime::spawn_blocking(move || close_picker(&app)).await;
 }
 
 /// The overlay page pulls the current style once on load (the push path is
@@ -1517,21 +1582,26 @@ fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
 
 /// Alt+A / tray / Results Window button.
 #[tauri::command]
-fn toggle_adjust_mode(app: AppHandle) {
-    let active = *app.state::<AppState>().adjust_mode.lock().unwrap();
-    set_adjust_mode(&app, !active);
+async fn toggle_adjust_mode(app: AppHandle) {
+    // set_adjust_mode creates/moves/hides overlay windows — off the main
+    // thread, see run_off_main.
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let active = *app.state::<AppState>().adjust_mode.lock().unwrap();
+        set_adjust_mode(&app, !active);
+    })
+    .await;
 }
 
 /// Switches the capture target (and, for full-screen, the watched monitor).
 /// While the loop runs it is retargeted live; its old pills are cleared.
 #[tauri::command]
-fn set_capture_mode(app: AppHandle, mode: String, monitor: String) -> Result<(), String> {
+async fn set_capture_mode(app: AppHandle, mode: String, monitor: String) -> Result<(), String> {
     let target = match mode.as_str() {
         "zones" => CaptureMode::Zones,
         "fullscreen" => CaptureMode::FullScreen,
         other => return Err(format!("unknown capture mode \"{other}\"")),
     };
-    set_capture_mode_inner(&app, target, Some(monitor))
+    run_off_main(app, move |app| set_capture_mode_inner(app, target, Some(monitor))).await
 }
 
 /// Shared by the tray item (which passes no monitor — it only flips the
@@ -1568,7 +1638,7 @@ fn set_capture_mode_inner(
 /// CSS by the overlay page. The loop picks the new region up on its next
 /// tick without losing per-block tracking (same channel as zone creation).
 #[tauri::command]
-fn update_zone_region(
+async fn update_zone_region(
     app: AppHandle,
     id: String,
     x: i32,
@@ -1579,25 +1649,29 @@ fn update_zone_region(
     if width == 0 || height == 0 {
         return Err("Zone width and height must be greater than zero".into());
     }
-    let state = app.state::<AppState>();
-    let config = with_config_mut(&app, |config| {
-        let zone = config
-            .zones
-            .iter_mut()
-            .find(|z| z.id == id)
-            .ok_or_else(|| "zone not found (was it deleted elsewhere?)".to_string())?;
-        zone.region = Region {
-            x,
-            y,
-            width,
-            height,
-        };
+    run_off_main(app, move |app| {
+        let state = app.state::<AppState>();
+        let config = with_config_mut(app, |config| {
+            let zone = config
+                .zones
+                .iter_mut()
+                .find(|z| z.id == id)
+                .ok_or_else(|| "zone not found (was it deleted elsewhere?)".to_string())?;
+            zone.region = Region {
+                x,
+                y,
+                width,
+                height,
+            };
+            Ok(())
+        })?;
+        let _ = state.zones_tx.send(active_zones(app, &config));
+        // Repositions/re-creates the overlay windows while adjusting.
+        refresh_adjust_overlays(app);
+        apply_state(app);
         Ok(())
-    })?;
-    let _ = state.zones_tx.send(active_zones(&app, &config));
-    refresh_adjust_overlays(&app);
-    apply_state(&app);
-    Ok(())
+    })
+    .await
 }
 
 /// The overlay page reports a clicked block (its OCR box, global physical
