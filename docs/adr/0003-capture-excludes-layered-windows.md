@@ -18,3 +18,12 @@ A subtlety that shaped the loop design: Windows OCR intermittently returns **emp
 - If `SetWindowDisplayAffinity` fails (Windows older than 2004), the overlay window is not created and the failure surfaces as a visible warning — translation continues into the Results Window rather than running an unstable feedback loop.
 - Other apps' layered windows ARE captured again (plain `SRCCOPY` excludes only true GDI-layered windows; `CAPTUREBLT` is off, but ordinary DWM composition is unaffected) — slice-01 capture fidelity is otherwise unchanged.
 - One-shot Capture works the same way: the zone picker closes before the pass runs, and the overlay itself never pollutes its own results.
+
+## Scope update (found in first real testing)
+
+Every window that displays Langception's own Thai output carries the exclusion — not just the overlays:
+
+- **Results Window**: its entries list shows Thai, and the default window position sits mid-screen; a zone overlapping it translated its own entries, and each new entry shifted the list so the OCR kept seeing "new" text — a self-translation loop. Excluded from capture, a zone overlapping it instead OCRs the app *behind* it (verified by capture dump).
+- **Zone picker**: the session dim must not darken the running loop's captures, and the picker must never become a source itself.
+
+Separate lesson, same testing round — **event targeting**: `window.__TAURI__.event.listen` registers `EventTarget::Any`, which Tauri delivers to on *every* emit regardless of `emit_to` targeting (listeners are matched by `target == Any || filter`), so with two overlays both pages rendered every block — pills on both monitors. Overlay pages must listen via `WebviewWindow.listen` (`EventTarget::WebviewWindow { label }`), which `emit_to(label, …)` filters correctly.

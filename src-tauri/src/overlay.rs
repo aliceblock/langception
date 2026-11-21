@@ -98,7 +98,7 @@ fn create_overlay(
     window
         .set_ignore_cursor_events(true)
         .map_err(|e| format!("cannot make the overlay for {monitor_name} click-through: {e}"))?;
-    make_capture_invisible(&window)
+    exclude_from_capture(&window)
         .map_err(|e| format!("cannot exclude the overlay for {monitor_name} from capture: {e}"))?;
     window
         .show()
@@ -106,17 +106,22 @@ fn create_overlay(
     Ok(window)
 }
 
-/// Excludes the overlay from screen capture via `SetWindowDisplayAffinity`
-/// (`WDA_EXCLUDEFROMCAPTURE`): the window stays fully visible on screen but
-/// capture pipelines skip it, so the translation loop reads the underlying
-/// app's original text — never the overlay's own Thai output (which would
-/// re-translate itself forever; see ADR-0003).
+/// Excludes a Langception window from screen capture via
+/// `SetWindowDisplayAffinity` (`WDA_EXCLUDEFROMCAPTURE`): the window stays
+/// fully visible on screen but capture pipelines skip it. Applied to every
+/// window that displays Langception's own Thai output — the per-monitor
+/// overlays (which sit over the watched regions; without this the loop
+/// would OCR its own translations forever, see ADR-0003) and the Results
+/// Window (whose Thai entries would feed the loop whenever a zone overlaps
+/// it). With the plain-`SRCCOPY` capture, content *behind* an excluded
+/// window still composes through, so watching a region under the Results
+/// Window translates that underlying app, not the results list.
 ///
 /// Alternatives that do NOT work for a WebView2 (DirectComposition) window:
 /// `WS_EX_LAYERED` (DComp content bypasses the layered redirection surface
 /// and still appears in captures), and plain "not layered" semantics.
 #[cfg(windows)]
-fn make_capture_invisible(window: &tauri::WebviewWindow) -> Result<(), String> {
+pub(crate) fn exclude_from_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
         SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
@@ -132,7 +137,7 @@ fn make_capture_invisible(window: &tauri::WebviewWindow) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn make_capture_invisible(_window: &tauri::WebviewWindow) -> Result<(), String> {
+pub(crate) fn exclude_from_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
     Ok(()) // no-op off Windows; the overlay recipe is Windows-first anyway
 }
 

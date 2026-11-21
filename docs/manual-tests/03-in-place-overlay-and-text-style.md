@@ -40,8 +40,16 @@ browser mock. This checklist covers what only a human can see and feel.
 - [ ] **Bundled font**: the Thai renders with correct stacked vowels/tone
       marks even if no Thai-capable system font is installed (Noto Sans Thai
       ships in `ui/fonts/`, license alongside).
-- [ ] **One overlay per monitor**: with two monitors, translations appear on
-      whichever monitor the block sits on (check a zone on the secondary).
+- [ ] **One overlay per monitor, and only there**: translations appear ONLY
+      on the monitor holding the block — the other monitor's overlay stays
+      empty (fixed: overlay pages listen on their own window target; with
+      the plain event API both pages received every block and pills showed
+      on both screens).
+- [ ] **Langception's windows are never translation sources**: point a zone
+      so it overlaps the Results Window → you get translations of whatever
+      app is *behind* it, never of the results list itself (fixed: with the
+      exclusion the results window's own Thai used to feed a translate
+      loop — each new entry shifted the list into new OCR blocks).
 - [ ] **Zone picker interplay**: with translations on screen, press Alt+Z →
       the picker dims cleanly over everything (no stale Thai fighting the
       dim); Esc → translations return.

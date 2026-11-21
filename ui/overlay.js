@@ -6,7 +6,13 @@
 // "overlay-style" restyles everything live. No build step.
 
 const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
+// Targeted listeners, NOT window.__TAURI__.event.listen: the plain event API
+// registers EventTarget::Any, which Tauri delivers to on every emit
+// regardless of emit_to targeting — with two overlays both pages rendered
+// every block (pills on all monitors). WebviewWindow.listen matches this
+// page's label only, so the shell's per-monitor routing holds.
+const overlayWindow = window.__TAURI__.webviewWindow.getCurrentWebviewWindow();
+const listen = overlayWindow.listen.bind(overlayWindow);
 
 // Below this font size, shrink-to-fit stops — a slightly overflowing pill
 // beats unreadably small text.

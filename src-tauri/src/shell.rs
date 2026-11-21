@@ -225,6 +225,14 @@ pub fn run() {
             install_hotkeys(&handle)?;
 
             if let Some(window) = handle.get_webview_window("results") {
+                // Langception's own windows are never translation sources
+                // (ADR-0003): the Results Window displays Thai, and a zone
+                // overlapping it would translate its own entries forever.
+                if let Err(message) = crate::overlay::exclude_from_capture(&window) {
+                    state.warnings.lock().unwrap().push(format!(
+                        "could not exclude the Results Window from capture: {message}"
+                    ));
+                }
                 let _ = window.show();
             }
             apply_state(&handle);
@@ -778,6 +786,16 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
     window
         .set_size(Size::Physical(PhysicalSize::new(size.width, size.height)))
         .map_err(|e| format!("cannot size the capture overlay: {e}"))?;
+    // Same rule as the Results Window: Langception's own windows are never
+    // translation sources. The dim must not darken the loop's captures, and
+    // a session must not OCR its own selection rectangle.
+    if let Err(message) = crate::overlay::exclude_from_capture(&window) {
+        app.state::<AppState>()
+            .warnings
+            .lock()
+            .unwrap()
+            .push(format!("could not exclude the picker from capture: {message}"));
+    }
     window
         .show()
         .map_err(|e| format!("cannot show the capture overlay: {e}"))?;
