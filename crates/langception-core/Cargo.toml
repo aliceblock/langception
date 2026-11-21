@@ -1,0 +1,17 @@
+[package]
+name = "langception-core"
+version = "0.1.0"
+edition = "2021"
+description = "Langception core: translation-loop orchestrator, ports, glossary, engines"
+
+[dependencies]
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+thiserror = "2"
+reqwest = { version = "0.13", features = ["query"] }
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }

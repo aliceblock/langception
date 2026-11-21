@@ -1,6 +1,7 @@
 # Rust / Tauri
 /target/
 dist/
+src-tauri/gen/
 
 # Node (Tauri frontend build)
 node_modules/

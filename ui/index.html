@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Langception — Results</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">L</span>
+        <h1>Langception</h1>
+        <span id="status-pill" class="pill stopped">Stopped</span>
+        <button id="toggle-btn" class="btn">Start</button>
+      </div>
+      <div id="config-line" class="config-line">loading…</div>
+    </header>
+
+    <div id="error-banner" class="error-banner hidden"></div>
+
+    <main>
+      <ul id="results" class="results"></ul>
+      <div id="empty-state" class="empty-state">
+        <p>No translations yet.</p>
+        <p class="hint">Start translation from the tray menu, then point the configured region at some text.</p>
+      </div>
+    </main>
+
+    <div id="copied-toast" class="toast hidden">Copied ✓</div>
+    <script src="main.js"></script>
+  </body>
+</html>
