@@ -141,7 +141,7 @@ pub(crate) fn exclude_from_capture(_window: &tauri::WebviewWindow) -> Result<(),
     Ok(()) // no-op off Windows; the overlay recipe is Windows-first anyway
 }
 
-fn overlay_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
+pub(crate) fn overlay_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {
     let mut windows: Vec<_> = app
         .webview_windows()
         .into_iter()
@@ -210,6 +210,9 @@ struct OverlayUpdate {
     width: u32,
     height: u32,
     translation: String,
+    /// The block's source text (the overlay page labels an Excluded Block
+    /// with it when the user clicks the pill in Adjust Mode).
+    text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -299,6 +302,7 @@ impl OverlayRouter {
             width: block.width,
             height: block.height,
             translation: translation.to_string(),
+            text: block.text.clone(),
         };
         let _ = app.emit_to(label, "overlay-update", &payload);
         self.placed

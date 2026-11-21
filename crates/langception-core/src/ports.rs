@@ -30,11 +30,52 @@ pub struct CapturedImage {
 /// captured and translated repeatedly. Several zones are watched at once;
 /// each tracks its Text Blocks independently. The `id` is stable across
 /// renames and restarts so the loop can keep per-zone tracking state.
+/// `monitor` is the system name of the monitor the zone was drawn on
+/// (e.g. `\\.\DISPLAY1`); a zone whose monitor is unplugged is disabled,
+/// not deleted (empty = the primary monitor, the legacy default).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Zone {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub monitor: String,
     pub region: Region,
+}
+
+/// An Excluded Block (CONTEXT.md): a Text Block position the user marked as
+/// not-to-be-translated, consulted in full-screen mode. The `id` is stable
+/// so the exclusion can be cleared later; `label` is what the block showed
+/// when excluded (display only — matching is purely positional).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExcludedBlock {
+    pub id: String,
+    pub monitor: String,
+    /// Screen rect in PHYSICAL px (origin = primary monitor's top-left),
+    /// the OCR box at click time.
+    pub region: Region,
+    pub label: String,
+}
+
+impl ExcludedBlock {
+    /// Whether a Text Block (screen coords) is covered by this exclusion:
+    /// the block's rect must overlap the stored rect by at least half the
+    /// block's area. A plain point-in-rect test on the block's center would
+    /// lose exclusions to OCR jitter of a few pixels; a large overlap still
+    /// tolerates it while never matching a merely adjacent block (stacked
+    /// lines overlap by ~10%).
+    pub fn covers(&self, block: &TextBlock) -> bool {
+        let left = self.region.x.max(block.x);
+        let top = self.region.y.max(block.y);
+        let right = (self.region.x + self.region.width as i32)
+            .min(block.x + block.width as i32);
+        let bottom = (self.region.y + self.region.height as i32)
+            .min(block.y + block.height as i32);
+        let overlap_w = (right - left).max(0);
+        let overlap_h = (bottom - top).max(0);
+        let overlap = overlap_w as f64 * overlap_h as f64;
+        let block_area = (block.width as f64 * block.height as f64).max(1.0);
+        overlap / block_area >= 0.5
+    }
 }
 
 /// One contiguous run of text found by an OCR engine, with its bounding box.
@@ -134,4 +175,68 @@ pub trait TranslateEngine: Send + Sync {
 pub trait Clock: Send + Sync {
     async fn sleep(&self, duration: Duration);
     fn now_ms(&self) -> u64;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exclusion(x: i32, y: i32, width: u32, height: u32) -> ExcludedBlock {
+        ExcludedBlock {
+            id: "x1".into(),
+            monitor: r"\\.\DISPLAY1".into(),
+            region: Region {
+                x,
+                y,
+                width,
+                height,
+            },
+            label: "Start".into(),
+        }
+    }
+
+    fn block_at(x: i32, y: i32, width: u32, height: u32) -> TextBlock {
+        TextBlock {
+            x,
+            y,
+            width,
+            height,
+            text: "Start".into(),
+        }
+    }
+
+    #[test]
+    fn covers_exact_same_rect() {
+        let e = exclusion(100, 200, 120, 24);
+        assert!(e.covers(&block_at(100, 200, 120, 24)));
+    }
+
+    #[test]
+    fn covers_small_jitter() {
+        // A few px of OCR jitter keep >50% of the block overlapping.
+        let e = exclusion(100, 200, 120, 24);
+        assert!(e.covers(&block_at(103, 203, 120, 24)));
+    }
+
+    #[test]
+    fn does_not_cover_moved_block() {
+        let e = exclusion(100, 200, 120, 24);
+        // Shifted by more than half the box: overlap is way under half.
+        assert!(!e.covers(&block_at(170, 200, 120, 24)));
+        assert!(!e.covers(&block_at(100, 226, 120, 24)));
+    }
+
+    #[test]
+    fn does_not_cover_stacked_neighbor_line() {
+        // A second line 4px below a 24px-tall box overlaps by ~4/24 ≈ 17%.
+        let e = exclusion(100, 200, 120, 24);
+        assert!(!e.covers(&block_at(100, 220, 120, 24)));
+    }
+
+    #[test]
+    fn covers_larger_block_contained_in_exclusion() {
+        // The stored exclusion is bigger than the re-appearing block.
+        let e = exclusion(90, 190, 200, 60);
+        assert!(e.covers(&block_at(100, 200, 120, 24)));
+    }
 }

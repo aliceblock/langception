@@ -185,6 +185,87 @@ h1 { font-size: 15px; font-weight: 600; }
   color: var(--muted);
 }
 
+/* Hint text inside a zones-panel summary (mode panel, excluded panel). */
+.zones-panel summary .hint {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* ---- Capture Target (zones vs full-screen) ---- */
+
+.mode-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.mode-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mode-row input[type="radio"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.mode-row.monitor-row {
+  margin-left: 22px;
+}
+
+.monitor-label {
+  flex: none;
+}
+
+.monitor-select {
+  flex: 1;
+  max-width: 320px;
+  padding: 4px 7px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.monitor-select:focus { outline: 1px solid var(--accent); }
+
+/* A zone whose monitor is unplugged: kept, but not watched. */
+.zone-row.zone-disabled {
+  opacity: 0.55;
+}
+.zone-row.zone-disabled .zone-name {
+  color: var(--glossary);
+  text-decoration: line-through;
+}
+
+/* ---- Excluded Blocks list ---- */
+
+.excluded-label {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* Adjust Mode indicator chip next to the status pill. */
+.chip {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+  background: rgba(127, 212, 255, 0.16);
+  color: #7fd4ff;
+  border: 1px solid rgba(127, 212, 255, 0.4);
+}
+
 .error-banner {
   margin: 8px 16px 0;
   padding: 9px 12px;

@@ -1,19 +1,20 @@
 //! The Tauri shell: tray-first control, global hotkeys (rebindable via
-//! config), the Capture Zone picker overlay (Alt+Z / Alt+Q), the per-monitor
-//! In-place Overlay (ticket 03), the Results Window event bridge, and the
-//! config file lifecycle. Thin adapter — exercised by the manual smoke
-//! checklist.
+//! config), the Capture Zone picker overlay (Alt+Z / Alt+Q), Adjust Mode
+//! (Alt+A: zone drag/resize + block exclusion, ticket 04), full-screen mode
+//! with monitor selection, the per-monitor In-place Overlay (ticket 03), the
+//! Results Window event bridge, and the config file lifecycle. Thin adapter —
+//! exercised by the manual smoke checklist.
 
-use langception_core::config::{AppConfig, HotkeySettings, TextStyle};
+use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, TextStyle};
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
 use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, SystemClock};
-use langception_core::ports::{Region, Zone, TARGET_LANGUAGE};
+use langception_core::ports::{ExcludedBlock, Region, Zone, TARGET_LANGUAGE};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{
     AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Size,
@@ -26,6 +27,11 @@ const PICKER_LABEL: &str = "zone-picker";
 /// Drags smaller than this (CSS px) count as a click: the session cancels.
 const MIN_DRAG_CSS_PX: i32 = 8;
 
+/// Full-screen mode watches one synthetic "zone" spanning the selected
+/// monitor; its id keys overlay routing and the Results Window badge.
+const FULLSCREEN_ZONE_ID: &str = "fullscreen";
+const FULLSCREEN_ZONE_NAME: &str = "Full screen";
+
 /// What the picker overlay was opened for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PickerMode {
@@ -35,17 +41,25 @@ enum PickerMode {
     OneShot,
 }
 
-/// What the Results Window needs to show: loop state, the zone list (the
-/// minimal management UI), the effective hotkeys, and any warnings.
+/// What the Results Window needs to show: loop state, the capture target
+/// (zones vs full-screen), the zone list (the minimal management UI), the
+/// Excluded Block list, the effective hotkeys, and any warnings.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub running: bool,
     pub paused: bool,
+    pub adjust_mode: bool,
     pub config_error: Option<String>,
     pub warnings: Vec<String>,
     pub language: String,
+    /// The active capture target: "zones" | "fullscreen".
+    pub mode: String,
+    /// The monitor full-screen mode watches ("" = primary).
+    pub fullscreen_monitor: String,
+    pub monitors: Vec<MonitorStatus>,
     pub zones: Vec<ZoneStatus>,
+    pub excluded_blocks: Vec<ExcludedStatus>,
     pub cadence_ms: u32,
     pub glossary_terms: usize,
     pub hotkeys: HotkeyStatus,
@@ -56,9 +70,30 @@ pub struct Status {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct MonitorStatus {
+    pub name: String,
+    pub primary: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ZoneStatus {
     pub id: String,
     pub name: String,
+    pub region: String,
+    /// The monitor the zone was drawn on ("" = primary).
+    pub monitor: String,
+    /// False when the zone's monitor is unplugged: the zone stays in the
+    /// config but is not watched.
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExcludedStatus {
+    pub id: String,
+    pub monitor: String,
+    pub label: String,
     pub region: String,
 }
 
@@ -68,6 +103,7 @@ pub struct HotkeyStatus {
     pub toggle: String,
     pub new_zone: String,
     pub pause: String,
+    pub adjust: String,
     pub one_shot: String,
 }
 
@@ -126,6 +162,7 @@ impl Default for HotkeyStatus {
             toggle: defaults.toggle_translation,
             new_zone: defaults.new_zone,
             pause: defaults.pause_translation,
+            adjust: defaults.adjust_mode,
             one_shot: defaults.one_shot_capture,
         }
     }
@@ -143,6 +180,7 @@ struct RegisteredHotkeys {
     toggle: Option<Shortcut>,
     new_zone: Option<Shortcut>,
     pause: Option<Shortcut>,
+    adjust: Option<Shortcut>,
     one_shot: Option<Shortcut>,
 }
 
@@ -153,14 +191,23 @@ struct AppState {
     config_path: PathBuf,
     running: Mutex<Option<RunningLoop>>,
     paused: Mutex<bool>,
+    /// Adjust Mode (Alt+A): click-through off, zones draggable/resizable,
+    /// full-screen blocks clickable for exclusion.
+    adjust_mode: Mutex<bool>,
     /// The shell pushes the active zone list here; a running loop picks it
-    /// up on its next tick without losing per-zone tracking state.
+    /// up on its next tick without losing per-zone tracking state. In
+    /// full-screen mode this is one synthetic zone spanning the monitor.
     zones_tx: watch::Sender<Vec<Zone>>,
     paused_tx: watch::Sender<bool>,
+    /// The Excluded Blocks currently in force (all of them in full-screen
+    /// mode; empty in zones mode — exclusions are consulted there only).
+    exclusions_tx: watch::Sender<Vec<ExcludedBlock>>,
     warnings: Mutex<Vec<String>>,
     registered: Mutex<RegisteredHotkeys>,
     toggle_item: Mutex<Option<MenuItem<Wry>>>,
     pause_item: Mutex<Option<MenuItem<Wry>>>,
+    adjust_item: Mutex<Option<MenuItem<Wry>>>,
+    fullscreen_item: Mutex<Option<CheckMenuItem<Wry>>>,
     tray: Mutex<Option<TrayIcon<Wry>>>,
     /// `Some` while the picker overlay is open, recording why.
     picker_mode: Mutex<Option<PickerMode>>,
@@ -169,6 +216,7 @@ struct AppState {
 pub fn run() {
     let (zones_tx, _) = watch::channel(Vec::new());
     let (paused_tx, _) = watch::channel(false);
+    let (exclusions_tx, _) = watch::channel(Vec::new());
 
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -177,12 +225,16 @@ pub fn run() {
             config_path: config_file_path(),
             running: Mutex::new(None),
             paused: Mutex::new(false),
+            adjust_mode: Mutex::new(false),
             zones_tx,
             paused_tx,
+            exclusions_tx,
             warnings: Mutex::new(Vec::new()),
             registered: Mutex::new(RegisteredHotkeys::default()),
             toggle_item: Mutex::new(None),
             pause_item: Mutex::new(None),
+            adjust_item: Mutex::new(None),
+            fullscreen_item: Mutex::new(None),
             tray: Mutex::new(None),
             picker_mode: Mutex::new(None),
         })
@@ -191,12 +243,17 @@ pub fn run() {
             stop_translation,
             get_status,
             toggle_pause_translation,
+            toggle_adjust_mode,
+            set_capture_mode,
             rename_zone,
             delete_zone,
+            update_zone_region,
             open_zone_picker,
             get_picker_mode,
             commit_zone_drag,
             cancel_zone_drag,
+            exclude_block,
+            delete_excluded_block,
             get_text_style,
             set_text_style
         ])
@@ -279,9 +336,26 @@ fn load_config(path: &Path) -> Result<AppConfig, String> {
     Ok(config)
 }
 
+/// The monitor's system name, owned (`Monitor::name` borrows).
+fn monitor_name(monitor: &Monitor) -> String {
+    monitor.name().cloned().unwrap_or_default()
+}
+
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Start Translation", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause Translation", false, None::<&str>)?;
+    let adjust = MenuItem::with_id(app, "adjust", "Enter Adjust Mode", true, None::<&str>)?;
+    // Full-screen mode is a capture target, so its tray entry shows the
+    // current state with a checkmark. Monitor choice lives in the Results
+    // Window's mode panel (a dropdown, bad tray material).
+    let fullscreen = CheckMenuItem::with_id(
+        app,
+        "fullscreen",
+        "Full-Screen Mode",
+        true,
+        false,
+        None::<&str>,
+    )?;
     let new_zone = MenuItem::with_id(app, "new-zone", "New Capture Zone", true, None::<&str>)?;
     let one_shot = MenuItem::with_id(app, "one-shot", "One-shot Capture", true, None::<&str>)?;
     let open_config =
@@ -293,6 +367,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         &[
             &toggle,
             &pause,
+            &adjust,
+            &separator,
+            &fullscreen,
             &separator,
             &new_zone,
             &one_shot,
@@ -304,6 +381,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let state = app.state::<AppState>();
     *state.toggle_item.lock().unwrap() = Some(toggle);
     *state.pause_item.lock().unwrap() = Some(pause);
+    *state.adjust_item.lock().unwrap() = Some(adjust);
+    *state.fullscreen_item.lock().unwrap() = Some(fullscreen);
 
     // Tray menu events are handled here only (not via Builder::on_menu_event)
     // so each item fires exactly once.
@@ -321,6 +400,26 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = toggle_translation(app);
             }
             "pause" => toggle_pause(app),
+            "adjust" => {
+                let state = app.state::<AppState>();
+                let next = !*state.adjust_mode.lock().unwrap();
+                set_adjust_mode(app, next);
+            }
+            "fullscreen" => {
+                // The checkmark flips to the other target.
+                let state = app.state::<AppState>();
+                let current = match &*state.config.lock().unwrap() {
+                    Some(Ok(config)) => config.mode.target,
+                    _ => CaptureMode::Zones,
+                };
+                let next = match current {
+                    CaptureMode::Zones => CaptureMode::FullScreen,
+                    CaptureMode::FullScreen => CaptureMode::Zones,
+                };
+                if let Err(message) = set_capture_mode_inner(app, next, None) {
+                    push_warning(&state, message);
+                }
+            }
             "new-zone" => {
                 let _ = open_picker(app, PickerMode::Zone);
             }
@@ -380,6 +479,7 @@ fn install_hotkeys(app: &AppHandle) -> tauri::Result<()> {
         ("toggle", (&hotkeys.toggle_translation, Bind::Toggle)),
         ("new_zone", (&hotkeys.new_zone, Bind::NewZone)),
         ("pause", (&hotkeys.pause_translation, Bind::Pause)),
+        ("adjust_mode", (&hotkeys.adjust_mode, Bind::Adjust)),
         ("one_shot", (&hotkeys.one_shot_capture, Bind::OneShot)),
     ] {
         let (accel, slot) = bind;
@@ -389,6 +489,7 @@ fn install_hotkeys(app: &AppHandle) -> tauri::Result<()> {
                     Bind::Toggle => registered.toggle = Some(shortcut),
                     Bind::NewZone => registered.new_zone = Some(shortcut),
                     Bind::Pause => registered.pause = Some(shortcut),
+                    Bind::Adjust => registered.adjust = Some(shortcut),
                     Bind::OneShot => registered.one_shot = Some(shortcut),
                 },
                 Err(e) => warnings.push(format!(
@@ -409,6 +510,7 @@ enum Bind {
     Toggle,
     NewZone,
     Pause,
+    Adjust,
     OneShot,
 }
 
@@ -425,6 +527,8 @@ fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) 
         Some(Bind::NewZone)
     } else if registered.pause.as_ref() == Some(pressed) {
         Some(Bind::Pause)
+    } else if registered.adjust.as_ref() == Some(pressed) {
+        Some(Bind::Adjust)
     } else if registered.one_shot.as_ref() == Some(pressed) {
         Some(Bind::OneShot)
     } else {
@@ -440,6 +544,11 @@ fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) 
         Some(Bind::NewZone) => {
             let _ = open_picker(app, PickerMode::Zone);
         }
+        Some(Bind::Adjust) => {
+            let state = app.state::<AppState>();
+            let next = !*state.adjust_mode.lock().unwrap();
+            set_adjust_mode(app, next);
+        }
         Some(Bind::OneShot) => {
             let _ = open_picker(app, PickerMode::OneShot);
         }
@@ -453,6 +562,11 @@ fn apply_state(app: &AppHandle) {
     let state = app.state::<AppState>();
     let running = state.running.lock().unwrap().is_some();
     let paused = *state.paused.lock().unwrap();
+    let adjusting = *state.adjust_mode.lock().unwrap();
+    let fullscreen = match &*state.config.lock().unwrap() {
+        Some(Ok(config)) => matches!(config.mode.target, CaptureMode::FullScreen),
+        _ => false,
+    };
 
     if let Some(item) = state.toggle_item.lock().unwrap().as_ref() {
         let _ = item.set_text(if running {
@@ -469,7 +583,18 @@ fn apply_state(app: &AppHandle) {
             "Pause Translation"
         });
     }
+    if let Some(item) = state.adjust_item.lock().unwrap().as_ref() {
+        let _ = item.set_text(if adjusting {
+            "Exit Adjust Mode"
+        } else {
+            "Enter Adjust Mode"
+        });
+    }
+    if let Some(item) = state.fullscreen_item.lock().unwrap().as_ref() {
+        let _ = item.set_checked(fullscreen);
+    }
     if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+        let mode_note = if fullscreen { " · full screen" } else { "" };
         let tooltip = if !running {
             "Langception — stopped"
         } else if paused {
@@ -477,7 +602,7 @@ fn apply_state(app: &AppHandle) {
         } else {
             "Langception — running"
         };
-        let _ = tray.set_tooltip(Some(tooltip));
+        let _ = tray.set_tooltip(Some(format!("{tooltip}{mode_note}")));
     }
     let _ = app.emit("engine-state", &status_for(app));
 }
@@ -486,64 +611,127 @@ fn status_for(app: &AppHandle) -> Status {
     let state = app.state::<AppState>();
     let running = state.running.lock().unwrap().is_some();
     let paused = *state.paused.lock().unwrap();
+    let adjust_mode = *state.adjust_mode.lock().unwrap();
     let warnings = state.warnings.lock().unwrap().clone();
     let config_path = state.config_path.display().to_string();
 
+    // Monitors drive the full-screen dropdown and the zones' enabled flags.
+    // On a (rare) enumeration failure the list is empty but every zone stays
+    // reported as enabled — see zone_monitor_present.
+    let monitors = app.available_monitors().unwrap_or_default();
+    let primary = app.primary_monitor().ok().flatten();
+    // Monitor has no is_primary(); position equality identifies it (monitors
+    // never overlap).
+    let is_primary = |m: &Monitor| {
+        primary
+            .as_ref()
+            .is_some_and(|p| p.position() == m.position())
+    };
+
     let default_hotkeys = HotkeyStatus::default();
-    let (config_error, language, zones, cadence_ms, glossary_terms, hotkeys, text_style) =
-        match &*state.config.lock().unwrap() {
-            Some(Ok(config)) => (
-                None,
-                config.source.language.code().to_string(),
-                config
-                    .zones
-                    .iter()
-                    .map(|zone| ZoneStatus {
-                        id: zone.id.clone(),
-                        name: zone.name.clone(),
-                        region: format!(
-                            "{},{} {}×{}",
-                            zone.region.x, zone.region.y, zone.region.width, zone.region.height
-                        ),
-                    })
-                    .collect(),
-                config.capture.cadence_ms,
-                config.glossary.0.len(),
-                HotkeyStatus {
-                    toggle: config.hotkeys.toggle_translation.clone(),
-                    new_zone: config.hotkeys.new_zone.clone(),
-                    pause: config.hotkeys.pause_translation.clone(),
-                    one_shot: config.hotkeys.one_shot_capture.clone(),
-                },
-                TextStyleDto::from(&config.text_style),
-            ),
-            Some(Err(message)) => (
-                Some(message.clone()),
-                "-".into(),
-                Vec::new(),
-                0,
-                0,
-                default_hotkeys,
-                TextStyleDto::default(),
-            ),
-            None => (
-                Some("config not loaded yet".into()),
-                "-".into(),
-                Vec::new(),
-                0,
-                0,
-                default_hotkeys,
-                TextStyleDto::default(),
-            ),
-        };
+    let (
+        config_error,
+        language,
+        mode,
+        fullscreen_monitor,
+        zones,
+        excluded_blocks,
+        cadence_ms,
+        glossary_terms,
+        hotkeys,
+        text_style,
+    ) = match &*state.config.lock().unwrap() {
+        Some(Ok(config)) => (
+            None,
+            config.source.language.code().to_string(),
+            match config.mode.target {
+                CaptureMode::Zones => "zones",
+                CaptureMode::FullScreen => "fullscreen",
+            }
+            .to_string(),
+            config.mode.fullscreen_monitor.clone(),
+            config
+                .zones
+                .iter()
+                .map(|zone| ZoneStatus {
+                    id: zone.id.clone(),
+                    name: zone.name.clone(),
+                    region: format!(
+                        "{},{} {}×{}",
+                        zone.region.x, zone.region.y, zone.region.width, zone.region.height
+                    ),
+                    monitor: zone.monitor.clone(),
+                    enabled: zone_monitor_present(&monitors, primary.as_ref(), &zone.monitor),
+                })
+                .collect(),
+            config
+                .excluded_blocks
+                .iter()
+                .map(|e| ExcludedStatus {
+                    id: e.id.clone(),
+                    monitor: e.monitor.clone(),
+                    label: e.label.clone(),
+                    region: format!(
+                        "{},{} {}×{}",
+                        e.region.x, e.region.y, e.region.width, e.region.height
+                    ),
+                })
+                .collect(),
+            config.capture.cadence_ms,
+            config.glossary.0.len(),
+            HotkeyStatus {
+                toggle: config.hotkeys.toggle_translation.clone(),
+                new_zone: config.hotkeys.new_zone.clone(),
+                pause: config.hotkeys.pause_translation.clone(),
+                adjust: config.hotkeys.adjust_mode.clone(),
+                one_shot: config.hotkeys.one_shot_capture.clone(),
+            },
+            TextStyleDto::from(&config.text_style),
+        ),
+        Some(Err(message)) => (
+            Some(message.clone()),
+            "-".into(),
+            "zones".into(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            default_hotkeys,
+            TextStyleDto::default(),
+        ),
+        None => (
+            Some("config not loaded yet".into()),
+            "-".into(),
+            "zones".into(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            0,
+            0,
+            default_hotkeys,
+            TextStyleDto::default(),
+        ),
+    };
 
     Status {
         running,
         paused,
+        adjust_mode,
         config_error,
         warnings,
         language,
+        mode,
+        fullscreen_monitor,
+        monitors: monitors
+            .iter()
+            .map(|m| MonitorStatus {
+                name: monitor_name(m),
+                primary: is_primary(m),
+            })
+            .collect(),
         zones,
+        excluded_blocks,
         cadence_ms,
         glossary_terms,
         hotkeys,
@@ -640,14 +828,17 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     };
     drop(config_guard);
 
-    // A fresh loop starts unpaused, watching the current zones. Subscribe
+    // A fresh loop starts unpaused, watching the target's regions (zones, or
+    // the full-screen monitor) and the Excluded Blocks in force. Subscribe
     // BEFORE sending: a watch::send with zero receivers does not store the
-    // value, so a later subscriber would see an empty zone list.
+    // value, so a later subscriber would see an empty list.
     let zones_rx = state.zones_tx.subscribe();
     let paused_rx = state.paused_tx.subscribe();
+    let excluded_rx = state.exclusions_tx.subscribe();
     let _ = state.paused_tx.send(false);
     *state.paused.lock().unwrap() = false;
-    let _ = state.zones_tx.send(config.zones.clone());
+    let _ = state.zones_tx.send(active_zones(app, &config));
+    let _ = state.exclusions_tx.send(active_exclusions(&config));
 
     let pipeline = build_pipeline(&config)?;
     let (events_tx, events_rx) = mpsc::unbounded_channel();
@@ -672,6 +863,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         pipeline.glossary,
         zones_rx,
         paused_rx,
+        excluded_rx,
         events_tx,
     );
     let orchestrator_task = tauri::async_runtime::spawn(orchestrator.run());
@@ -697,7 +889,13 @@ fn stop_loop(app: &AppHandle) {
     *state.paused.lock().unwrap() = false;
     let _ = state.paused_tx.send(false);
     // Nothing new is translated and stale Thai must not linger on screen.
-    crate::overlay::clear_and_hide(app);
+    // While Adjust Mode is on the overlays stay visible (they carry the
+    // draggable zone rectangles), so only their blocks are cleared.
+    if *state.adjust_mode.lock().unwrap() {
+        crate::overlay::clear_all(app);
+    } else {
+        crate::overlay::clear_and_hide(app);
+    }
     apply_state(app);
 }
 
@@ -742,6 +940,245 @@ fn open_config_folder(app: &AppHandle) {
     let _ = std::process::Command::new("explorer").arg(dir).spawn();
 }
 
+// ---- Capture target (zones vs full-screen) + Adjust Mode ----
+
+/// Whether a zone's monitor (by system name; empty = the primary, the
+/// legacy default) is present. One policy for every caller: when monitor
+/// enumeration fails, assume present and let the loop surface the real
+/// errors — silently watching nothing would hide the failure.
+fn zone_monitor_present(monitors: &[Monitor], primary: Option<&Monitor>, name: &str) -> bool {
+    if monitors.is_empty() {
+        return true; // enumeration failed: assume present
+    }
+    if name.is_empty() {
+        return primary.is_some();
+    }
+    monitors
+        .iter()
+        .any(|m| m.name().map(|n| n.as_str()) == Some(name))
+}
+
+/// The zones the loop watches for the config's current capture target:
+/// in zones mode, every zone whose monitor is present (unplugged monitors
+/// disable their zones without deleting them); in full-screen mode, one
+/// synthetic zone spanning the selected monitor.
+fn active_zones(app: &AppHandle, config: &AppConfig) -> Vec<Zone> {
+    match config.mode.target {
+        CaptureMode::Zones => {
+            let monitors = app.available_monitors().unwrap_or_default();
+            let primary = app.primary_monitor().ok().flatten();
+            config
+                .zones
+                .iter()
+                .filter(|zone| zone_monitor_present(&monitors, primary.as_ref(), &zone.monitor))
+                .cloned()
+                .collect()
+        }
+        CaptureMode::FullScreen => match fullscreen_watch_monitor(app, config) {
+            Ok(monitor) => {
+                let origin = monitor.position();
+                let size = monitor.size();
+                vec![Zone {
+                    id: FULLSCREEN_ZONE_ID.to_string(),
+                    name: FULLSCREEN_ZONE_NAME.to_string(),
+                    monitor: monitor_name(&monitor),
+                    region: Region {
+                        x: origin.x,
+                        y: origin.y,
+                        width: size.width,
+                        height: size.height,
+                    },
+                }]
+            }
+            // No monitor query → nothing to watch; that must not be silent.
+            Err(message) => {
+                push_warning(
+                    &app.state::<AppState>(),
+                    format!("full-screen mode watches nothing: {message}"),
+                );
+                Vec::new()
+            }
+        },
+    }
+}
+
+/// The Excluded Blocks in force for the config's current target: all of
+/// them in full-screen mode, none in zones mode (CONTEXT.md: exclusions
+/// are consulted in full-screen mode).
+fn active_exclusions(config: &AppConfig) -> Vec<ExcludedBlock> {
+    match config.mode.target {
+        CaptureMode::Zones => Vec::new(),
+        CaptureMode::FullScreen => config.excluded_blocks.clone(),
+    }
+}
+
+/// The monitor full-screen mode watches: the configured one by system name,
+/// the primary when the config value is empty — and, when the configured
+/// monitor is unplugged, the primary with a visible warning (full-screen
+/// mode must keep working, not vanish).
+fn fullscreen_watch_monitor(app: &AppHandle, config: &AppConfig) -> Result<Monitor, String> {
+    let monitors = app
+        .available_monitors()
+        .map_err(|e| format!("cannot enumerate monitors: {e}"))?;
+    let wanted = config.mode.fullscreen_monitor.as_str();
+    if !wanted.is_empty() {
+        if let Some(monitor) = monitors.iter().find(|m| m.name().map(|n| n.as_str()) == Some(wanted)) {
+            return Ok(monitor.clone());
+        }
+        push_warning(
+            &app.state::<AppState>(),
+            format!(
+                "full-screen monitor \"{wanted}\" is not connected — using the primary monitor"
+            ),
+        );
+    }
+    app.primary_monitor()
+        .map_err(|e| format!("cannot query the primary monitor: {e}"))?
+        .ok_or_else(|| "no primary monitor found".to_string())
+}
+
+/// The adjust payload for one overlay's monitor: whether Adjust Mode is on,
+/// whether the capture target is full-screen, and the zone rectangles on
+/// this monitor (physical px, monitor-relative). In full-screen mode the
+/// zones panel stays empty — blocks are excluded by clicking them instead.
+fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
+    let state = app.state::<AppState>();
+    let (target, zones) = match &*state.config.lock().unwrap() {
+        Some(Ok(config)) => (config.mode.target, config.zones.clone()),
+        _ => (CaptureMode::Zones, Vec::new()),
+    };
+    let fullscreen = matches!(target, CaptureMode::FullScreen);
+    let origin = monitor.position();
+    let size = monitor.size();
+    let name = monitor_name(monitor);
+
+    // A zone shows up on the monitor it belongs to (by name; legacy zones
+    // with no monitor follow their region's center). Disabled zones have no
+    // monitor to appear on.
+    let zone_rects = if fullscreen {
+        Vec::new()
+    } else {
+        zones
+            .iter()
+            .filter(|zone| {
+                if !zone.monitor.is_empty() {
+                    zone.monitor == name
+                } else {
+                    let center_x = zone.region.x + zone.region.width as i32 / 2;
+                    let center_y = zone.region.y + zone.region.height as i32 / 2;
+                    center_x >= origin.x
+                        && center_x < origin.x + size.width as i32
+                        && center_y >= origin.y
+                        && center_y < origin.y + size.height as i32
+                }
+            })
+            .map(|zone| AdjustZone {
+                id: zone.id.clone(),
+                name: zone.name.clone(),
+                x: zone.region.x - origin.x,
+                y: zone.region.y - origin.y,
+                width: zone.region.width,
+                height: zone.region.height,
+            })
+            .collect()
+    };
+
+    AdjustPayload {
+        active: true,
+        fullscreen,
+        zones: zone_rects,
+        origin_x: origin.x,
+        origin_y: origin.y,
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdjustPayload {
+    active: bool,
+    fullscreen: bool,
+    zones: Vec<AdjustZone>,
+    /// This monitor's origin in global physical px, so the page can send
+    /// global coordinates back (exclusion rects, adjusted zone regions).
+    origin_x: i32,
+    origin_y: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AdjustZone {
+    id: String,
+    name: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+/// Sets Adjust Mode on or off: overlay click-through switches off (zones
+/// draggable/resizable, full-screen blocks clickable) and back on.
+fn set_adjust_mode(app: &AppHandle, active: bool) {
+    let state = app.state::<AppState>();
+    *state.adjust_mode.lock().unwrap() = active;
+
+    if active {
+        // The transient picker must be gone: Adjust Mode owns the overlays'
+        // interactivity.
+        close_picker(app);
+        // The overlays must exist even while translation is stopped (zones
+        // are adjustable without the loop running).
+        match crate::overlay::ensure_overlays(app) {
+            Ok(overlays) => {
+                for (label, monitor) in overlays {
+                    if let Some(window) = app.get_webview_window(&label) {
+                        let _ = window.set_ignore_cursor_events(false);
+                    }
+                    let _ = app.emit_to(&label, "overlay-adjust", &adjust_payload_for(app, &monitor));
+                }
+            }
+            Err(message) => {
+                push_warning(&state, format!("Adjust Mode unavailable: {message}"));
+                *state.adjust_mode.lock().unwrap() = false;
+            }
+        }
+    } else {
+        for window in crate::overlay::overlay_windows(app) {
+            let _ = app.emit_to(
+                window.label(),
+                "overlay-adjust",
+                &AdjustPayload {
+                    active: false,
+                    fullscreen: false,
+                    zones: Vec::new(),
+                    origin_x: 0,
+                    origin_y: 0,
+                },
+            );
+            let _ = window.set_ignore_cursor_events(true);
+        }
+        // Adjust Mode created or showed the overlays; without the loop there
+        // is nothing to see on them.
+        if state.running.lock().unwrap().is_none() {
+            crate::overlay::hide_all(app);
+        }
+    }
+    apply_state(app);
+}
+
+/// Re-sends the adjust payloads (zone rects moved, target switched) while
+/// Adjust Mode is on; no-op otherwise.
+fn refresh_adjust_overlays(app: &AppHandle) {
+    let adjusting = *app.state::<AppState>().adjust_mode.lock().unwrap();
+    if !adjusting {
+        return;
+    }
+    if let Ok(overlays) = crate::overlay::ensure_overlays(app) {
+        for (label, monitor) in overlays {
+            let _ = app.emit_to(&label, "overlay-adjust", &adjust_payload_for(app, &monitor));
+        }
+    }
+}
+
 // ---- Capture Zone picker overlay ----
 
 /// Opens (or toggles closed) the fullscreen picker overlay.
@@ -750,6 +1187,13 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
     if let Some(existing) = app.get_webview_window(PICKER_LABEL) {
         let _ = existing.destroy();
         return Ok(());
+    }
+
+    // The picker owns the overlays' attention while it is open: leave
+    // Adjust Mode first (its interactive zone rectangles would fight the
+    // dim + drag session).
+    if *app.state::<AppState>().adjust_mode.lock().unwrap() {
+        set_adjust_mode(app, false);
     }
 
     // The dim + selection must not fight with already-rendered translations.
@@ -858,7 +1302,7 @@ fn next_zone_name(config: &AppConfig) -> String {
 fn with_config_mut(
     app: &AppHandle,
     edit: impl FnOnce(&mut AppConfig) -> Result<(), String>,
-) -> Result<Vec<Zone>, String> {
+) -> Result<AppConfig, String> {
     let state = app.state::<AppState>();
     let mut guard = state.config.lock().unwrap();
     let config = match &mut *guard {
@@ -868,7 +1312,7 @@ fn with_config_mut(
     };
     edit(config)?;
     save_config(config, &state.config_path)?;
-    Ok(config.zones.clone())
+    Ok(config.clone())
 }
 
 // ---- Commands invoked from the Results Window and the picker ----
@@ -914,7 +1358,7 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
             }
         }
     }
-    let zones = with_config_mut(&app, |config| {
+    let config = with_config_mut(&app, |config| {
         let zone = config
             .zones
             .iter_mut()
@@ -923,7 +1367,7 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
         zone.name = name;
         Ok(())
     })?;
-    let _ = state.zones_tx.send(zones);
+    let _ = state.zones_tx.send(active_zones(&app, &config));
     apply_state(&app);
     Ok(())
 }
@@ -931,7 +1375,7 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
 #[tauri::command]
 fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let zones = with_config_mut(&app, |config| {
+    let config = with_config_mut(&app, |config| {
         let before = config.zones.len();
         config.zones.retain(|z| z.id != id);
         if config.zones.len() == before {
@@ -939,7 +1383,7 @@ fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
         }
         Ok(())
     })?;
-    let _ = state.zones_tx.send(zones);
+    let _ = state.zones_tx.send(active_zones(&app, &config));
     // Its translations must not linger on the overlay either.
     crate::overlay::clear_zone(&app, &id);
     apply_state(&app);
@@ -987,8 +1431,10 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
     match mode {
         PickerMode::Zone => {
             // Persist the zone first so a failed save keeps the overlay open
-            // with the error visible in it.
-            let zones = with_config_mut(&app, |config| {
+            // with the error visible in it. The picker covers the primary
+            // monitor, so the new zone remembers it.
+            let name = monitor_name(&monitor);
+            let config = with_config_mut(&app, |config| {
                 config.zones.push(Zone {
                     id: format!(
                         "z{}",
@@ -998,12 +1444,13 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
                             .unwrap_or(0)
                     ),
                     name: next_zone_name(config),
+                    monitor: name.clone(),
                     region,
                 });
                 Ok(())
             })?;
             close_picker(&app);
-            let _ = state.zones_tx.send(zones);
+            let _ = state.zones_tx.send(active_zones(&app, &config));
             // Zones are what the loop watches: creating the first one starts
             // translation (matches the tray's Start).
             if state.running.lock().unwrap().is_none() {
@@ -1025,8 +1472,9 @@ fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> 
                 None => return Err("config not loaded yet".into()),
             };
             let pipeline = build_pipeline(&config)?;
+            let exclusions = active_exclusions(&config);
             close_picker(&app);
-            run_one_shot(&app, pipeline, region);
+            run_one_shot(&app, pipeline, region, exclusions);
             Ok(())
         }
     }
@@ -1065,14 +1513,188 @@ fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
     Ok(())
 }
 
+// ---- Adjust Mode, capture target, Excluded Blocks (ticket 04) ----
+
+/// Alt+A / tray / Results Window button.
+#[tauri::command]
+fn toggle_adjust_mode(app: AppHandle) {
+    let active = *app.state::<AppState>().adjust_mode.lock().unwrap();
+    set_adjust_mode(&app, !active);
+}
+
+/// Switches the capture target (and, for full-screen, the watched monitor).
+/// While the loop runs it is retargeted live; its old pills are cleared.
+#[tauri::command]
+fn set_capture_mode(app: AppHandle, mode: String, monitor: String) -> Result<(), String> {
+    let target = match mode.as_str() {
+        "zones" => CaptureMode::Zones,
+        "fullscreen" => CaptureMode::FullScreen,
+        other => return Err(format!("unknown capture mode \"{other}\"")),
+    };
+    set_capture_mode_inner(&app, target, Some(monitor))
+}
+
+/// Shared by the tray item (which passes no monitor — it only flips the
+/// target) and the [`set_capture_mode`] command.
+fn set_capture_mode_inner(
+    app: &AppHandle,
+    target: CaptureMode,
+    monitor: Option<String>,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let config = with_config_mut(app, |config| {
+        config.mode.target = target;
+        // A monitor choice only matters in full-screen mode; switching to
+        // zones mode must not wipe the remembered monitor.
+        if let Some(monitor) = monitor {
+            if matches!(target, CaptureMode::FullScreen) {
+                config.mode.fullscreen_monitor = monitor.trim().to_string();
+            }
+        }
+        Ok(())
+    })?;
+    let _ = state.zones_tx.send(active_zones(app, &config));
+    let _ = state.exclusions_tx.send(active_exclusions(&config));
+    // Pills from the previous target must not linger: a zone pill and a
+    // full-screen pill for the same text are different display entries.
+    crate::overlay::clear_all(app);
+    // The overlays' adjust view follows the target switch too.
+    refresh_adjust_overlays(app);
+    apply_state(app);
+    Ok(())
+}
+
+/// A zone rect dropped in Adjust Mode: global physical px, converted from
+/// CSS by the overlay page. The loop picks the new region up on its next
+/// tick without losing per-block tracking (same channel as zone creation).
+#[tauri::command]
+fn update_zone_region(
+    app: AppHandle,
+    id: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        return Err("Zone width and height must be greater than zero".into());
+    }
+    let state = app.state::<AppState>();
+    let config = with_config_mut(&app, |config| {
+        let zone = config
+            .zones
+            .iter_mut()
+            .find(|z| z.id == id)
+            .ok_or_else(|| "zone not found (was it deleted elsewhere?)".to_string())?;
+        zone.region = Region {
+            x,
+            y,
+            width,
+            height,
+        };
+        Ok(())
+    })?;
+    let _ = state.zones_tx.send(active_zones(&app, &config));
+    refresh_adjust_overlays(&app);
+    apply_state(&app);
+    Ok(())
+}
+
+/// The overlay page reports a clicked block (its OCR box, global physical
+/// px) as an Excluded Block. Adjust Mode is on and full-screen is the
+/// target when the page offers the click; the shell trusts both.
+#[tauri::command]
+fn exclude_block(
+    app: AppHandle,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    label: String,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let monitor = monitor_name_at(&app, x + width as i32 / 2, y + height as i32 / 2);
+    let exclusion = ExcludedBlock {
+        id: format!(
+            "x{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ),
+        monitor,
+        region: Region {
+            x,
+            y,
+            width: width.max(1),
+            height: height.max(1),
+        },
+        label: label.trim().to_string(),
+    };
+    let config = with_config_mut(&app, |config| {
+        config.excluded_blocks.push(exclusion.clone());
+        Ok(())
+    })?;
+    // Active immediately in full-screen mode (the orchestrator stops
+    // translating the position on its next pass).
+    let _ = state.exclusions_tx.send(active_exclusions(&config));
+    apply_state(&app);
+    Ok(())
+}
+
+/// Clears one exclusion from the Results Window's list: the block at that
+/// position is translated again (its dedup state was dropped while
+/// excluded, so the very next pass re-translates it).
+#[tauri::command]
+fn delete_excluded_block(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let config = with_config_mut(&app, |config| {
+        let before = config.excluded_blocks.len();
+        config.excluded_blocks.retain(|e| e.id != id);
+        if config.excluded_blocks.len() == before {
+            return Err("excluded block not found (was it cleared elsewhere?)".into());
+        }
+        Ok(())
+    })?;
+    let _ = state.exclusions_tx.send(active_exclusions(&config));
+    apply_state(&app);
+    Ok(())
+}
+
+/// The monitor whose bounds contain the point, by name; empty when none
+/// matches (the label is display-only).
+fn monitor_name_at(app: &AppHandle, x: i32, y: i32) -> String {
+    app.available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|m| {
+            let origin = m.position();
+            let size = m.size();
+            x >= origin.x
+                && x < origin.x + size.width as i32
+                && y >= origin.y
+                && y < origin.y + size.height as i32
+        })
+        .and_then(|m| m.name().map(|n| n.to_string()))
+        .unwrap_or_default()
+}
+
 /// One OCR+translate pass into the Results Window, independent of the
 /// running loop (it works while stopped, paused, or running). All fallible
 /// setup (config, engine) happens in `commit_zone_drag` before the picker
 /// closes, so this only spawns.
-fn run_one_shot(app: &AppHandle, pipeline: Pipeline, region: Region) {
-    // A one-shot pass is outside the zone loop: fresh, empty channels.
+fn run_one_shot(
+    app: &AppHandle,
+    pipeline: Pipeline,
+    region: Region,
+    exclusions: Vec<ExcludedBlock>,
+) {
+    // A one-shot pass is outside the zone loop: fresh, empty channels. The
+    // exclusions in force match the current capture target, so a full-screen
+    // user one-shotting an area gets the same hiding behavior as the loop.
     let (_zones_tx, zones_rx) = watch::channel(Vec::new());
     let (_paused_tx, paused_rx) = watch::channel(false);
+    let (_excluded_tx, excluded_rx) = watch::channel(exclusions);
     let (events_tx, events_rx) = mpsc::unbounded_channel();
 
     let orchestrator = Orchestrator::new(
@@ -1084,6 +1706,7 @@ fn run_one_shot(app: &AppHandle, pipeline: Pipeline, region: Region) {
         pipeline.glossary,
         zones_rx,
         paused_rx,
+        excluded_rx,
         events_tx,
     );
 

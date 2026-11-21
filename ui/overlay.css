@@ -36,3 +36,133 @@ body {
   paint-order: stroke fill;
   -webkit-text-stroke-width: 2px;
 }
+
+/* ---- Adjust Mode (Alt+A): the shell switches click-through off and this
+   page becomes interactive — zone rectangles draggable/resizable, pills
+   clickable (full-screen mode) to mark Excluded Blocks. ---- */
+
+body.adjust {
+  pointer-events: auto;
+  cursor: default;
+}
+
+body.adjust .overlay-block {
+  pointer-events: auto;
+}
+
+body.adjust .overlay-block:hover {
+  outline: 1px dashed rgba(255, 255, 255, 0.7);
+  cursor: pointer; /* full-screen mode: click marks the block excluded */
+}
+
+#adjust-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none; /* children opt back in individually */
+}
+
+#adjust-note {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 80vw;
+  padding: 6px 14px;
+  border-radius: 0 0 8px 8px;
+  background: rgba(20, 20, 24, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-top: none;
+  color: #fff;
+  font-family: "Noto Sans Thai", "Segoe UI", sans-serif;
+  font-size: 13px;
+  z-index: 10000;
+}
+
+#adjust-note.error {
+  background: rgba(120, 20, 20, 0.92);
+}
+
+.hidden {
+  display: none;
+}
+
+.zone-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px dashed #7fd4ff;
+  background: rgba(127, 212, 255, 0.08);
+  cursor: move;
+  pointer-events: auto;
+  z-index: 9000;
+}
+
+.zone-rect:hover {
+  border-color: #b7e7ff;
+  background: rgba(127, 212, 255, 0.14);
+}
+
+.zone-label {
+  position: absolute;
+  top: -20px;
+  left: -1.5px;
+  padding: 1px 8px;
+  border-radius: 3px 3px 0 0;
+  background: #7fd4ff;
+  color: #10222c;
+  font-family: "Segoe UI", sans-serif;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Resize handles: 4.5px squares centered on the edges/corners (negative
+   offset = half), so grabbing is easy without bloating the border. */
+.zone-handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  background: #7fd4ff;
+  border: 1px solid #fff;
+  border-radius: 2px;
+  z-index: 1;
+}
+
+.handle-n {
+  top: -5px;
+  left: calc(50% - 5px);
+}
+
+.handle-s {
+  bottom: -5px;
+  left: calc(50% - 5px);
+}
+
+.handle-e {
+  right: -5px;
+  top: calc(50% - 5px);
+}
+
+.handle-w {
+  left: -5px;
+  top: calc(50% - 5px);
+}
+
+.handle-ne {
+  top: -5px;
+  right: -5px;
+}
+
+.handle-nw {
+  top: -5px;
+  left: -5px;
+}
+
+.handle-se {
+  bottom: -5px;
+  right: -5px;
+}
+
+.handle-sw {
+  bottom: -5px;
+  left: -5px;
+}

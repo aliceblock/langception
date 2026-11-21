@@ -12,12 +12,35 @@
         <span class="logo">L</span>
         <h1>Langception</h1>
         <span id="status-pill" class="pill stopped">Stopped</span>
+        <span id="adjust-chip" class="chip hidden">Adjust</span>
         <button id="pause-btn" class="btn" disabled>Pause</button>
+        <button id="adjust-btn" class="btn">Adjust</button>
         <button id="toggle-btn" class="btn">Start</button>
       </div>
       <div id="config-line" class="config-line">loading…</div>
       <div id="warnings-line" class="warnings-line hidden"></div>
     </header>
+
+    <details id="mode-panel" class="zones-panel mode-panel" open>
+      <summary>
+        <span>Capture Target</span>
+        <span class="hint" id="mode-hint"></span>
+      </summary>
+      <div class="mode-grid">
+        <label class="mode-row">
+          <input type="radio" name="capture-target" value="zones" id="mode-zones" />
+          <span>Capture Zones — watch the zones listed below</span>
+        </label>
+        <label class="mode-row">
+          <input type="radio" name="capture-target" value="fullscreen" id="mode-fullscreen" />
+          <span>Full screen — every Text Block on one monitor (minus Excluded Blocks)</span>
+        </label>
+        <label class="mode-row monitor-row" id="monitor-row">
+          <span class="monitor-label">Monitor</span>
+          <select id="monitor-select" class="monitor-select"></select>
+        </label>
+      </div>
+    </details>
 
     <details id="zones-panel" class="zones-panel" open>
       <summary>
@@ -26,6 +49,15 @@
       </summary>
       <ul id="zones-list" class="zones-list"></ul>
       <div id="zones-empty" class="zones-empty hidden"></div>
+    </details>
+
+    <details id="excluded-panel" class="zones-panel">
+      <summary>
+        <span id="excluded-title">Excluded Blocks (0)</span>
+        <span class="hint">full-screen mode skips these positions</span>
+      </summary>
+      <ul id="excluded-list" class="zones-list"></ul>
+      <div id="excluded-empty" class="zones-empty hidden"></div>
     </details>
 
     <details id="style-panel" class="style-panel">

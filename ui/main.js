@@ -1,15 +1,18 @@
 // Langception Results Window — vanilla JS against the Tauri global API.
 // Events from the translation loop: "loop-event" (translated | error) and
-// "engine-state" (status snapshot with the zone list + hotkeys). Zone
-// management (rename/delete) invokes the shell directly. No build step.
+// "engine-state" (status snapshot with the capture target, zone list,
+// Excluded Blocks + hotkeys). Zone/exclusion management (rename/delete/
+// clear) and mode switching invoke the shell directly. No build step.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const { writeText } = window.__TAURI__.clipboardManager;
 
 const statusPill = document.getElementById("status-pill");
+const adjustChip = document.getElementById("adjust-chip");
 const toggleBtn = document.getElementById("toggle-btn");
 const pauseBtn = document.getElementById("pause-btn");
+const adjustBtn = document.getElementById("adjust-btn");
 const configLine = document.getElementById("config-line");
 const warningsLine = document.getElementById("warnings-line");
 const errorBanner = document.getElementById("error-banner");
@@ -22,6 +25,14 @@ const zonesTitle = document.getElementById("zones-title");
 const zonesList = document.getElementById("zones-list");
 const zonesEmpty = document.getElementById("zones-empty");
 const newZoneBtn = document.getElementById("new-zone-btn");
+const modeZones = document.getElementById("mode-zones");
+const modeFullscreen = document.getElementById("mode-fullscreen");
+const monitorSelect = document.getElementById("monitor-select");
+const monitorRow = document.getElementById("monitor-row");
+const modeHint = document.getElementById("mode-hint");
+const excludedTitle = document.getElementById("excluded-title");
+const excludedList = document.getElementById("excluded-list");
+const excludedEmpty = document.getElementById("excluded-empty");
 const styleFont = document.getElementById("style-font");
 const styleSize = document.getElementById("style-size");
 const styleColor = document.getElementById("style-color");
@@ -33,7 +44,17 @@ const styleOpacity = document.getElementById("style-opacity");
 let running = false;
 let paused = false;
 let zones = [];
-let hotkeys = { toggle: "Alt+T", newZone: "Alt+Z", pause: "Alt+P", oneShot: "Alt+Q" };
+let excludedBlocks = [];
+let monitors = [];
+let mode = "zones";
+let fullscreenMonitor = "";
+let hotkeys = {
+  toggle: "Alt+T",
+  newZone: "Alt+Z",
+  pause: "Alt+P",
+  adjust: "Alt+A",
+  oneShot: "Alt+Q",
+};
 let lastError = null; // { stage, message } — stays visible until the next success
 let styleLoaded = false; // inputs initialize from the first status snapshot only
 let styleSaveTimer = null;
@@ -42,6 +63,10 @@ function renderStatus(status) {
   running = status.running;
   paused = status.paused;
   zones = status.zones || [];
+  excludedBlocks = status.excludedBlocks || [];
+  monitors = status.monitors || [];
+  mode = status.mode || "zones";
+  fullscreenMonitor = status.fullscreenMonitor || "";
   if (status.hotkeys) hotkeys = status.hotkeys;
   if (!styleLoaded && status.textStyle) {
     styleLoaded = true;
@@ -61,15 +86,21 @@ function renderStatus(status) {
     statusPill.textContent = "Stopped";
     statusPill.className = "pill stopped";
   }
+  adjustChip.classList.toggle("hidden", !status.adjustMode);
+  adjustBtn.textContent = status.adjustMode ? "Exit Adjust" : "Adjust";
 
   toggleBtn.textContent = running ? "Stop" : "Start";
   toggleBtn.classList.toggle("primary", !running);
   pauseBtn.disabled = !running;
   pauseBtn.textContent = paused ? "Resume" : "Pause";
 
+  const watched =
+    mode === "fullscreen"
+      ? "full-screen mode"
+      : `${zones.filter((z) => z.enabled).length} zone${zones.length === 1 ? "" : "s"}`;
   configLine.textContent = status.configError
     ? `Config: ${status.configPath}`
-    : `${status.language} → ${status.targetLanguage} · ${zones.length} zone${zones.length === 1 ? "" : "s"} · every ${status.cadenceMs}ms · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
+    : `${status.language} → ${status.targetLanguage} · ${watched} · every ${status.cadenceMs}ms · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
 
   if (status.warnings && status.warnings.length > 0) {
     warningsLine.textContent = status.warnings.join("\n");
@@ -78,10 +109,115 @@ function renderStatus(status) {
     warningsLine.classList.add("hidden");
   }
 
-  emptyHint.textContent = `Draw a Capture Zone with ${hotkeys.newZone}, or run a One-shot Capture with ${hotkeys.oneShot}. Translation toggles with ${hotkeys.toggle}, pauses with ${hotkeys.pause}.`;
+  emptyHint.textContent = `Draw a Capture Zone with ${hotkeys.newZone}, or run a One-shot Capture with ${hotkeys.oneShot}. Translation toggles with ${hotkeys.toggle}, pauses with ${hotkeys.pause}, Adjust Mode with ${hotkeys.adjust}.`;
 
+  renderModeControls();
   renderZones();
+  renderExcluded();
   renderErrorBanner();
+}
+
+// ---- Capture Target (zones vs full-screen + monitor) ----
+
+function renderModeControls() {
+  modeZones.checked = mode === "zones";
+  modeFullscreen.checked = mode === "fullscreen";
+  monitorRow.classList.toggle("hidden", mode !== "fullscreen");
+  modeHint.textContent =
+    mode === "fullscreen"
+      ? "watching every block on the selected monitor"
+      : "watching the Capture Zones below";
+  fillMonitorSelect();
+}
+
+function fillMonitorSelect() {
+  // Rebuild only when the option set changed, so the dropdown never resets
+  // while the user is picking.
+  const names = monitors.map((m) => m.name).join("\u0000");
+  if (monitorSelect.dataset.names === names) {
+    monitorSelect.value = fullscreenMonitor || primaryName() || "";
+    return;
+  }
+  monitorSelect.dataset.names = names;
+  monitorSelect.replaceChildren();
+  if (monitors.length === 0) {
+    const option = document.createElement("option");
+    option.textContent = "no monitors detected";
+    option.disabled = true;
+    monitorSelect.append(option);
+    return;
+  }
+  for (const m of monitors) {
+    const option = document.createElement("option");
+    option.value = m.name;
+    option.textContent = m.primary ? `${m.name} (primary)` : m.name;
+    monitorSelect.append(option);
+  }
+  monitorSelect.value = fullscreenMonitor || primaryName() || "";
+}
+
+function primaryName() {
+  const primary = monitors.find((m) => m.primary);
+  return primary ? primary.name : "";
+}
+
+async function applyCaptureMode(target, monitor) {
+  try {
+    await invoke("set_capture_mode", { mode: target, monitor: monitor || "" });
+  } catch (e) {
+    showError("mode", String(e));
+  }
+  renderStatus(await invoke("get_status"));
+}
+
+// ---- Excluded Blocks ----
+
+function renderExcluded() {
+  excludedTitle.textContent = `Excluded Blocks (${excludedBlocks.length})`;
+
+  excludedList.replaceChildren();
+  for (const exclusion of excludedBlocks) {
+    excludedList.append(excludedRow(exclusion));
+  }
+
+  if (excludedBlocks.length === 0) {
+    excludedEmpty.textContent =
+      "Nothing excluded yet — switch to full-screen mode, press Adjust (Alt+A), and click a translation to hide that position permanently.";
+    excludedEmpty.classList.remove("hidden");
+  } else {
+    excludedEmpty.classList.add("hidden");
+  }
+}
+
+function excludedRow(exclusion) {
+  const li = document.createElement("li");
+  li.className = "zone-row excluded-row";
+
+  const label = document.createElement("span");
+  label.className = "excluded-label";
+  label.textContent = exclusion.label || "(unlabeled block)";
+  label.title = `Position ${exclusion.region}${exclusion.monitor ? ` on ${exclusion.monitor}` : ""}`;
+
+  const meta = document.createElement("span");
+  meta.className = "zone-region";
+  meta.textContent = exclusion.region;
+
+  const del = document.createElement("button");
+  del.className = "zone-delete";
+  del.title = "Clear this exclusion (the block translates again)";
+  del.textContent = "✕";
+  del.addEventListener("click", async () => {
+    del.disabled = true;
+    try {
+      await invoke("delete_excluded_block", { id: exclusion.id });
+      renderStatus(await invoke("get_status"));
+    } catch (e) {
+      showError("excluded-block", String(e));
+    }
+  });
+
+  li.append(label, meta, del);
+  return li;
 }
 
 // Engine errors surface visibly: sticky banner + pill, never silent.
@@ -104,7 +240,11 @@ function renderErrorBanner() {
 // ---- Zone management (the minimal list) ----
 
 function renderZones() {
-  zonesTitle.textContent = `Capture Zones (${zones.length})`;
+  const enabledCount = zones.filter((z) => z.enabled).length;
+  zonesTitle.textContent =
+    mode === "fullscreen"
+      ? `Capture Zones (${zones.length} — not watched in full-screen mode)`
+      : `Capture Zones (${enabledCount}${zones.length !== enabledCount ? ` of ${zones.length}` : ""})`;
 
   zonesList.replaceChildren();
   for (const zone of zones) {
@@ -112,7 +252,7 @@ function renderZones() {
   }
 
   if (zones.length === 0) {
-    zonesEmpty.textContent = `No Capture Zones yet — press ${hotkeys.newZone} (or “+ New Zone”) and drag a rectangle over some text.`;
+    zonesEmpty.textContent = `Draw a Capture Zone with ${hotkeys.newZone} (or press "+ New Zone") and drag a rectangle over some text.`;
     zonesEmpty.classList.remove("hidden");
   } else {
     zonesEmpty.classList.add("hidden");
@@ -122,16 +262,17 @@ function renderZones() {
 function zoneRow(zone) {
   const li = document.createElement("li");
   li.className = "zone-row";
+  if (!zone.enabled) li.classList.add("zone-disabled");
 
   const name = document.createElement("button");
   name.className = "zone-name";
   name.title = "Click to rename";
-  name.textContent = zone.name;
+  name.textContent = zone.enabled ? zone.name : `${zone.name} (monitor unplugged)`;
   name.addEventListener("click", () => beginRename(li, zone, name));
 
   const region = document.createElement("span");
   region.className = "zone-region";
-  region.textContent = zone.region;
+  region.textContent = zone.monitor ? `${zone.region} · ${zone.monitor}` : zone.region;
 
   const del = document.createElement("button");
   del.className = "zone-delete";
@@ -141,6 +282,7 @@ function zoneRow(zone) {
     del.disabled = true;
     try {
       await invoke("delete_zone", { id: zone.id });
+      renderStatus(await invoke("get_status"));
     } catch (e) {
       showError("zone", String(e));
     }
@@ -340,6 +482,28 @@ window.addEventListener("DOMContentLoaded", async () => {
     } finally {
       newZoneBtn.disabled = false;
     }
+  });
+
+  adjustBtn.addEventListener("click", async () => {
+    adjustBtn.disabled = true;
+    try {
+      await invoke("toggle_adjust_mode");
+      renderStatus(await invoke("get_status"));
+    } finally {
+      adjustBtn.disabled = false;
+    }
+  });
+
+  modeZones.addEventListener("change", () => {
+    if (modeZones.checked) applyCaptureMode("zones", "");
+  });
+  modeFullscreen.addEventListener("change", () => {
+    if (modeFullscreen.checked) {
+      applyCaptureMode("fullscreen", fullscreenMonitor || primaryName() || monitorSelect.value);
+    }
+  });
+  monitorSelect.addEventListener("change", () => {
+    if (mode === "fullscreen") applyCaptureMode("fullscreen", monitorSelect.value);
   });
 
   for (const control of [styleFont, styleSize, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity]) {

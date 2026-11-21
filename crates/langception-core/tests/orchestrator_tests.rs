@@ -9,8 +9,8 @@ use langception_core::orchestrator::{
     EventOrigin, LoopConfig, LoopEvent, Orchestrator, Stage, Via,
 };
 use langception_core::ports::{
-    CaptureError, CaptureSource, CapturedImage, Clock, OcrEngine, OcrError, Region, SourceLanguage,
-    TextBlock, TranslateEngine, TranslateError, Zone,
+    CaptureError, CaptureSource, CapturedImage, Clock, ExcludedBlock, OcrEngine, OcrError, Region,
+    SourceLanguage, TextBlock, TranslateEngine, TranslateError, Zone,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -44,7 +44,24 @@ fn zone(id: &str, name: &str, region: Region) -> Zone {
     Zone {
         id: id.to_string(),
         name: name.to_string(),
+        monitor: String::new(),
         region,
+    }
+}
+
+/// An exclusion covering `region` in SCREEN coordinates (REGION sits at
+/// 100,100, so region-relative blocks land here at +100/+100).
+fn exclusion(id: &str, x: i32, y: i32, width: u32, height: u32) -> ExcludedBlock {
+    ExcludedBlock {
+        id: id.to_string(),
+        monitor: String::new(),
+        region: Region {
+            x,
+            y,
+            width,
+            height,
+        },
+        label: "Hello".to_string(),
     }
 }
 
@@ -205,10 +222,11 @@ struct Harness {
     clock: Arc<FakeClock>,
     zones_tx: watch::Sender<Vec<Zone>>,
     paused_tx: watch::Sender<bool>,
+    excluded_tx: watch::Sender<Vec<ExcludedBlock>>,
 }
 
 /// The harness starts watching one zone (z1 = REGION), like the app does
-/// after a first zone was drawn.
+/// after a first zone was drawn, with no Excluded Blocks in force.
 async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
@@ -219,6 +237,7 @@ async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
     let (events_tx, events_rx) = mpsc::unbounded_channel();
     let (zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
     let (paused_tx, paused_rx) = watch::channel(false);
+    let (excluded_tx, excluded_rx) = watch::channel(Vec::new());
 
     let orchestrator = Orchestrator::new(
         Arc::new(capture),
@@ -229,6 +248,7 @@ async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
         glossary,
         zones_rx,
         paused_rx,
+        excluded_rx,
         events_tx,
     );
 
@@ -243,6 +263,7 @@ async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
             clock,
             zones_tx,
             paused_tx,
+            excluded_tx,
         },
         orchestrator,
     )
@@ -955,4 +976,176 @@ async fn captured_blocks_are_reported_in_screen_coordinates() {
         }
         other => panic!("expected Translated, got {other:?}"),
     }
+}
+
+// ---- Excluded Blocks (ticket 04) ----
+
+#[tokio::test]
+async fn excluded_blocks_are_never_translated_or_displayed() {
+    let (mut h, mut orch) = harness().await;
+
+    // block(100, 200) sits at screen (200, 300); the exclusion covers it.
+    // A second block at (100, 500) stays translatable.
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 300, 100, 20)])
+        .unwrap();
+    feed_tick(
+        &h,
+        1,
+        vec![block(100, 200, "Hello"), block(100, 500, "World")],
+    )
+    .await;
+    orch.tick().await;
+
+    assert_eq!(
+        h.translate.calls(),
+        ["World"],
+        "the covered block must not reach the translate engine"
+    );
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => assert_eq!(translation, "[TH] World"),
+        other => panic!("expected Translated for the uncovered block, got {other:?}"),
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "the excluded block must not produce any event"
+    );
+
+    // And it stays skipped while the exclusion is in force (never deduped
+    // into silence — it is simply not part of the pipeline).
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["World"]);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "the excluded block must stay silent across ticks"
+    );
+}
+
+#[tokio::test]
+async fn exclusion_tolerates_ocr_jitter_but_not_new_text() {
+    let (mut h, mut orch) = harness().await;
+
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 300, 100, 20)])
+        .unwrap();
+    // 3px of jitter: still overlapping the exclusion by ~85%.
+    feed_tick(&h, 1, vec![block(103, 203, "Hello")]).await;
+    orch.tick().await;
+    assert!(
+        h.translate.calls().is_empty(),
+        "a jittered block at an excluded position must stay excluded"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "no events for the jittered excluded block"
+    );
+
+    // A different block elsewhere is untouched by the exclusion.
+    feed_tick(&h, 1, vec![block(0, 0, "Hi")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hi"]);
+}
+
+#[tokio::test]
+async fn clearing_an_exclusion_translates_the_block_again() {
+    let (mut h, mut orch) = harness().await;
+
+    // Tick 1: block visible and translated ("pill on screen").
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+    let _ = next_event(&mut h.events).await;
+
+    // The user marks it excluded in Adjust Mode: skipped from here on.
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 300, 100, 20)])
+        .unwrap();
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"], "no re-translation while excluded");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "no events for the newly excluded block"
+    );
+
+    // The user clears the exclusion in the Results Window: the block must
+    // be translated again (its dedup state was dropped while excluded).
+    h.excluded_tx.send(vec![]).unwrap();
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello", "Hello"],
+        "clearing the exclusion re-translates the block"
+    );
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => assert_eq!(translation, "[TH] Hello"),
+        other => panic!("expected Translated after clearing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn text_returning_after_removal_is_retranslated() {
+    let (mut h, mut orch) = harness().await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated
+
+    // Gone for two consecutive passes → removed (pill cleared)…
+    feed_tick(&h, 1, vec![]).await;
+    orch.tick().await;
+    feed_tick(&h, 1, vec![]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::BlocksRemoved { .. } => {}
+        other => panic!("expected BlocksRemoved, got {other:?}"),
+    }
+
+    // …then the same text comes back at the same place: it must translate
+    // again (the removal dropped its dedup state, so the screen is not left
+    // untranslated).
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello", "Hello"]);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { .. } => {}
+        other => panic!("expected Translated for the returning block, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn one_shot_pass_honors_exclusions() {
+    let (mut h, mut orch) = harness().await;
+
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 300, 100, 20)])
+        .unwrap();
+    h.images.send(image()).await.unwrap();
+    h.ocr_results
+        .send(Ok(vec![block(100, 200, "Hello")]))
+        .await
+        .unwrap();
+    orch.capture_once(REGION).await;
+
+    assert!(
+        h.translate.calls().is_empty(),
+        "one-shot must skip excluded blocks too, calls were: {:?}",
+        h.translate.calls()
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "the excluded block must not produce a one-shot event"
+    );
 }

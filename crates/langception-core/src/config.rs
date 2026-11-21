@@ -4,7 +4,7 @@
 //! once on first launch, then kept in sync by the app.
 
 use crate::glossary::Glossary;
-use crate::ports::{Region, SourceLanguage, Zone};
+use crate::ports::{ExcludedBlock, Region, SourceLanguage, Zone};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
@@ -120,17 +120,47 @@ impl TextStyle {
     }
 }
 
-/// Global hotkeys (spec: toggle / zone / pause / one-shot), rebindable here.
-/// Values are accelerator strings like "Alt+T" or "Ctrl+Shift+Z"; parsing
-/// happens where they are registered (the shell, at startup), so only
-/// non-emptiness is validated here. Changes apply on app restart.
+/// Global hotkeys (spec: toggle / zone / adjust / pause / one-shot),
+/// rebindable here. Values are accelerator strings like "Alt+T" or
+/// "Ctrl+Shift+Z"; parsing happens where they are registered (the shell, at
+/// startup), so only non-emptiness is validated here. Changes apply on app
+/// restart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HotkeySettings {
     pub toggle_translation: String,
     pub new_zone: String,
     pub pause_translation: String,
+    pub adjust_mode: String,
     pub one_shot_capture: String,
+}
+
+/// What the loop watches (CONTEXT.md "Capture Target": exactly one is
+/// active at a time): the Capture Zones, or full-screen mode (every Text
+/// Block on one monitor). Per-app Profiles arrive in ticket 07.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureMode {
+    Zones,
+    FullScreen,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModeSettings {
+    pub target: CaptureMode,
+    /// Monitor full-screen mode watches, by system monitor name. Empty =
+    /// the primary monitor (the default; resolved at runtime by the shell).
+    pub fullscreen_monitor: String,
+}
+
+impl Default for ModeSettings {
+    fn default() -> Self {
+        Self {
+            target: CaptureMode::Zones,
+            fullscreen_monitor: String::new(),
+        }
+    }
 }
 
 impl Default for HotkeySettings {
@@ -139,6 +169,7 @@ impl Default for HotkeySettings {
             toggle_translation: DEFAULT_TOGGLE_HOTKEY.to_string(),
             new_zone: DEFAULT_NEW_ZONE_HOTKEY.to_string(),
             pause_translation: DEFAULT_PAUSE_HOTKEY.to_string(),
+            adjust_mode: DEFAULT_ADJUST_HOTKEY.to_string(),
             one_shot_capture: DEFAULT_ONE_SHOT_HOTKEY.to_string(),
         }
     }
@@ -147,6 +178,7 @@ impl Default for HotkeySettings {
 pub const DEFAULT_TOGGLE_HOTKEY: &str = "Alt+T";
 pub const DEFAULT_NEW_ZONE_HOTKEY: &str = "Alt+Z";
 pub const DEFAULT_PAUSE_HOTKEY: &str = "Alt+P";
+pub const DEFAULT_ADJUST_HOTKEY: &str = "Alt+A";
 pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Q";
 
 /// Everything the app reads from the config file.
@@ -161,6 +193,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub capture: CaptureSettings,
     #[serde(default)]
+    pub mode: ModeSettings,
+    #[serde(default)]
     pub hotkeys: HotkeySettings,
     #[serde(default)]
     pub text_style: TextStyle,
@@ -168,6 +202,11 @@ pub struct AppConfig {
     pub glossary: Glossary,
     #[serde(default)]
     pub zones: Vec<Zone>,
+    /// Excluded Blocks (ticket 04): Text Block positions the user marked as
+    /// not-to-be-translated in full-screen mode. Clicking a block in Adjust
+    /// Mode appends here; clearing an entry makes the block translate again.
+    #[serde(default)]
+    pub excluded_blocks: Vec<ExcludedBlock>,
 }
 
 impl AppConfig {
@@ -196,6 +235,9 @@ impl AppConfig {
         self.zones.push(Zone {
             id: "legacy-region".to_string(),
             name: "Configured region".to_string(),
+            // Drawn before zones remembered their monitor; the shell's
+            // monitor migration fills this from the region's position.
+            monitor: String::new(),
             region,
         });
         true
@@ -254,15 +296,37 @@ impl AppConfig {
                 )));
             }
         }
+        let mut exclusion_ids = HashSet::new();
+        for exclusion in &self.excluded_blocks {
+            if exclusion.id.trim().is_empty() {
+                return Err(ConfigError::Validation(
+                    "every excluded block needs a non-empty id".into(),
+                ));
+            }
+            if exclusion.region.width == 0 || exclusion.region.height == 0 {
+                return Err(ConfigError::Validation(format!(
+                    "excluded block \"{id}\" must have a width and height greater than zero",
+                    id = exclusion.id
+                )));
+            }
+            if !exclusion_ids.insert(exclusion.id.as_str()) {
+                return Err(ConfigError::Validation(format!(
+                    "duplicate excluded block id \"{id}\"",
+                    id = exclusion.id
+                )));
+            }
+        }
         Ok(())
     }
 
     /// The file written on first launch. Zones drawn with Alt+Z are appended
-    /// automatically as `[[zones]]` tables; the shape is documented here so
-    /// the file stays hand-editable.
+    /// automatically as `[[zones]]` tables, Excluded Blocks (Adjust Mode,
+    /// full-screen mode) as `[[excluded_blocks]]`; the shape is documented
+    /// here so the file stays hand-editable.
     pub const DEFAULT_TEMPLATE: &str = r##"# Langception configuration.
-# Capture Zones you draw (Alt+Z) are saved into this file automatically.
-# You can also edit it by hand; restart the app after changing [hotkeys].
+# Capture Zones you draw (Alt+Z) and Excluded Blocks you mark (Alt+A) are
+# saved into this file automatically. You can also edit it by hand; restart
+# the app after changing [hotkeys].
 
 [source]
 # Language Langception expects to read: "en" | "ja" | "zh" | "ko"
@@ -271,6 +335,14 @@ language = "en"
 [capture]
 # How often each Capture Zone is re-checked, in milliseconds.
 cadence_ms = 500
+
+[mode]
+# What the loop watches: "zones" (the Capture Zones below) or "fullscreen"
+# (every Text Block on one monitor, minus Excluded Blocks).
+target = "zones"
+# Monitor full-screen mode watches, by system name. Empty = the primary
+# monitor. Find the names in the Results Window's mode panel.
+fullscreen_monitor = ""
 
 [text_style]
 # How Thai text is drawn on the In-place Overlay, in place over the
@@ -293,6 +365,7 @@ background_opacity = 0.6
 toggle_translation = "Alt+T"
 new_zone = "Alt+Z"
 pause_translation = "Alt+P"
+adjust_mode = "Alt+A"
 one_shot_capture = "Alt+Q"
 
 [glossary]
@@ -303,16 +376,31 @@ one_shot_capture = "Alt+Q"
 
 # Capture Zones are appended here automatically. A zone remembers the
 # screen rectangle it covers, in PHYSICAL pixels (origin = top-left of
-# the primary monitor):
+# the primary monitor), and the monitor it was drawn on:
 # [[zones]]
 # id = "z1700000000000000000"
 # name = "Chat box"
+# monitor = "\\\\.\\DISPLAY1"
 #
 # [zones.region]
 # x = 100
 # y = 100
 # width = 640
 # height = 180
+
+# Excluded Blocks are appended here automatically when you click a Text
+# Block in Adjust Mode (full-screen mode only). The block at this position
+# is never translated again until the entry is cleared (Results Window).
+# [[excluded_blocks]]
+# id = "x1700000000000000000"
+# monitor = "\\\\.\\DISPLAY1"
+# label = "Start"
+#
+# [excluded_blocks.region]
+# x = 1200
+# y = 340
+# width = 90
+# height = 24
 "##;
 }
 
@@ -337,9 +425,11 @@ mod tests {
         let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
         assert_eq!(config.source.language, SourceLanguage::En);
         assert_eq!(config.capture.cadence_ms, 500);
+        assert_eq!(config.mode, ModeSettings::default());
         assert_eq!(config.text_style, TextStyle::default());
         assert!(config.glossary.0.is_empty());
         assert!(config.zones.is_empty());
+        assert!(config.excluded_blocks.is_empty());
         assert!(config.region.is_none());
         assert_eq!(config.hotkeys, HotkeySettings::default());
     }
@@ -614,5 +704,130 @@ height = 180
             .replace("pause_translation = \"Alt+P\"", "pause_translation = \" \"");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(err.to_string().contains("pause_translation"), "was: {err}");
+    }
+
+    #[test]
+    fn mode_defaults_when_section_missing() {
+        let text = r#"
+[source]
+language = "en"
+"#;
+        let config = AppConfig::from_toml_str(text).unwrap();
+        assert_eq!(config.mode, ModeSettings::default());
+        assert_eq!(config.mode.target, CaptureMode::Zones);
+        assert_eq!(config.mode.fullscreen_monitor, "");
+    }
+
+    #[test]
+    fn fullscreen_mode_roundtrips_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("target = \"zones\"", "target = \"fullscreen\"")
+            .replace(
+                "fullscreen_monitor = \"\"",
+                "fullscreen_monitor = \"\\\\\\\\.\\\\DISPLAY2\"",
+            );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.mode.target, CaptureMode::FullScreen);
+        assert_eq!(config.mode.fullscreen_monitor, "\\\\.\\DISPLAY2");
+
+        let reparsed =
+            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn unknown_mode_target_is_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("target = \"zones\"", "target = \"window\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("target"), "was: {err}");
+    }
+
+    fn template_with_excluded_block() -> String {
+        AppConfig::DEFAULT_TEMPLATE
+            .replace("# [[excluded_blocks]]", "[[excluded_blocks]]")
+            .replace("# id = \"x1700000000000000000\"", "id = \"x1\"")
+            .replace("# monitor = \"\\\\\\\\.\\\\DISPLAY1\"", "monitor = \"\\\\\\\\.\\\\DISPLAY1\"")
+            .replace("# label = \"Start\"", "label = \"เริ่ม\"")
+            .replace("# [excluded_blocks.region]", "[excluded_blocks.region]")
+            .replace("# x = 1200", "x = 1200")
+            .replace("# y = 340", "y = 340")
+            .replace("# width = 90", "width = 90")
+            .replace("# height = 24", "height = 24")
+    }
+
+    #[test]
+    fn excluded_blocks_roundtrip_through_toml() {
+        let config = AppConfig::from_toml_str(&template_with_excluded_block()).unwrap();
+        assert_eq!(config.excluded_blocks.len(), 1);
+        assert_eq!(config.excluded_blocks[0].id, "x1");
+        assert_eq!(config.excluded_blocks[0].label, "เริ่ม");
+        assert_eq!(config.excluded_blocks[0].monitor, "\\\\.\\DISPLAY1");
+        assert_eq!(
+            config.excluded_blocks[0].region,
+            Region {
+                x: 1200,
+                y: 340,
+                width: 90,
+                height: 24
+            }
+        );
+
+        let reparsed =
+            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn duplicate_excluded_block_id_is_rejected() {
+        let text = template_with_excluded_block()
+            + "\n[[excluded_blocks]]\nid = \"x1\"\nmonitor = \"\"\nlabel = \"Again\"\n\n[excluded_blocks.region]\nx = 10\ny = 20\nwidth = 5\nheight = 5\n";
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate excluded block id"),
+            "was: {err}"
+        );
+    }
+
+    #[test]
+    fn zero_sized_excluded_block_is_rejected() {
+        let text = template_with_excluded_block().replace("width = 90", "width = 0");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(matches!(err, ConfigError::Validation(_)), "was: {err}");
+    }
+
+    #[test]
+    fn zone_monitor_field_roundtrips_through_toml() {
+        let text = template_with_zone().replace(
+            "name = \"Chat box\"",
+            "name = \"Chat box\"\nmonitor = \"\\\\\\\\.\\\\DISPLAY2\"",
+        );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.zones[0].monitor, "\\\\.\\DISPLAY2");
+
+        let reparsed =
+            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn old_config_without_monitor_or_adjust_hotkey_gets_defaults() {
+        // A ticket-02/03 config: no zone monitor, no adjust_mode hotkey.
+        // Slice-3 configs predate both fields; serde fills them from the
+        // defaults instead of rejecting the file.
+        let legacy = template_with_zone().replace("\nadjust_mode = \"Alt+A\"", "");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert_eq!(config.hotkeys.adjust_mode, DEFAULT_ADJUST_HOTKEY);
+        assert_eq!(
+            config.zones[0].monitor, "",
+            "legacy zones default to empty = primary"
+        );
+
+        // An explicit rebind is still honored.
+        let text = legacy.replace(
+            "pause_translation = \"Alt+P\"",
+            "pause_translation = \"Alt+P\"\nadjust_mode = \"Ctrl+Alt+A\"",
+        );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.hotkeys.adjust_mode, "Ctrl+Alt+A");
     }
 }

@@ -1,15 +1,16 @@
-//! The translation loop: capture → OCR → per-block dedup → glossary
-//! short-circuit → translate → events, across every active Capture Zone.
+//! The translation loop: capture → OCR → Excluded Block filter → per-block
+//! dedup → glossary short-circuit → translate → events, across every active
+//! Capture Zone.
 //!
-//! All collaborators are ports (`capture`, `ocr`, `translate`, `clock`), so
-//! the whole pipeline is exercised with fakes at this seam — see
-//! `tests/orchestrator_tests.rs`. The zone list and the paused flag arrive
-//! through watch channels so the shell can change them while the loop runs
-//! without losing per-block dedup state.
+//! All collaborators are ports (`capture`, `ocr`, `translate`, `clock`) plus
+//! the watched zone list, the paused flag, and the active Excluded Blocks,
+//! which arrive through watch channels so the shell can change them while
+//! the loop runs without losing per-block dedup state.
 
 use crate::glossary::Glossary;
 use crate::ports::{
-    CaptureSource, Clock, OcrEngine, Region, SourceLanguage, TextBlock, TranslateEngine, Zone,
+    CaptureSource, Clock, ExcludedBlock, OcrEngine, Region, SourceLanguage, TextBlock,
+    TranslateEngine, Zone,
 };
 use async_trait::async_trait;
 use serde::Serialize;
@@ -116,11 +117,16 @@ pub struct Orchestrator {
     glossary: Glossary,
     zones_rx: watch::Receiver<Vec<Zone>>,
     paused_rx: watch::Receiver<bool>,
+    /// Excluded Blocks currently in force (full-screen mode; the shell sends
+    /// an empty list otherwise). Blocks covered by one are never translated
+    /// or displayed; clearing an entry re-translates its block.
+    excluded_rx: watch::Receiver<Vec<ExcludedBlock>>,
     events: mpsc::UnboundedSender<LoopEvent>,
     /// Zone id → (block key → last translated (trimmed) text). Unchanged
     /// text is never re-translated; a failed block is also recorded so a
     /// dead engine is not hammered every tick (retried when the text changes
-    /// or the zone is redrawn). State for removed zones is pruned per tick.
+    /// or the zone is redrawn). State for removed zones is pruned per tick;
+    /// state for removed blocks is pruned with their removal.
     translated: HashMap<String, HashMap<(i32, i32), String>>,
     /// Zone id → block keys that vanished from the latest pass, with how
     /// many consecutive passes have missed them. Windows OCR intermittently
@@ -131,6 +137,7 @@ pub struct Orchestrator {
 }
 
 impl Orchestrator {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         capture: Arc<dyn CaptureSource>,
         ocr: Arc<dyn OcrEngine>,
@@ -140,6 +147,7 @@ impl Orchestrator {
         glossary: Glossary,
         zones_rx: watch::Receiver<Vec<Zone>>,
         paused_rx: watch::Receiver<bool>,
+        excluded_rx: watch::Receiver<Vec<ExcludedBlock>>,
         events: mpsc::UnboundedSender<LoopEvent>,
     ) -> Self {
         Self {
@@ -151,6 +159,7 @@ impl Orchestrator {
             glossary,
             zones_rx,
             paused_rx,
+            excluded_rx,
             events,
             translated: HashMap::new(),
             misses: HashMap::new(),
@@ -250,12 +259,10 @@ impl Orchestrator {
             }
             let key = block_key(&block);
             seen.insert(key);
-            if state.get(&key).is_some_and(|last| *last == text) {
-                continue; // unchanged block: never re-translate
-            }
 
             // OCR boxes are relative to the captured region; report screen
-            // coordinates so display modes can position on screen.
+            // coordinates so display modes and exclusions can position on
+            // screen.
             let screen_block = TextBlock {
                 x: block.x + region.x,
                 y: block.y + region.y,
@@ -263,6 +270,19 @@ impl Orchestrator {
                 height: block.height,
                 text: block.text.clone(),
             };
+
+            if self.excluded_rx.borrow().iter().any(|e| e.covers(&screen_block)) {
+                // Excluded Block (ticket 04): never translated, never shown.
+                // Dropping its tracking state right away means clearing the
+                // exclusion translates it again on the next pass.
+                state.remove(&key);
+                misses.remove(&key);
+                continue;
+            }
+
+            if state.get(&key).is_some_and(|last| *last == text) {
+                continue; // unchanged block: never re-translate
+            }
 
             let translated = match self.glossary.lookup(&text) {
                 Some(thai) => Ok((thai, Via::Glossary)),
@@ -321,6 +341,11 @@ impl Orchestrator {
         let removed: Vec<String> = gone.iter().map(|&(gx, gy)| format!("{gx},{gy}")).collect();
         for key in &gone {
             misses.remove(key);
+            // The removal reported the block as gone (its pill is cleared):
+            // drop its last-text too, so the same text re-appearing on
+            // screen later is translated again instead of being silently
+            // deduped against a stale entry.
+            state.remove(key);
         }
         if !removed.is_empty() {
             self.events
