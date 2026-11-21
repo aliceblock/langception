@@ -12,10 +12,21 @@
         <span class="logo">L</span>
         <h1>Langception</h1>
         <span id="status-pill" class="pill stopped">Stopped</span>
+        <button id="pause-btn" class="btn" disabled>Pause</button>
         <button id="toggle-btn" class="btn">Start</button>
       </div>
       <div id="config-line" class="config-line">loading…</div>
+      <div id="warnings-line" class="warnings-line hidden"></div>
     </header>
+
+    <details id="zones-panel" class="zones-panel" open>
+      <summary>
+        <span id="zones-title">Capture Zones (0)</span>
+        <button id="new-zone-btn" class="btn small">+ New Zone</button>
+      </summary>
+      <ul id="zones-list" class="zones-list"></ul>
+      <div id="zones-empty" class="zones-empty hidden"></div>
+    </details>
 
     <div id="error-banner" class="error-banner hidden"></div>
 
@@ -23,7 +34,7 @@
       <ul id="results" class="results"></ul>
       <div id="empty-state" class="empty-state">
         <p>No translations yet.</p>
-        <p class="hint">Start translation from the tray menu, then point the configured region at some text.</p>
+        <p class="hint" id="empty-hint"></p>
       </div>
     </main>
 

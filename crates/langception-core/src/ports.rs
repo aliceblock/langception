@@ -26,6 +26,17 @@ pub struct CapturedImage {
     pub bgra: Vec<u8>,
 }
 
+/// A Capture Zone (CONTEXT.md): a user-drawn rectangular screen region
+/// captured and translated repeatedly. Several zones are watched at once;
+/// each tracks its Text Blocks independently. The `id` is stable across
+/// renames and restarts so the loop can keep per-zone tracking state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Zone {
+    pub id: String,
+    pub name: String,
+    pub region: Region,
+}
+
 /// One contiguous run of text found by an OCR engine, with its bounding box.
 /// The unit of tracking, display, and re-translation.
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -5,14 +5,14 @@
 
 use async_trait::async_trait;
 use langception_core::glossary::Glossary;
-use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, Stage, Via};
+use langception_core::orchestrator::{EventOrigin, LoopConfig, LoopEvent, Orchestrator, Stage, Via};
 use langception_core::ports::{
-    CaptureError, CaptureSource, CapturedImage, Clock, OcrEngine, OcrError, Region,
-    SourceLanguage, TextBlock, TranslateEngine, TranslateError,
+    CaptureError, CaptureSource, CapturedImage, Clock, OcrEngine, OcrError, Region, SourceLanguage,
+    TextBlock, TranslateEngine, TranslateError, Zone,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex as AsyncMutex, Notify};
+use tokio::sync::{mpsc, watch, Mutex as AsyncMutex, Notify};
 
 const REGION: Region = Region {
     x: 100,
@@ -23,7 +23,6 @@ const REGION: Region = Region {
 
 fn config() -> LoopConfig {
     LoopConfig {
-        region: REGION,
         source_language: SourceLanguage::En,
         cadence: Duration::from_millis(500),
     }
@@ -36,6 +35,14 @@ fn block(x: i32, y: i32, text: &str) -> TextBlock {
         width: 100,
         height: 20,
         text: text.to_string(),
+    }
+}
+
+fn zone(id: &str, name: &str, region: Region) -> Zone {
+    Zone {
+        id: id.to_string(),
+        name: name.to_string(),
+        region,
     }
 }
 
@@ -189,8 +196,12 @@ struct Harness {
     capture_calls: Arc<Mutex<u32>>,
     translate: Arc<FakeTranslate>,
     clock: Arc<FakeClock>,
+    zones_tx: watch::Sender<Vec<Zone>>,
+    paused_tx: watch::Sender<bool>,
 }
 
+/// The harness starts watching one zone (z1 = REGION), like the app does
+/// after a first zone was drawn.
 async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
@@ -199,6 +210,8 @@ async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
     let translate = Arc::new(translate);
     let clock = Arc::new(FakeClock::new());
     let (events_tx, events_rx) = mpsc::unbounded_channel();
+    let (zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
+    let (paused_tx, paused_rx) = watch::channel(false);
 
     let orchestrator = Orchestrator::new(
         Arc::new(capture),
@@ -207,6 +220,8 @@ async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
         clock.clone(),
         config(),
         glossary,
+        zones_rx,
+        paused_rx,
         events_tx,
     );
 
@@ -219,6 +234,8 @@ async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
             capture_calls,
             translate,
             clock,
+            zones_tx,
+            paused_tx,
         },
         orchestrator,
     )
@@ -226,6 +243,10 @@ async fn harness_with(glossary: Glossary) -> (Harness, Orchestrator) {
 
 async fn harness() -> (Harness, Orchestrator) {
     harness_with(Glossary::default()).await
+}
+
+fn set_zones(h: &Harness, zones: Vec<Zone>) {
+    h.zones_tx.send(zones).unwrap();
 }
 
 async fn next_event(events: &mut mpsc::UnboundedReceiver<LoopEvent>) -> LoopEvent {
@@ -246,10 +267,14 @@ async fn wait_until(cond: impl Fn() -> bool, what: &str) {
     panic!("condition not reached within 2s: {what}");
 }
 
-/// Feeds one image + one OCR result, then the caller runs exactly one tick.
-async fn feed_tick(h: &Harness, blocks: Vec<TextBlock>) {
-    h.images.send(image()).await.unwrap();
-    h.ocr_results.send(Ok(blocks)).await.unwrap();
+/// Feeds one image + one OCR result per zone (zones are processed in
+/// order, so all zones see the same blocks unless the test queues its own
+/// results), then the caller runs exactly one tick.
+async fn feed_tick(h: &Harness, zone_count: usize, blocks: Vec<TextBlock>) {
+    for _ in 0..zone_count {
+        h.images.send(image()).await.unwrap();
+        h.ocr_results.send(Ok(blocks.clone())).await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -257,19 +282,23 @@ async fn changed_text_translates_exactly_once_per_change() {
     let (mut h, mut orch) = harness().await;
 
     // Tick 1: "Hello" appears → translated once.
-    feed_tick(&h, vec![block(100, 200, "Hello")]).await;
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Hello"]);
     match next_event(&mut h.events).await {
-        LoopEvent::Translated { translation, via, .. } => {
+        LoopEvent::Translated { translation, via, origin, .. } => {
             assert_eq!(translation, "[TH] Hello");
             assert_eq!(via, Via::Engine);
+            assert_eq!(
+                origin,
+                EventOrigin::Zone { id: "z1".into(), name: "Zone 1".into() }
+            );
         }
         other => panic!("expected Translated, got {other:?}"),
     }
 
     // Tick 2: same text at the same position → no re-translation, no event.
-    feed_tick(&h, vec![block(100, 200, "Hello")]).await;
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Hello"]);
     assert!(
@@ -280,7 +309,7 @@ async fn changed_text_translates_exactly_once_per_change() {
     );
 
     // Tick 3: text changes at the same position → exactly one new translation.
-    feed_tick(&h, vec![block(100, 200, "Goodbye")]).await;
+    feed_tick(&h, 1, vec![block(100, 200, "Goodbye")]).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Hello", "Goodbye"]);
     match next_event(&mut h.events).await {
@@ -294,15 +323,146 @@ async fn blocks_are_tracked_independently() {
     let (h, mut orch) = harness().await;
 
     // Two blocks, both translated.
-    feed_tick(&h, vec![block(100, 200, "Alpha"), block(100, 500, "Beta")]).await;
+    feed_tick(&h, 1, vec![block(100, 200, "Alpha"), block(100, 500, "Beta")]).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Alpha", "Beta"]);
 
     // Only the first block changed → only it is re-translated. Its position
     // also moved 2px, inside the quantization grid, so it is the same block.
-    feed_tick(&h, vec![block(102, 200, "Alpha Prime"), block(100, 500, "Beta")]).await;
+    feed_tick(&h, 1, vec![block(102, 200, "Alpha Prime"), block(100, 500, "Beta")]).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Alpha", "Beta", "Alpha Prime"]);
+}
+
+#[tokio::test]
+async fn zones_are_tracked_independently() {
+    let (mut h, mut orch) = harness().await;
+    set_zones(
+        &h,
+        vec![
+            zone("z1", "Left", Region { x: 0, y: 0, width: 200, height: 100 }),
+            zone("z2", "Right", Region { x: 400, y: 0, width: 200, height: 100 }),
+        ],
+    );
+
+    // Both zones OCR the same text at the same region-relative position.
+    feed_tick(&h, 2, vec![block(10, 10, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello", "Hello"], "each zone translates its own blocks");
+    let _ = next_event(&mut h.events).await; // drain tick 1's two events
+    let _ = next_event(&mut h.events).await;
+
+    // Same content next tick → both zones dedup independently.
+    feed_tick(&h, 2, vec![block(10, 10, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello", "Hello"]);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "unchanged blocks in every zone must not emit events"
+    );
+}
+
+#[tokio::test]
+async fn zone_added_later_translates_while_existing_zones_keep_dedup() {
+    let (h, mut orch) = harness().await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+
+    // A second zone arrives while the loop is running.
+    set_zones(
+        &h,
+        vec![
+            zone("z1", "Zone 1", REGION),
+            zone("z2", "Zone 2", Region { x: 800, y: 0, width: 200, height: 100 }),
+        ],
+    );
+    // Zone 1 sees the same text (must stay deduped); zone 2 sees new text.
+    h.images.send(image()).await.unwrap();
+    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    h.images.send(image()).await.unwrap();
+    h.ocr_results.send(Ok(vec![block(0, 0, "World")])).await.unwrap();
+    orch.tick().await;
+
+    assert_eq!(h.translate.calls(), ["Hello", "World"]);
+}
+
+#[tokio::test]
+async fn removed_zone_stops_being_watched() {
+    let (mut h, mut orch) = harness().await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+    let _ = next_event(&mut h.events).await; // drain tick 1's event
+    let calls_after_first = *h.capture_calls.lock().unwrap();
+    assert!(calls_after_first >= 1);
+
+    // All zones deleted: ticks do nothing (no capture, no events).
+    set_zones(&h, vec![]);
+    orch.tick().await;
+    assert_eq!(
+        *h.capture_calls.lock().unwrap(),
+        calls_after_first,
+        "no zones → no capture attempts"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), h.events.recv())
+            .await
+            .is_err(),
+        "no zones → no events"
+    );
+
+    // The same zone id comes back (delete + redraw): its dedup state must
+    // have been pruned, so its text translates again.
+    set_zones(&h, vec![zone("z1", "Zone 1", REGION)]);
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello", "Hello"]);
+}
+
+#[tokio::test]
+async fn paused_loop_skips_ticks_and_keeps_dedup_across_pause() {
+    let (h, orch) = harness().await;
+    let task = tokio::spawn(orch.run());
+
+    // Paused from the start: releasing ticks must not capture.
+    h.paused_tx.send(true).unwrap();
+    h.clock.release_tick();
+    h.clock.release_tick();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(*h.capture_calls.lock().unwrap(), 0, "paused loop must not capture");
+
+    // Resume: the queued image/OCR is consumed by the first tick.
+    h.paused_tx.send(false).unwrap();
+    h.images.send(image()).await.unwrap();
+    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    wait_until(|| h.translate.calls() == ["Hello"], "translated after resume").await;
+
+    // Pause again, release the loop into the pause, then resume: unchanged
+    // text is still deduped (pause never resets tracking state).
+    h.paused_tx.send(true).unwrap();
+    h.clock.release_tick();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    h.images.send(image()).await.unwrap();
+    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    h.paused_tx.send(false).unwrap();
+    wait_until(
+        || *h.capture_calls.lock().unwrap() >= 2,
+        "resumed tick captured",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello"],
+        "dedup must survive pause/resume"
+    );
+
+    task.abort();
 }
 
 #[tokio::test]
@@ -311,7 +471,7 @@ async fn glossary_match_shows_glossary_thai_and_never_calls_engine() {
     glossary.0.insert("VERTIN".to_string(), "เวอร์ติน".to_string());
     let (mut h, mut orch) = harness_with(glossary).await;
 
-    feed_tick(&h, vec![block(0, 0, "  vertin  ")]).await;
+    feed_tick(&h, 1, vec![block(0, 0, "  vertin  ")]).await;
     orch.tick().await;
 
     assert!(
@@ -328,7 +488,7 @@ async fn glossary_match_shows_glossary_thai_and_never_calls_engine() {
     }
 
     // And it still dedups: same block next tick → no event, no engine call.
-    feed_tick(&h, vec![block(0, 0, "  vertin  ")]).await;
+    feed_tick(&h, 1, vec![block(0, 0, "  vertin  ")]).await;
     orch.tick().await;
     assert!(h.translate.calls().is_empty());
     assert!(
@@ -348,11 +508,7 @@ async fn engine_error_surfaces_visibly_and_is_not_hammered() {
         .send(Err(TranslateError::new("HTTP 429 rate limited")))
         .await
         .unwrap();
-    h.images.send(image()).await.unwrap();
-    h.ocr_results
-        .send(Ok(vec![block(0, 0, "Hello")]))
-        .await
-        .unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
     orch.tick().await;
 
     match next_event(&mut h.events).await {
@@ -364,7 +520,7 @@ async fn engine_error_surfaces_visibly_and_is_not_hammered() {
     }
 
     // Same text again → no retry (no engine hammering while the user reads the error).
-    feed_tick(&h, vec![block(0, 0, "Hello")]).await;
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Hello"]);
     assert!(
@@ -375,20 +531,23 @@ async fn engine_error_surfaces_visibly_and_is_not_hammered() {
     );
 
     // Changed text → engine tried again despite the earlier failure.
-    feed_tick(&h, vec![block(0, 0, "Hello there")]).await;
+    feed_tick(&h, 1, vec![block(0, 0, "Hello there")]).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["Hello", "Hello there"]);
 }
 
 #[tokio::test]
-async fn capture_and_ocr_errors_surface_with_their_stage() {
+async fn capture_and_ocr_errors_surface_with_their_stage_and_zone() {
     let (mut h, mut orch) = harness().await;
 
     // Capture failure: source closed before this tick.
     drop(h.images);
     orch.tick().await;
     match next_event(&mut h.events).await {
-        LoopEvent::Error { stage, .. } => assert_eq!(stage, Stage::Capture),
+        LoopEvent::Error { stage, message, .. } => {
+            assert_eq!(stage, Stage::Capture);
+            assert!(message.contains("Zone 1"), "was: {message}");
+        }
         other => panic!("expected Error, got {other:?}"),
     }
 
@@ -415,6 +574,7 @@ async fn whitespace_blocks_are_ignored() {
 
     feed_tick(
         &h,
+        1,
         vec![
             block(0, 0, "   "),
             block(0, 50, ""),
@@ -477,14 +637,55 @@ async fn event_timestamps_come_from_the_clock() {
     let (mut h, mut orch) = harness().await;
 
     h.clock.set_now_ms(12345);
-    h.images.send(image()).await.unwrap();
-    h.ocr_results
-        .send(Ok(vec![block(0, 0, "Hello")]))
-        .await
-        .unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
     orch.tick().await;
     match next_event(&mut h.events).await {
         LoopEvent::Translated { at_ms, .. } => assert_eq!(at_ms, 12345),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn capture_once_translates_with_oneshot_origin_and_no_dedup() {
+    let (mut h, mut orch) = harness().await;
+
+    h.images.send(image()).await.unwrap();
+    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    orch.capture_once(REGION).await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { origin, .. } => assert_eq!(origin, EventOrigin::OneShot),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+
+    // One-shot has no dedup state: the same text translates again.
+    h.images.send(image()).await.unwrap();
+    h.ocr_results.send(Ok(vec![block(0, 0, "Hello")])).await.unwrap();
+    orch.capture_once(REGION).await;
+    assert_eq!(h.translate.calls(), ["Hello", "Hello"]);
+
+    // The zone loop's tracking state was untouched: z1's first sight of the
+    // same text still translates through the normal path.
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello", "Hello", "Hello"]);
+}
+
+#[tokio::test]
+async fn captured_blocks_are_reported_in_screen_coordinates() {
+    let (mut h, mut orch) = harness().await;
+    set_zones(
+        &h,
+        vec![zone("z1", "Zone 1", Region { x: 1000, y: 500, width: 200, height: 100 })],
+    );
+
+    feed_tick(&h, 1, vec![block(10, 20, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { block, .. } => {
+            assert_eq!(block.x, 1010, "block.x = zone origin + region-relative x");
+            assert_eq!(block.y, 520, "block.y = zone origin + region-relative y");
+        }
         other => panic!("expected Translated, got {other:?}"),
     }
 }

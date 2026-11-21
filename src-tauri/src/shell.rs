@@ -1,39 +1,99 @@
-//! The Tauri shell: tray-first control (start/stop/quit), the Results
+//! The Tauri shell: tray-first control, global hotkeys (rebindable via
+//! config), the Capture Zone picker overlay (Alt+Z / Alt+Q), the Results
 //! Window event bridge, and the config file lifecycle. Thin adapter —
 //! exercised by the manual smoke checklist.
 
-use langception_core::config::AppConfig;
+use langception_core::config::{AppConfig, HotkeySettings};
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
 use langception_core::orchestrator::{LoopConfig, Orchestrator, SystemClock};
-use langception_core::ports::{Region, TARGET_LANGUAGE};
+use langception_core::ports::{Region, Zone, TARGET_LANGUAGE};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::mpsc;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Size,
+    WebviewUrl, WebviewWindowBuilder, Wry,
+};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
+use tokio::sync::{mpsc, watch};
 
-/// What the Results Window needs to show: loop state plus the effective
-/// config (slice 1's only settings surface is the config file).
+const PICKER_LABEL: &str = "zone-picker";
+/// Drags smaller than this (CSS px) count as a click: the session cancels.
+const MIN_DRAG_CSS_PX: i32 = 8;
+
+/// What the picker overlay was opened for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerMode {
+    /// Drag creates a persistent Capture Zone.
+    Zone,
+    /// Drag runs a single OCR+translate pass (One-shot Capture).
+    OneShot,
+}
+
+/// What the Results Window needs to show: loop state, the zone list (the
+/// minimal management UI), the effective hotkeys, and any warnings.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
     pub running: bool,
+    pub paused: bool,
     pub config_error: Option<String>,
+    pub warnings: Vec<String>,
     pub language: String,
-    pub region: String,
+    pub zones: Vec<ZoneStatus>,
     pub cadence_ms: u32,
     pub glossary_terms: usize,
+    pub hotkeys: HotkeyStatus,
     pub target_language: &'static str,
     pub config_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ZoneStatus {
+    pub id: String,
+    pub name: String,
+    pub region: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeyStatus {
+    pub toggle: String,
+    pub new_zone: String,
+    pub pause: String,
+    pub one_shot: String,
+}
+
+impl Default for HotkeyStatus {
+    fn default() -> Self {
+        let defaults = HotkeySettings::default();
+        Self {
+            toggle: defaults.toggle_translation,
+            new_zone: defaults.new_zone,
+            pause: defaults.pause_translation,
+            one_shot: defaults.one_shot_capture,
+        }
+    }
 }
 
 struct RunningLoop {
     orchestrator: tauri::async_runtime::JoinHandle<()>,
     forwarder: tauri::async_runtime::JoinHandle<()>,
+}
+
+/// The shortcut currently bound to each action (parsed at startup); the
+/// global-shortcut handler matches pressed keys against these.
+#[derive(Default)]
+struct RegisteredHotkeys {
+    toggle: Option<Shortcut>,
+    new_zone: Option<Shortcut>,
+    pause: Option<Shortcut>,
+    one_shot: Option<Shortcut>,
 }
 
 struct AppState {
@@ -42,23 +102,64 @@ struct AppState {
     config: Mutex<Option<Result<AppConfig, String>>>,
     config_path: PathBuf,
     running: Mutex<Option<RunningLoop>>,
-    toggle_item: Mutex<Option<MenuItem<tauri::Wry>>>,
+    paused: Mutex<bool>,
+    /// The shell pushes the active zone list here; a running loop picks it
+    /// up on its next tick without losing per-zone tracking state.
+    zones_tx: watch::Sender<Vec<Zone>>,
+    paused_tx: watch::Sender<bool>,
+    warnings: Mutex<Vec<String>>,
+    registered: Mutex<RegisteredHotkeys>,
+    toggle_item: Mutex<Option<MenuItem<Wry>>>,
+    pause_item: Mutex<Option<MenuItem<Wry>>>,
+    tray: Mutex<Option<TrayIcon<Wry>>>,
+    /// `Some` while the picker overlay is open, recording why.
+    picker_mode: Mutex<Option<PickerMode>>,
 }
 
 pub fn run() {
+    let (zones_tx, _) = watch::channel(Vec::new());
+    let (paused_tx, _) = watch::channel(false);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState {
             config: Mutex::new(None),
             config_path: config_file_path(),
             running: Mutex::new(None),
+            paused: Mutex::new(false),
+            zones_tx,
+            paused_tx,
+            warnings: Mutex::new(Vec::new()),
+            registered: Mutex::new(RegisteredHotkeys::default()),
             toggle_item: Mutex::new(None),
+            pause_item: Mutex::new(None),
+            tray: Mutex::new(None),
+            picker_mode: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
             stop_translation,
-            get_status
+            get_status,
+            toggle_pause_translation,
+            rename_zone,
+            delete_zone,
+            open_zone_picker,
+            get_picker_mode,
+            commit_zone_drag,
+            cancel_zone_drag
         ])
+        .on_window_event(|window, event| {
+            // The picker overlay is ephemeral; however it dies, the session
+            // ends with it.
+            if window.label() == PICKER_LABEL && matches!(event, tauri::WindowEvent::Destroyed) {
+                *window
+                    .app_handle()
+                    .state::<AppState>()
+                    .picker_mode
+                    .lock()
+                    .unwrap() = None;
+            }
+        })
         .setup(|app| {
             let handle = app.handle().clone();
 
@@ -69,10 +170,12 @@ pub fn run() {
             *state.config.lock().unwrap() = Some(load_config(&config_path));
 
             build_tray(&handle)?;
+            install_hotkeys(&handle)?;
 
             if let Some(window) = handle.get_webview_window("results") {
                 let _ = window.show();
             }
+            apply_state(&handle);
 
             Ok(())
         })
@@ -90,7 +193,7 @@ fn config_file_path() -> PathBuf {
 /// Reads the config file, writing the annotated default template on first
 /// launch. Errors are returned as display strings — a broken config is a
 /// visible condition, never a silent one.
-fn load_config(path: &std::path::Path) -> Result<AppConfig, String> {
+fn load_config(path: &Path) -> Result<AppConfig, String> {
     if !path.exists() {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -101,26 +204,50 @@ fn load_config(path: &std::path::Path) -> Result<AppConfig, String> {
     }
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    AppConfig::from_toml_str(&text).map_err(|e| {
+    let mut config = AppConfig::from_toml_str(&text).map_err(|e| {
         format!(
             "{} is broken — fix it, then stop/start translation:\n{e}",
             path.display()
         )
-    })
+    })?;
+    // Slice-1 configs watched a single [region]; carry it over as a zone.
+    if config.migrate_legacy_region() {
+        if let Ok(serialized) = config.to_toml_string() {
+            let _ = std::fs::write(path, serialized);
+        }
+    }
+    Ok(config)
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Start Translation", true, None::<&str>)?;
+    let pause = MenuItem::with_id(app, "pause", "Pause Translation", false, None::<&str>)?;
+    let new_zone = MenuItem::with_id(app, "new-zone", "New Capture Zone", true, None::<&str>)?;
+    let one_shot = MenuItem::with_id(app, "one-shot", "One-shot Capture", true, None::<&str>)?;
     let open_config =
         MenuItem::with_id(app, "open-config", "Open Config Folder", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&toggle, &open_config, &quit])?;
+    let separator = PredefinedMenuItem::separator(app)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &toggle,
+            &pause,
+            &separator,
+            &new_zone,
+            &one_shot,
+            &open_config,
+            &quit,
+        ],
+    )?;
 
-    *app.state::<AppState>().toggle_item.lock().unwrap() = Some(toggle);
+    let state = app.state::<AppState>();
+    *state.toggle_item.lock().unwrap() = Some(toggle);
+    *state.pause_item.lock().unwrap() = Some(pause);
 
     // Tray menu events are handled here only (not via Builder::on_menu_event)
     // so each item fires exactly once.
-    TrayIconBuilder::with_id("main")
+    let tray = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().expect("bundled window icon").clone())
         .tooltip("Langception — stopped")
         .menu(&menu)
@@ -128,6 +255,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "toggle" => {
                 let _ = toggle_translation(app);
+            }
+            "pause" => toggle_pause(app),
+            "new-zone" => {
+                let _ = open_picker(app, PickerMode::Zone);
+            }
+            "one-shot" => {
+                let _ = open_picker(app, PickerMode::OneShot);
             }
             "open-config" => open_config_folder(app),
             "quit" => app.exit(0),
@@ -148,58 +282,250 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+
+    *state.tray.lock().unwrap() = Some(tray);
     Ok(())
+}
+
+/// Registers the global shortcut plugin and binds every configured hotkey.
+/// A hotkey that cannot be parsed or registered (e.g. taken by another app)
+/// becomes a visible warning, never a silent no-op.
+fn install_hotkeys(app: &AppHandle) -> tauri::Result<()> {
+    app.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(dispatch_shortcut)
+            .build(),
+    )?;
+
+    let state = app.state::<AppState>();
+    let (hotkeys, config_broken) = match &*state.config.lock().unwrap() {
+        Some(Ok(config)) => (config.hotkeys.clone(), false),
+        _ => (HotkeySettings::default(), true),
+    };
+    if config_broken {
+        state
+            .warnings
+            .lock()
+            .unwrap()
+            .push("config is broken — default hotkeys are active".into());
+    }
+
+    let mut registered = RegisteredHotkeys::default();
+    let mut warnings = state.warnings.lock().unwrap();
+    for (action, bind) in [
+        ("toggle", (&hotkeys.toggle_translation, Bind::Toggle)),
+        ("new_zone", (&hotkeys.new_zone, Bind::NewZone)),
+        ("pause", (&hotkeys.pause_translation, Bind::Pause)),
+        ("one_shot", (&hotkeys.one_shot_capture, Bind::OneShot)),
+    ] {
+        let (accel, slot) = bind;
+        match accel.parse::<Shortcut>() {
+            Ok(shortcut) => match app.global_shortcut().register(shortcut) {
+                Ok(()) => match slot {
+                    Bind::Toggle => registered.toggle = Some(shortcut),
+                    Bind::NewZone => registered.new_zone = Some(shortcut),
+                    Bind::Pause => registered.pause = Some(shortcut),
+                    Bind::OneShot => registered.one_shot = Some(shortcut),
+                },
+                Err(e) => warnings.push(format!(
+                    "hotkey \"{accel}\" for {action} could not be registered: {e} (in use by another app?)"
+                )),
+            },
+            Err(e) => warnings.push(format!(
+                "[hotkeys] {action} = \"{accel}\" is not a valid hotkey: {e}"
+            )),
+        }
+    }
+    drop(warnings);
+    *state.registered.lock().unwrap() = registered;
+    Ok(())
+}
+
+enum Bind {
+    Toggle,
+    NewZone,
+    Pause,
+    OneShot,
+}
+
+/// Fires on every registered hotkey press, wherever the focus is.
+fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) {
+    if !matches!(event.state(), ShortcutState::Pressed) {
+        return; // key release: nothing to do
+    }
+    let state = app.state::<AppState>();
+    let registered = state.registered.lock().unwrap();
+    let action = if registered.toggle.as_ref() == Some(pressed) {
+        Some(Bind::Toggle)
+    } else if registered.new_zone.as_ref() == Some(pressed) {
+        Some(Bind::NewZone)
+    } else if registered.pause.as_ref() == Some(pressed) {
+        Some(Bind::Pause)
+    } else if registered.one_shot.as_ref() == Some(pressed) {
+        Some(Bind::OneShot)
+    } else {
+        None
+    };
+    drop(registered);
+
+    match action {
+        Some(Bind::Toggle) => {
+            let _ = toggle_translation(app);
+        }
+        Some(Bind::Pause) => toggle_pause(app),
+        Some(Bind::NewZone) => {
+            let _ = open_picker(app, PickerMode::Zone);
+        }
+        Some(Bind::OneShot) => {
+            let _ = open_picker(app, PickerMode::OneShot);
+        }
+        None => {}
+    }
+}
+
+/// One refresh path for every state change: tray labels/tooltip + the
+/// Results Window's status snapshot.
+fn apply_state(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let running = state.running.lock().unwrap().is_some();
+    let paused = *state.paused.lock().unwrap();
+
+    if let Some(item) = state.toggle_item.lock().unwrap().as_ref() {
+        let _ = item.set_text(if running {
+            "Stop Translation"
+        } else {
+            "Start Translation"
+        });
+    }
+    if let Some(item) = state.pause_item.lock().unwrap().as_ref() {
+        let _ = item.set_enabled(running);
+        let _ = item.set_text(if paused {
+            "Resume Translation"
+        } else {
+            "Pause Translation"
+        });
+    }
+    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+        let tooltip = if !running {
+            "Langception — stopped"
+        } else if paused {
+            "Langception — paused"
+        } else {
+            "Langception — running"
+        };
+        let _ = tray.set_tooltip(Some(tooltip));
+    }
+    let _ = app.emit("engine-state", &status_for(app));
 }
 
 fn status_for(app: &AppHandle) -> Status {
     let state = app.state::<AppState>();
-    let config_guard = state.config.lock().unwrap();
     let running = state.running.lock().unwrap().is_some();
+    let paused = *state.paused.lock().unwrap();
+    let warnings = state.warnings.lock().unwrap().clone();
     let config_path = state.config_path.display().to_string();
 
-    match &*config_guard {
-        Some(Ok(config)) => Status {
-            running,
-            config_error: None,
-            language: config.source.language.code().to_string(),
-            region: format!(
-                "{},{} {}×{}",
-                config.region.x, config.region.y, config.region.width, config.region.height
+    let default_hotkeys = HotkeyStatus::default();
+    let (config_error, language, zones, cadence_ms, glossary_terms, hotkeys) =
+        match &*state.config.lock().unwrap() {
+            Some(Ok(config)) => (
+                None,
+                config.source.language.code().to_string(),
+                config
+                    .zones
+                    .iter()
+                    .map(|zone| ZoneStatus {
+                        id: zone.id.clone(),
+                        name: zone.name.clone(),
+                        region: format!(
+                            "{},{} {}×{}",
+                            zone.region.x, zone.region.y, zone.region.width, zone.region.height
+                        ),
+                    })
+                    .collect(),
+                config.capture.cadence_ms,
+                config.glossary.0.len(),
+                HotkeyStatus {
+                    toggle: config.hotkeys.toggle_translation.clone(),
+                    new_zone: config.hotkeys.new_zone.clone(),
+                    pause: config.hotkeys.pause_translation.clone(),
+                    one_shot: config.hotkeys.one_shot_capture.clone(),
+                },
             ),
-            cadence_ms: config.capture.cadence_ms,
-            glossary_terms: config.glossary.0.len(),
-            target_language: TARGET_LANGUAGE,
-            config_path,
-        },
-        Some(Err(message)) => Status {
-            running: false,
-            config_error: Some(message.clone()),
-            language: "-".into(),
-            region: "-".into(),
-            cadence_ms: 0,
-            glossary_terms: 0,
-            target_language: TARGET_LANGUAGE,
-            config_path,
-        },
-        None => Status {
-            running: false,
-            config_error: Some("config not loaded yet".into()),
-            language: "-".into(),
-            region: "-".into(),
-            cadence_ms: 0,
-            glossary_terms: 0,
-            target_language: TARGET_LANGUAGE,
-            config_path,
-        },
+            Some(Err(message)) => (
+                Some(message.clone()),
+                "-".into(),
+                Vec::new(),
+                0,
+                0,
+                default_hotkeys,
+            ),
+            None => (
+                Some("config not loaded yet".into()),
+                "-".into(),
+                Vec::new(),
+                0,
+                0,
+                default_hotkeys,
+            ),
+        };
+
+    Status {
+        running,
+        paused,
+        config_error,
+        warnings,
+        language,
+        zones,
+        cadence_ms,
+        glossary_terms,
+        hotkeys,
+        target_language: TARGET_LANGUAGE,
+        config_path,
     }
 }
 
-fn set_toggle_label(app: &AppHandle, label: &str) {
-    let state = app.state::<AppState>();
-    let guard = state.toggle_item.lock().unwrap();
-    if let Some(item) = guard.as_ref() {
-        let _ = item.set_text(label);
-    }
+/// The real Windows pipeline for translation passes: adapters wired to the
+/// configured Source Language and cadence, plus the loop's glossary.
+struct Pipeline {
+    config: LoopConfig,
+    glossary: Glossary,
+    capture: Arc<dyn langception_core::ports::CaptureSource>,
+    ocr: Arc<dyn langception_core::ports::OcrEngine>,
+    translate: Arc<dyn langception_core::ports::TranslateEngine>,
+}
+
+fn build_pipeline(config: &AppConfig) -> Result<Pipeline, String> {
+    Ok(Pipeline {
+        config: LoopConfig {
+            source_language: config.source.language,
+            cadence: Duration::from_millis(config.capture.cadence_ms as u64),
+        },
+        glossary: config.glossary.clone(),
+        capture: Arc::new(crate::capture::GdiCaptureSource::new()),
+        ocr: Arc::new(crate::ocr::WindowsOcrEngine::new(config.source.language)),
+        translate: Arc::new(
+            GoogleTranslateEngine::new()
+                .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
+        ),
+    })
+}
+
+/// Bridges orchestrator events to the Results Window. Exits on its own when
+/// the last event sender drops (loop stopped, or a one-shot pass finished).
+fn spawn_forwarder(
+    app: &AppHandle,
+    mut events_rx: mpsc::UnboundedReceiver<langception_core::orchestrator::LoopEvent>,
+) -> tauri::async_runtime::JoinHandle<()> {
+    let bridge_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = events_rx.recv().await {
+            if let Some(window) = bridge_app.get_webview_window("results") {
+                // Window temporarily unavailable (user hid it): keep the loop.
+                let _ = window.emit("loop-event", &event);
+            }
+        }
+    })
 }
 
 /// Starts the translation loop: wires real Windows adapters to the
@@ -220,41 +546,31 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     };
     drop(config_guard);
 
-    let loop_config = LoopConfig {
-        region: Region {
-            x: config.region.x,
-            y: config.region.y,
-            width: config.region.width,
-            height: config.region.height,
-        },
-        source_language: config.source.language,
-        cadence: Duration::from_millis(config.capture.cadence_ms as u64),
-    };
-    let glossary: Glossary = config.glossary.clone();
+    // A fresh loop starts unpaused, watching the current zones. Subscribe
+    // BEFORE sending: a watch::send with zero receivers does not store the
+    // value, so a later subscriber would see an empty zone list.
+    let zones_rx = state.zones_tx.subscribe();
+    let paused_rx = state.paused_tx.subscribe();
+    let _ = state.paused_tx.send(false);
+    *state.paused.lock().unwrap() = false;
+    let _ = state.zones_tx.send(config.zones.clone());
 
-    let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    let pipeline = build_pipeline(&config)?;
+    let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-    let capture = Arc::new(crate::capture::GdiCaptureSource::new());
-    let ocr = Arc::new(crate::ocr::WindowsOcrEngine::new(config.source.language));
-    let translate = Arc::new(
-        GoogleTranslateEngine::new()
-            .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
+    let orchestrator = Orchestrator::new(
+        pipeline.capture,
+        pipeline.ocr,
+        pipeline.translate,
+        Arc::new(SystemClock),
+        pipeline.config,
+        pipeline.glossary,
+        zones_rx,
+        paused_rx,
+        events_tx,
     );
-    let clock = Arc::new(SystemClock);
-
-    let orchestrator =
-        Orchestrator::new(capture, ocr, translate, clock, loop_config, glossary, events_tx);
     let orchestrator_task = tauri::async_runtime::spawn(orchestrator.run());
-
-    let bridge_app = app.clone();
-    let forwarder_task = tauri::async_runtime::spawn(async move {
-        while let Some(event) = events_rx.recv().await {
-            if let Some(window) = bridge_app.get_webview_window("results") {
-                // Window temporarily unavailable (user hid it): keep the loop.
-                let _ = window.emit("loop-event", &event);
-            }
-        }
-    });
+    let forwarder_task = spawn_forwarder(app, events_rx);
 
     *running = Some(RunningLoop {
         orchestrator: orchestrator_task,
@@ -262,8 +578,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     });
     drop(running);
 
-    set_toggle_label(app, "Stop Translation");
-    let _ = app.emit("engine-state", &status_for(app));
+    apply_state(app);
     Ok(())
 }
 
@@ -273,8 +588,10 @@ fn stop_loop(app: &AppHandle) {
         running.orchestrator.abort();
         running.forwarder.abort();
     }
-    set_toggle_label(app, "Start Translation");
-    let _ = app.emit("engine-state", &status_for(app));
+    // Pause is a sub-state of running: stopping clears it.
+    *state.paused.lock().unwrap() = false;
+    let _ = state.paused_tx.send(false);
+    apply_state(app);
 }
 
 fn toggle_translation(app: &AppHandle) -> Result<(), String> {
@@ -292,6 +609,21 @@ fn toggle_translation(app: &AppHandle) -> Result<(), String> {
     }
 }
 
+/// Alt+P / tray: hold the loop still without resetting per-block tracking.
+fn toggle_pause(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.running.lock().unwrap().is_none() {
+        return; // pause is a sub-state of running
+    }
+    let now_paused = {
+        let mut paused = state.paused.lock().unwrap();
+        *paused = !*paused;
+        *paused
+    };
+    let _ = state.paused_tx.send(now_paused);
+    apply_state(app);
+}
+
 fn open_config_folder(app: &AppHandle) {
     let state = app.state::<AppState>();
     let path = state.config_path.clone();
@@ -299,7 +631,123 @@ fn open_config_folder(app: &AppHandle) {
     let _ = std::process::Command::new("explorer").arg(dir).spawn();
 }
 
-// ---- Commands invoked from the Results Window ----
+// ---- Capture Zone picker overlay ----
+
+/// Opens (or toggles closed) the fullscreen picker overlay.
+fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
+    // A hotkey or menu item while the overlay is open cancels the session.
+    if let Some(existing) = app.get_webview_window(PICKER_LABEL) {
+        let _ = existing.destroy();
+        return Ok(());
+    }
+
+    let monitor = primary_monitor(app)?;
+    let size = monitor.size();
+    let origin = monitor.position();
+
+    *app.state::<AppState>().picker_mode.lock().unwrap() = Some(mode);
+
+    let window = WebviewWindowBuilder::new(
+        app,
+        PICKER_LABEL,
+        WebviewUrl::App("picker.html".into()),
+    )
+    .title("Langception — Capture Zone")
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .visible(false)
+    .build()
+    .map_err(|e| {
+        *app.state::<AppState>().picker_mode.lock().unwrap() = None;
+        format!("cannot open the capture overlay: {e}")
+    })?;
+
+    window
+        .set_position(Position::Physical(PhysicalPosition::new(origin.x, origin.y)))
+        .map_err(|e| format!("cannot place the capture overlay: {e}"))?;
+    window
+        .set_size(Size::Physical(PhysicalSize::new(size.width, size.height)))
+        .map_err(|e| format!("cannot size the capture overlay: {e}"))?;
+    window
+        .show()
+        .map_err(|e| format!("cannot show the capture overlay: {e}"))?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
+fn close_picker(app: &AppHandle) {
+    *app.state::<AppState>().picker_mode.lock().unwrap() = None;
+    if let Some(window) = app.get_webview_window(PICKER_LABEL) {
+        let _ = window.destroy();
+    }
+}
+
+fn primary_monitor(app: &AppHandle) -> Result<Monitor, String> {
+    app.primary_monitor()
+        .map_err(|e| format!("cannot query the primary monitor: {e}"))?
+        .ok_or_else(|| "no primary monitor found".to_string())
+}
+
+/// Picker viewport coordinates (CSS px) → screen region in physical px.
+/// The overlay covers the primary monitor, whose top-left is the region
+/// origin; CSS px are scaled by the monitor's DPI factor.
+fn region_from_css(monitor: &Monitor, x: i32, y: i32, width: i32, height: i32) -> Region {
+    let scale = monitor.scale_factor();
+    let origin = monitor.position();
+    Region {
+        x: origin.x + (f64::from(x) * scale).round() as i32,
+        y: origin.y + (f64::from(y) * scale).round() as i32,
+        width: ((f64::from(width) * scale).round() as u32).max(1),
+        height: ((f64::from(height) * scale).round() as u32).max(1),
+    }
+}
+
+fn save_config(config: &AppConfig, path: &Path) -> Result<(), String> {
+    let text = config
+        .to_toml_string()
+        .map_err(|e| e.to_string())?;
+    std::fs::write(path, text)
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))
+}
+
+/// The next free "Zone N" name (existing names win, so deletes never cause
+/// collisions).
+fn next_zone_name(config: &AppConfig) -> String {
+    for n in 1.. {
+        let name = format!("Zone {n}");
+        if !config
+            .zones
+            .iter()
+            .any(|z| z.name.trim().eq_ignore_ascii_case(&name))
+        {
+            return name;
+        }
+    }
+    unreachable!()
+}
+
+fn with_config_mut(
+    app: &AppHandle,
+    edit: impl FnOnce(&mut AppConfig) -> Result<(), String>,
+) -> Result<Vec<Zone>, String> {
+    let state = app.state::<AppState>();
+    let mut guard = state.config.lock().unwrap();
+    let config = match &mut *guard {
+        Some(Ok(config)) => config,
+        Some(Err(message)) => return Err(message.clone()),
+        None => return Err("config not loaded yet".into()),
+    };
+    edit(config)?;
+    save_config(config, &state.config_path)?;
+    Ok(config.zones.clone())
+}
+
+// ---- Commands invoked from the Results Window and the picker ----
 
 #[tauri::command]
 fn start_translation(app: AppHandle) -> Result<(), String> {
@@ -314,4 +762,179 @@ fn stop_translation(app: AppHandle) {
 #[tauri::command]
 fn get_status(app: AppHandle) -> Status {
     status_for(&app)
+}
+
+#[tauri::command]
+fn toggle_pause_translation(app: AppHandle) {
+    toggle_pause(&app)
+}
+
+#[tauri::command]
+fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Zone name must not be empty".into());
+    }
+    let state = app.state::<AppState>();
+    // Pre-check against the current zones so a rejected edit never lands in
+    // the in-memory config.
+    {
+        let guard = state.config.lock().unwrap();
+        if let Some(Ok(config)) = &*guard {
+            if config
+                .zones
+                .iter()
+                .any(|z| z.id != id && z.name.trim().eq_ignore_ascii_case(&name))
+            {
+                return Err(format!("A zone named \"{name}\" already exists"));
+            }
+        }
+    }
+    let zones = with_config_mut(&app, |config| {
+        let zone = config
+            .zones
+            .iter_mut()
+            .find(|z| z.id == id)
+            .ok_or_else(|| "zone not found (was it deleted elsewhere?)".to_string())?;
+        zone.name = name;
+        Ok(())
+    })?;
+    let _ = state.zones_tx.send(zones);
+    apply_state(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let zones = with_config_mut(&app, |config| {
+        let before = config.zones.len();
+        config.zones.retain(|z| z.id != id);
+        if config.zones.len() == before {
+            return Err("zone not found (was it deleted elsewhere?)".into());
+        }
+        Ok(())
+    })?;
+    let _ = state.zones_tx.send(zones);
+    apply_state(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn open_zone_picker(app: AppHandle, mode: String) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "zone" => PickerMode::Zone,
+        "oneshot" => PickerMode::OneShot,
+        other => return Err(format!("unknown picker mode \"{other}\"")),
+    };
+    open_picker(&app, mode)
+}
+
+/// The picker overlay asks once it has loaded what session it is serving.
+#[tauri::command]
+fn get_picker_mode(app: AppHandle) -> String {
+    match *app.state::<AppState>().picker_mode.lock().unwrap() {
+        Some(PickerMode::Zone) => "zone",
+        Some(PickerMode::OneShot) => "oneshot",
+        None => "none",
+    }
+    .to_string()
+}
+
+/// The picker overlay confirms a drag: coordinates are CSS px relative to
+/// the overlay's viewport (= the primary monitor's top-left).
+#[tauri::command]
+fn commit_zone_drag(app: AppHandle, x: i32, y: i32, width: i32, height: i32) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let Some(mode) = state.picker_mode.lock().unwrap().take() else {
+        return Err("no capture session is open".into());
+    };
+
+    // A click without a drag cancels the session (standard snip behavior).
+    if width < MIN_DRAG_CSS_PX || height < MIN_DRAG_CSS_PX {
+        close_picker(&app);
+        return Ok(());
+    }
+    let monitor = primary_monitor(&app)?;
+    let region = region_from_css(&monitor, x, y, width, height);
+
+    match mode {
+        PickerMode::Zone => {
+            // Persist the zone first so a failed save keeps the overlay open
+            // with the error visible in it.
+            let zones = with_config_mut(&app, |config| {
+                config.zones.push(Zone {
+                    id: format!(
+                        "z{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_nanos())
+                            .unwrap_or(0)
+                    ),
+                    name: next_zone_name(config),
+                    region,
+                });
+                Ok(())
+            })?;
+            close_picker(&app);
+            let _ = state.zones_tx.send(zones);
+            // Zones are what the loop watches: creating the first one starts
+            // translation (matches the tray's Start).
+            if state.running.lock().unwrap().is_none() {
+                if let Err(e) = start_loop(&app) {
+                    state.warnings.lock().unwrap().push(format!("failed to start translation after creating a zone: {e}"));
+                }
+            }
+            apply_state(&app);
+            Ok(())
+        }
+        PickerMode::OneShot => {
+            // Fallible parts (config, engine) resolve before the overlay
+            // closes, so failures stay visible in it.
+            let config = match &*state.config.lock().unwrap() {
+                Some(Ok(config)) => config.clone(),
+                Some(Err(message)) => return Err(message.clone()),
+                None => return Err("config not loaded yet".into()),
+            };
+            let pipeline = build_pipeline(&config)?;
+            close_picker(&app);
+            run_one_shot(&app, pipeline, region);
+            Ok(())
+        }
+    }
+}
+
+/// The picker overlay cancelled (Esc / click without drag).
+#[tauri::command]
+fn cancel_zone_drag(app: AppHandle) {
+    close_picker(&app)
+}
+
+/// One OCR+translate pass into the Results Window, independent of the
+/// running loop (it works while stopped, paused, or running). All fallible
+/// setup (config, engine) happens in `commit_zone_drag` before the picker
+/// closes, so this only spawns.
+fn run_one_shot(app: &AppHandle, pipeline: Pipeline, region: Region) {
+    // A one-shot pass is outside the zone loop: fresh, empty channels.
+    let (_zones_tx, zones_rx) = watch::channel(Vec::new());
+    let (_paused_tx, paused_rx) = watch::channel(false);
+    let (events_tx, events_rx) = mpsc::unbounded_channel();
+
+    let orchestrator = Orchestrator::new(
+        pipeline.capture,
+        pipeline.ocr,
+        pipeline.translate,
+        Arc::new(SystemClock),
+        pipeline.config,
+        pipeline.glossary,
+        zones_rx,
+        paused_rx,
+        events_tx,
+    );
+
+    tauri::async_runtime::spawn(async move {
+        orchestrator.capture_once(region).await;
+        // events_tx drops with the orchestrator: the forwarder drains and exits.
+    });
+    spawn_forwarder(app, events_rx);
 }

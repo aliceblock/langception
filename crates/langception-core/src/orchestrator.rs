@@ -1,18 +1,22 @@
 //! The translation loop: capture → OCR → per-block dedup → glossary
-//! short-circuit → translate → events.
+//! short-circuit → translate → events, across every active Capture Zone.
 //!
 //! All collaborators are ports (`capture`, `ocr`, `translate`, `clock`), so
 //! the whole pipeline is exercised with fakes at this seam — see
-//! `tests/orchestrator_tests.rs`.
+//! `tests/orchestrator_tests.rs`. The zone list and the paused flag arrive
+//! through watch channels so the shell can change them while the loop runs
+//! without losing per-block dedup state.
 
 use crate::glossary::Glossary;
-use crate::ports::{CaptureSource, Clock, OcrEngine, Region, SourceLanguage, TextBlock, TranslateEngine};
+use crate::ports::{
+    CaptureSource, Clock, OcrEngine, Region, SourceLanguage, TextBlock, TranslateEngine, Zone,
+};
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// Which path produced a translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -33,6 +37,15 @@ pub enum Stage {
     Translate,
 }
 
+/// Where a pipeline pass came from: one of the active Capture Zones, or a
+/// One-shot Capture (a single pass that creates no zone and has no dedup).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum EventOrigin {
+    Zone { id: String, name: String },
+    OneShot,
+}
+
 /// Everything the Results Window needs, streamed per pipeline tick.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -42,6 +55,7 @@ pub enum LoopEvent {
         translation: String,
         via: Via,
         at_ms: u64,
+        origin: EventOrigin,
     },
     Error {
         stage: Stage,
@@ -50,10 +64,11 @@ pub enum LoopEvent {
     },
 }
 
-/// The loop's fixed inputs: what to watch, in which language, how often.
+/// The loop's fixed inputs: in which language to read, and how often.
+/// The watched regions (Capture Zones) and the paused flag are dynamic and
+/// arrive via watch channels.
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
-    pub region: Region,
     pub source_language: SourceLanguage,
     pub cadence: Duration,
 }
@@ -76,11 +91,14 @@ pub struct Orchestrator {
     clock: Arc<dyn Clock>,
     config: LoopConfig,
     glossary: Glossary,
+    zones_rx: watch::Receiver<Vec<Zone>>,
+    paused_rx: watch::Receiver<bool>,
     events: mpsc::UnboundedSender<LoopEvent>,
-    /// Block key → last translated (trimmed) text. Unchanged text is never
-    /// re-translated; a failed block is also recorded so a dead engine is not
-    /// hammered every tick (retried when the text changes or the loop restarts).
-    translated: HashMap<(i32, i32), String>,
+    /// Zone id → (block key → last translated (trimmed) text). Unchanged
+    /// text is never re-translated; a failed block is also recorded so a
+    /// dead engine is not hammered every tick (retried when the text changes
+    /// or the zone is redrawn). State for removed zones is pruned per tick.
+    translated: HashMap<String, HashMap<(i32, i32), String>>,
 }
 
 impl Orchestrator {
@@ -91,6 +109,8 @@ impl Orchestrator {
         clock: Arc<dyn Clock>,
         config: LoopConfig,
         glossary: Glossary,
+        zones_rx: watch::Receiver<Vec<Zone>>,
+        paused_rx: watch::Receiver<bool>,
         events: mpsc::UnboundedSender<LoopEvent>,
     ) -> Self {
         Self {
@@ -100,23 +120,72 @@ impl Orchestrator {
             clock,
             config,
             glossary,
+            zones_rx,
+            paused_rx,
             events,
             translated: HashMap::new(),
         }
     }
 
-    /// One pipeline pass: capture, OCR, dedup, glossary short-circuit,
-    /// translate, emit. Never panics; every failure becomes an
-    /// [`LoopEvent::Error`] — the app must never fail silently.
+    /// One pipeline pass over every active zone: capture, OCR, dedup,
+    /// glossary short-circuit, translate, emit. Zones are processed in
+    /// order, each with its own tracking state. Never panics; every failure
+    /// becomes an [`LoopEvent::Error`] — the app must never fail silently.
     pub async fn tick(&mut self) {
-        let image = match self.capture.capture(self.config.region).await {
+        let zones = self.zones_rx.borrow().clone();
+        if zones.is_empty() {
+            self.translated.clear(); // no zones → no state worth keeping
+            return;
+        }
+        for zone in &zones {
+            let state = self.translated.remove(&zone.id).unwrap_or_default();
+            let origin = EventOrigin::Zone {
+                id: zone.id.clone(),
+                name: zone.name.clone(),
+            };
+            let state = self
+                .process_region(&zone.region, state, origin, &format!("zone \"{}\"", zone.name))
+                .await;
+            self.translated.insert(zone.id.clone(), state);
+        }
+        // Drop tracking state of zones that no longer exist, so a redrawn
+        // zone (same id pattern, new id) starts fresh.
+        self.translated.retain(|id, _| zones.iter().any(|z| &z.id == id));
+    }
+
+    /// One OCR+translate pass over `region` — the One-shot Capture: events
+    /// carry [`EventOrigin::OneShot`], no tracking state is consulted or
+    /// retained, and the running loop's state is untouched.
+    pub async fn capture_once(&self, region: Region) {
+        let _ = self
+            .process_region(&region, HashMap::new(), EventOrigin::OneShot, "One-shot capture")
+            .await;
+    }
+
+    /// The pipeline for one screen region. `state` is the region's block-key
+    /// → last-text map (empty for a fresh region); the updated map is
+    /// returned. `label` names the region in error events.
+    async fn process_region(
+        &self,
+        region: &Region,
+        mut state: HashMap<(i32, i32), String>,
+        origin: EventOrigin,
+        label: &str,
+    ) -> HashMap<(i32, i32), String> {
+        let image = match self.capture.capture(*region).await {
             Ok(image) => image,
-            Err(e) => return self.emit(Stage::Capture, e.message),
+            Err(e) => {
+                self.emit(Stage::Capture, format!("{label}: {e}"));
+                return state;
+            }
         };
 
         let blocks = match self.ocr.recognize(&image, self.config.source_language).await {
             Ok(blocks) => blocks,
-            Err(e) => return self.emit(Stage::Ocr, e.message),
+            Err(e) => {
+                self.emit(Stage::Ocr, format!("{label}: {e}"));
+                return state;
+            }
         };
 
         for block in blocks {
@@ -125,21 +194,23 @@ impl Orchestrator {
                 continue;
             }
             let key = block_key(&block);
-            if self.translated.get(&key).is_some_and(|last| *last == text) {
+            if state.get(&key).is_some_and(|last| *last == text) {
                 continue; // unchanged block: never re-translate
             }
 
-            if let Some(thai) = self.glossary.lookup(&text) {
-                self.events
-                    .send(LoopEvent::Translated {
-                        block,
-                        translation: thai,
-                        via: Via::Glossary,
-                        at_ms: self.clock.now_ms(),
-                    })
-                    .ok();
-            } else {
-                match self
+            // OCR boxes are relative to the captured region; report screen
+            // coordinates so display modes can position on screen.
+            let screen_block = TextBlock {
+                x: block.x + region.x,
+                y: block.y + region.y,
+                width: block.width,
+                height: block.height,
+                text: block.text.clone(),
+            };
+
+            let translated = match self.glossary.lookup(&text) {
+                Some(thai) => Ok((thai, Via::Glossary)),
+                None => self
                     .translate
                     .translate(
                         &text,
@@ -147,34 +218,44 @@ impl Orchestrator {
                         crate::ports::TARGET_LANGUAGE,
                     )
                     .await
-                {
-                    Ok(thai) => {
-                        self.events
-                            .send(LoopEvent::Translated {
-                                block,
-                                translation: thai,
-                                via: Via::Engine,
-                                at_ms: self.clock.now_ms(),
-                            })
-                            .ok();
-                    }
-                    Err(e) => self.emit(Stage::Translate, e.message),
+                    .map(|thai| (thai, Via::Engine))
+                    .map_err(|e| e.message),
+            };
+            match translated {
+                Ok((translation, via)) => {
+                    self.events
+                        .send(LoopEvent::Translated {
+                            block: screen_block,
+                            translation,
+                            via,
+                            at_ms: self.clock.now_ms(),
+                            origin: origin.clone(),
+                        })
+                        .ok();
                 }
+                Err(message) => self.emit(Stage::Translate, format!("{label}: {message}")),
             }
-            self.translated.insert(key, text);
+            state.insert(key, text);
         }
+        state
     }
 
-    /// Runs the loop forever, pacing ticks with the clock. The caller stops
-    /// it by aborting the task.
+    /// Runs the loop forever, pacing ticks with the clock and holding still
+    /// (without losing tracking state) while paused. The caller stops it by
+    /// aborting the task.
     pub async fn run(mut self) {
         loop {
+            if *self.paused_rx.borrow() {
+                if self.paused_rx.wait_for(|paused| !*paused).await.is_err() {
+                    return; // sender dropped: the shell is gone
+                }
+            }
             self.tick().await;
             self.clock.sleep(self.config.cadence).await;
         }
     }
 
-    fn emit(&mut self, stage: Stage, message: String) {
+    fn emit(&self, stage: Stage, message: String) {
         self.events
             .send(LoopEvent::Error {
                 stage,
