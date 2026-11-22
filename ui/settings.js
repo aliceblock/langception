@@ -1456,7 +1456,14 @@ async function handleSettingsCloseRequest() {
     closeAskOpen = false;
   }
 }
-listen("settings-request-close", handleSettingsCloseRequest);
+// Registered through WebviewWindow, not the plain event API imported above:
+// plain listen is EventTarget::Any, which receives every emit regardless of
+// emit_to targeting (ADR-0003's event-targeting lesson) — the handshake ping
+// must stay addressed to THIS window, and the label-filtered listener
+// guarantees it.
+window.__TAURI__.webviewWindow
+  .getCurrentWebviewWindow()
+  .listen("settings-request-close", handleSettingsCloseRequest);
 
 // About ----------------------------------------------------------------------
 

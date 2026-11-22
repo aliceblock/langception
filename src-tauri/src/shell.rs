@@ -1763,6 +1763,22 @@ fn zone_monitor_present(monitors: &[Monitor], primary: Option<&Monitor>, name: &
         .any(|m| m.name().map(|n| n.as_str()) == Some(name))
 }
 
+/// Whether `region`'s center (global physical px) lands on this monitor —
+/// the rule deciding which overlay's payload carries a zone: legacy global
+/// zones with no monitor follow their center, and a Profile's zones reach
+/// here already clamped to screen rects (ticket 40), so both ask the same
+/// question the same way.
+fn region_center_on_monitor(region: &Region, monitor: &Monitor) -> bool {
+    let origin = monitor.position();
+    let size = monitor.size();
+    let center_x = region.x + region.width as i32 / 2;
+    let center_y = region.y + region.height as i32 / 2;
+    center_x >= origin.x
+        && center_x < origin.x + size.width as i32
+        && center_y >= origin.y
+        && center_y < origin.y + size.height as i32
+}
+
 /// The zones the loop watches for the config's current capture target:
 /// in zones mode, every zone whose monitor is present (unplugged monitors
 /// disable their zones without deleting them); in full-screen mode, one
@@ -1858,8 +1874,6 @@ fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
         Some(Ok(config)) => (config.mode.target, config.zones.clone()),
         _ => (CaptureMode::Zones, Vec::new()),
     };
-    let fullscreen = matches!(target, CaptureMode::FullScreen);
-
     // Ticket 40: the active Profile's zones replace the global ones (the
     // profile app's window may also sit on another monitor — then this
     // monitor's payload simply carries none of them). A missing window
@@ -1871,9 +1885,15 @@ fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
         Err(message) => (None, Some(message), Vec::new()),
     };
     let profile_active = profile_id.is_some() || profile_note.is_some();
+    // While a Profile's zones are the watched regions, Excluded Blocks do
+    // not apply (effective_target: a Profile's window target has none), so
+    // the payload must not offer exclusion clicks — `fullscreen` answers
+    // for the GLOBAL mode only when no Profile owns the watch. The overlay
+    // surface must mirror the loop's effective target, not the raw config
+    // value (review of ticket 40).
+    let fullscreen = !profile_active && matches!(target, CaptureMode::FullScreen);
 
     let origin = monitor.position();
-    let size = monitor.size();
     let name = monitor_name(monitor);
 
     // A zone shows up on the monitor it belongs to (by name; legacy zones
@@ -1890,12 +1910,7 @@ fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
                 if !zone.monitor.is_empty() {
                     zone.monitor == name
                 } else {
-                    let center_x = zone.region.x + zone.region.width as i32 / 2;
-                    let center_y = zone.region.y + zone.region.height as i32 / 2;
-                    center_x >= origin.x
-                        && center_x < origin.x + size.width as i32
-                        && center_y >= origin.y
-                        && center_y < origin.y + size.height as i32
+                    region_center_on_monitor(&zone.region, monitor)
                 }
             })
             .map(|zone| AdjustZone {
@@ -1918,6 +1933,16 @@ fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
         profile_id,
         note: profile_note,
     }
+}
+
+/// The Adjust Mode message for a Profile whose app has no visible window
+/// right now (closed/minimized) — one string so the payload's note and the
+/// drop command's error stay identical (review of ticket 40: they had
+/// drifted into two formats).
+fn profile_window_missing(exe: &str) -> String {
+    format!(
+        "\"{exe}\" has no visible window right now — start the app (not minimized), then adjust its zones"
+    )
 }
 
 /// The active Profile's Capture Zones as adjust rects for `monitor`
@@ -1953,13 +1978,9 @@ fn profile_adjust_zones(
         return Ok(None);
     };
     let Some(window) = crate::foreground::app_window_rect(&profile.exe) else {
-        return Err(format!(
-            "\"{0}\" has no visible window right now — start the app (not minimized), then adjust its zones",
-            profile.exe
-        ));
+        return Err(profile_window_missing(&profile.exe));
     };
     let origin = monitor.position();
-    let size = monitor.size();
     let rects = profile
         .zones
         .iter()
@@ -1972,14 +1993,7 @@ fn profile_adjust_zones(
             // could persist into, and creating zones is the picker's job),
             // so it never appears here.
             zone_in_window(window, zone.region)
-                .filter(|region| {
-                    let center_x = region.x + region.width as i32 / 2;
-                    let center_y = region.y + region.height as i32 / 2;
-                    center_x >= origin.x
-                        && center_x < origin.x + size.width as i32
-                        && center_y >= origin.y
-                        && center_y < origin.y + size.height as i32
-                })
+                .filter(|region| region_center_on_monitor(region, monitor))
                 .map(|region| AdjustZone {
                     id: zone.id.clone(),
                     name: zone.name.clone(),
@@ -2959,11 +2973,8 @@ async fn update_profile_zone_region(
                 .map(|p| p.exe.clone())
         }
         .ok_or_else(|| "profile not found (was it deleted elsewhere?)".to_string())?;
-        let window = crate::foreground::app_window_rect(&profile_exe).ok_or_else(|| {
-            format!(
-                "\"{profile_exe}\" has no visible window right now — start the app (not minimized), then adjust its zones"
-            )
-        })?;
+        let window = crate::foreground::app_window_rect(&profile_exe)
+            .ok_or_else(|| profile_window_missing(&profile_exe))?;
         // Clamp inside the window and store window-relative — the same
         // shape (and same core helper) zone drawing stores, so an adjusted
         // zone follows the window exactly like a drawn one. A drop hanging
