@@ -72,6 +72,11 @@ pub struct TextStyle {
     /// fallback for blocks whose sampling fails; font size, outline, pill
     /// on/off, and opacity keep applying as usual.
     pub auto_colors: bool,
+    /// Cover Source (ticket 24, CONTEXT.md): with `background` on, stretch
+    /// the pill over the whole Text Block's rect instead of hugging the
+    /// translated text, so the original underneath is dressed over. Takes
+    /// precedence over Placement when both are on.
+    pub cover_source: bool,
 }
 
 impl Default for TextStyle {
@@ -85,6 +90,7 @@ impl Default for TextStyle {
             background: true,
             background_opacity: 0.6,
             auto_colors: false,
+            cover_source: false,
         }
     }
 }
@@ -757,6 +763,10 @@ outline_color = "#000000"
 # Background pill behind each translation, with its opacity (0-1).
 background = true
 background_opacity = 0.6
+# Cover Source (CONTEXT.md): stretch the pill over the WHOLE original text
+# block instead of hugging only the translated text, so the original is
+# dressed over. Needs `background` above; pill opacity applies as usual.
+cover_source = false
 # Auto Colors: sample each block's text and pill colors from the captured
 # pixels, so translations dress like the scene they cover. `color` above is
 # the fallback for blocks whose sampling fails.
@@ -894,6 +904,7 @@ language = "en"
             .replace("outline_color = \"#000000\"", "outline_color = \"#123456\"")
             .replace("background = true", "background = false")
             .replace("background_opacity = 0.6", "background_opacity = 0.25")
+            .replace("cover_source = false", "cover_source = true")
             .replace("auto_colors = false", "auto_colors = true");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(
@@ -907,6 +918,7 @@ language = "en"
                 background: false,
                 background_opacity: 0.25,
                 auto_colors: true,
+                cover_source: true,
             }
         );
 
@@ -925,6 +937,20 @@ language = "en"
             .join("\n");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert!(!config.text_style.auto_colors);
+        assert_eq!(config.text_style, TextStyle::default());
+    }
+
+    #[test]
+    fn cover_source_defaults_off_for_configs_written_before_it() {
+        // Same shape as auto_colors above: a pre-ticket-24 config has no
+        // `cover_source` key; the container default (off) must fill it in.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("cover_source"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert!(!config.text_style.cover_source);
         assert_eq!(config.text_style, TextStyle::default());
     }
 

@@ -950,6 +950,7 @@ const styleOutlineWidth = document.getElementById("style-outline-width");
 const styleOutlineColor = document.getElementById("style-outline-color");
 const styleBackground = document.getElementById("style-background");
 const styleOpacity = document.getElementById("style-opacity");
+const styleCoverSource = document.getElementById("style-cover-source");
 let styleLoaded = false;
 let styleSaveTimer = null;
 
@@ -975,6 +976,7 @@ function loadStyleInputs(style) {
   styleOutlineColor.value = normalizeHex(style.outlineColor, "#000000");
   styleBackground.checked = style.background;
   styleOpacity.value = style.backgroundOpacity;
+  styleCoverSource.checked = style.coverSource;
 }
 
 function collectStyle() {
@@ -987,6 +989,7 @@ function collectStyle() {
     outlineColor: normalizeHex(styleOutlineColor.value, "#000000"),
     background: styleBackground.checked,
     backgroundOpacity: Number(styleOpacity.value) || 0,
+    coverSource: styleCoverSource.checked,
   };
 }
 
@@ -1003,7 +1006,7 @@ function scheduleStyleSave() {
   }, 250);
 }
 
-for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity]) {
+for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity, styleCoverSource]) {
   control.addEventListener("input", scheduleStyleSave);
   control.addEventListener("change", scheduleStyleSave);
 }

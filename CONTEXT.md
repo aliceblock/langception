@@ -44,6 +44,14 @@ _Avoid_: separate window, side panel
 A Text Style setting that samples each Text Block's text and pill colors from the captured pixels, so translations dress like the scene they cover. The manual colors stay as the fallback; font size, outline, and pill opacity keep applying.
 _Avoid_: auto style, adaptive colors, color picking
 
+**Placement**:
+A Text Style setting that positions translated text Over its Text Block (default), Below it, or Beside it.
+_Avoid_: offset, position mode, anchor
+
+**Cover Source**:
+A Text Style setting that stretches the pill over the whole Text Block instead of hugging the translated text. Takes precedence over Placement when both are on.
+_Avoid_: full background, block background
+
 **Adjust Mode**:
 A hotkey-toggled state in which Capture Zones and overlays become draggable/resizable instead of click-through.
 _Avoid_: edit mode, config mode

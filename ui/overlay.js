@@ -37,6 +37,7 @@ const DEFAULT_STYLE = {
   background: true,
   backgroundOpacity: 0.6,
   autoColors: false,
+  coverSource: false,
 };
 
 let style = { ...DEFAULT_STYLE };
@@ -102,12 +103,36 @@ function applyStyleTo(entry) {
   entry.el.style.webkitTextStrokeWidth = s.outlineWidth + "px";
   entry.el.style.webkitTextStrokeColor = s.outlineColor;
   entry.el.style.color = sampled ? sampled.textColor : s.color;
+  // Reset any Cover Source stretch first, so toggling the option (or the
+  // pill) off live leaves no stretched geometry behind.
+  entry.el.style.margin = "0";
+  entry.el.style.minWidth = "0";
+  entry.el.style.minHeight = "0";
+  entry.el.style.display = "";
+  entry.el.style.alignItems = "";
+  entry.el.style.justifyContent = "";
   if (s.background) {
     const rgb = hexToRgb(sampled ? sampled.pillColor : "#000000") || { r: 0, g: 0, b: 0 };
     entry.el.style.background = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${s.backgroundOpacity})`;
     entry.el.style.padding = "1px 6px";
     entry.el.style.borderRadius = "4px";
+    // Cover Source (ticket 24): stretch the pill over the whole Text
+    // Block instead of shrink-wrapping the text, so the original is
+    // dressed over. The negative margin shifts the pill out by the same
+    // pad the min width/height add, so it spans the block rect plus a
+    // small border; the text centers inside it. Sampled pill colors (Auto
+    // Colors above) apply to the stretched shape unchanged.
+    if (s.coverSource) {
+      entry.el.style.margin = -COVER_PAD_PX + "px";
+      entry.el.style.minWidth = entry.boxW + COVER_PAD_PX * 2 + "px";
+      entry.el.style.minHeight = entry.boxH + COVER_PAD_PX * 2 + "px";
+      entry.el.style.display = "flex";
+      entry.el.style.alignItems = "center";
+      entry.el.style.justifyContent = "center";
+    }
   } else {
+    // No pill, no stretch: Cover Source only means anything with a
+    // background behind it, so the reset above stands.
     entry.el.style.background = "transparent";
     entry.el.style.padding = "0";
     entry.el.style.borderRadius = "0";
@@ -127,6 +152,9 @@ function applyStyleToAll() {
 // subtracts it so the text itself fits inside the pill.
 const PILL_PAD_X = 12;
 const PILL_PAD_Y = 2;
+// Cover Source (ticket 24): how far the stretched pill spreads beyond the
+// block rect on every side ("plus a small padding").
+const COVER_PAD_PX = 4;
 
 // Auto-shrink-to-fit: the Thai must not sprawl over the screen. Phase 1
 // shrinks on a single line until it fits the block's width; if even the

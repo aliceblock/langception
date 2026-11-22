@@ -198,6 +198,7 @@ pub struct TextStyleDto {
     pub background: bool,
     pub background_opacity: f32,
     pub auto_colors: bool,
+    pub cover_source: bool,
 }
 
 impl From<&TextStyle> for TextStyleDto {
@@ -211,6 +212,7 @@ impl From<&TextStyle> for TextStyleDto {
             background: style.background,
             background_opacity: style.background_opacity,
             auto_colors: style.auto_colors,
+            cover_source: style.cover_source,
         }
     }
 }
@@ -226,6 +228,7 @@ impl From<TextStyleDto> for TextStyle {
             background: dto.background,
             background_opacity: dto.background_opacity,
             auto_colors: dto.auto_colors,
+            cover_source: dto.cover_source,
         }
     }
 }

@@ -255,6 +255,11 @@ struct StylePayload<'a> {
     /// per-block overrides are ignored (the page restyles to the manual
     /// colors immediately).
     auto_colors: bool,
+    /// Cover Source (ticket 24): with `background` on, stretch the pill
+    /// over the whole source Text Block rect instead of shrink-wrapping
+    /// the translated text. Display-only geometry: the broadcast restyles
+    /// live, no loop restart needed (unlike `auto_colors`).
+    cover_source: bool,
 }
 
 impl<'a> From<&'a TextStyle> for StylePayload<'a> {
@@ -268,6 +273,7 @@ impl<'a> From<&'a TextStyle> for StylePayload<'a> {
             background: style.background,
             background_opacity: style.background_opacity,
             auto_colors: style.auto_colors,
+            cover_source: style.cover_source,
         }
     }
 }
