@@ -27,6 +27,22 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "publisher": "The Langception Authors",
+    "copyright": "Copyright 2026 The Langception Authors. Apache-2.0 licensed.",
+    "license": "Apache-2.0",
+    "category": "Utility",
+    "shortDescription": "Screen-capture OCR + Thai translation overlay",
+    "longDescription": "Langception watches the screen — a drawn Capture Zone, a full monitor, or a per-app Profile — OCRs the text (Windows OCR), and shows its Thai translation in place over the original or in an always-on-top Results Window. Zero-config default engine, optional Azure/DeepL/Gemini/OpenAI-compatible/LM Studio engines, Glossary pinning, Genderless Mode, and a fused vision-LLM reading mode.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Thai"]
+      }
+    }
   }
 }

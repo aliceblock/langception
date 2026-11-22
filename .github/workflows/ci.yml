@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: clippy + tests (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The app compiles only where its Windows APIs exist, so CI runs on
+      # Windows. cargo fmt is intentionally NOT a gate: the tree predates
+      # any fmt discipline (a formatting-only pass would bury real diffs).
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Offline by design (fakes + golden fixtures); the opt-in capture
+      # smoke in src-tauri/tests/manual_smoke.rs stays ignored.
+      - name: Tests
+        run: cargo test --workspace
