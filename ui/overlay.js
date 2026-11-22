@@ -185,7 +185,13 @@ function placeBlock(entry) {
   if (!entry.rect) return;
   const dpr = window.devicePixelRatio || 1;
   const placement = style.coverSource && style.background ? "over" : style.placement;
-  if (placement === "below") {
+  if (placement === "above") {
+    // Sits just above the source rect's top, aligned with its left edge;
+    // it never overlaps the block.
+    const ph = entry.el.offsetHeight;
+    entry.el.style.left = entry.rect.x / dpr + "px";
+    entry.el.style.top = entry.rect.y / dpr - PLACEMENT_GAP_PX - ph + "px";
+  } else if (placement === "below") {
     // Sits just under the source rect's bottom, aligned with its left
     // edge; it never overlaps the block.
     entry.el.style.left = entry.rect.x / dpr + "px";

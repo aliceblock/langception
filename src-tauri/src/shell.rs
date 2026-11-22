@@ -2619,7 +2619,7 @@ fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
     // silent fallback to Over.
     if Placement::from_code(style.placement.trim()).is_none() {
         return Err(format!(
-            "placement \"{}\" is unknown — placements: over, below, beside",
+            "placement \"{}\" is unknown — placements: over, above, below, beside",
             style.placement.trim()
         ));
     }

@@ -109,16 +109,18 @@ pub const DEFAULT_FONT_FAMILY: &str = "Noto Sans Thai";
 
 /// Where a translated pill sits relative to its Text Block (ticket 25,
 /// CONTEXT.md "Placement"): [`Placement::Over`] draws in place over the
-/// original, [`Placement::Below`] sits under the block, and
-/// [`Placement::Beside`] sits to its right (flipping left near the screen
-/// edge). Presets rather than manual X/Y geometry — the overlay computes
-/// each pill's position from the block's rect, so nothing needs per-game
-/// tuning. Cover Source wins when both are on.
+/// original, [`Placement::Above`] sits just above the block,
+/// [`Placement::Below`] sits just under it, and [`Placement::Beside`] sits
+/// to its right (flipping left near the screen edge). Presets rather than
+/// manual X/Y geometry — the overlay computes each pill's position from
+/// the block's rect, so nothing needs per-game tuning. Cover Source wins
+/// when both are on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Placement {
     #[default]
     Over,
+    Above,
     Below,
     Beside,
 }
@@ -128,6 +130,7 @@ impl Placement {
     pub fn code(self) -> &'static str {
         match self {
             Placement::Over => "over",
+            Placement::Above => "above",
             Placement::Below => "below",
             Placement::Beside => "beside",
         }
@@ -138,6 +141,7 @@ impl Placement {
     pub fn from_code(code: &str) -> Option<Self> {
         match code {
             "over" => Some(Placement::Over),
+            "above" => Some(Placement::Above),
             "below" => Some(Placement::Below),
             "beside" => Some(Placement::Beside),
             _ => None,
@@ -150,6 +154,7 @@ impl std::fmt::Display for Placement {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Placement::Over => "Over",
+            Placement::Above => "Above",
             Placement::Below => "Below",
             Placement::Beside => "Beside",
         })
@@ -829,9 +834,9 @@ cover_source = false
 # the fallback for blocks whose sampling fails.
 auto_colors = false
 # Placement (CONTEXT.md): where each translated pill sits relative to its
-# Text Block — "over" the original (in place, the default), "below" it, or
-# "beside" it (right of the block; near the screen edge it flips left).
-# Applies live; cover_source above wins when both are on.
+# Text Block — "over" the original (in place, the default), "above" it,
+# "below" it, or "beside" it (right of the block; near the screen edge it
+# flips left). Applies live; cover_source above wins when both are on.
 placement = "over"
 
 [hotkeys]
@@ -1039,6 +1044,7 @@ language = "en"
     fn placement_roundtrips_through_toml() {
         for (code, expected) in [
             ("over", Placement::Over),
+            ("above", Placement::Above),
             ("below", Placement::Below),
             ("beside", Placement::Beside),
         ] {
@@ -1070,6 +1076,7 @@ language = "en"
         // variant's code parses back to itself.
         for (placement, code, label) in [
             (Placement::Over, "over", "Over"),
+            (Placement::Above, "above", "Above"),
             (Placement::Below, "below", "Below"),
             (Placement::Beside, "beside", "Beside"),
         ] {
