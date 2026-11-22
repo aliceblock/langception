@@ -1,8 +1,22 @@
 /* Langception Settings window (ticket 06) — page styles over the shared
    theme (theme.css, black/yellow brand from ticket 16): wizard, tabs, and
-   the config forms. */
+   the config forms. Ticket 41: the full polish pass — one section/card
+   system, one type scale, unified controls, one hint pattern, styled empty
+   states, and the sticky Save footer's final form. Zero behavior change:
+   every id and JS-created class below is load-bearing (settings.js). */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* Ticket 41 local tokens — derived from the theme ramp, not a parallel
+   palette: --border-strong sits between theme's --border (#2d303b) and
+   --muted (#9aa2b5) for control hover; the radii and the footer shadow
+   reuse the app's 7/10px corners and its plain black elevation. */
+:root {
+  --border-strong: #3a3e4c;
+  --radius-control: 7px;
+  --radius-card: 10px;
+  --shadow-footer: 0 -8px 20px rgba(0, 0, 0, 0.35);
+}
 
 html, body { height: 100%; }
 
@@ -23,24 +37,44 @@ header {
   user-select: none;
 }
 
+/* ---- Type scale (ticket 41): one step per role ----
+   h1 titlebar 15px/600 · h2 page title 15px/600 · h3 section heading
+   11px/600 uppercase muted · labels+values 12.5px · hints 11.5px muted. */
+
 h1 { font-size: 15px; font-weight: 600; }
-h2 { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
-h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text); }
+h2 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+h3 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
 
 .chip {
   font-size: 11px;
   padding: 3px 9px;
   border-radius: 999px;
   font-weight: 600;
+  border: 1px solid transparent;
 }
-.chip.privacy { background: rgba(242, 182, 60, 0.18); color: var(--glossary); }
-.chip.error { background: rgba(255, 85, 102, 0.16); color: var(--err); }
-.chip.ok { background: rgba(55, 194, 110, 0.16); color: var(--ok); }
+/* Chip borders match the Results Window's (style.css) so a badge reads the
+   same in both windows. */
+.chip.privacy { background: rgba(242, 182, 60, 0.18); color: var(--glossary); border-color: rgba(242, 182, 60, 0.45); }
+.chip.error { background: rgba(255, 85, 102, 0.16); color: var(--err); border-color: rgba(255, 85, 102, 0.45); }
+.chip.ok { background: rgba(55, 194, 110, 0.16); color: var(--ok); border-color: rgba(55, 194, 110, 0.4); }
+
+/* ---- Buttons: one hierarchy (ticket 41) ----
+   .btn secondary (the workhorse), .btn.small auxiliary, .btn.primary ONLY
+   for a view's own primary action: the sticky footer's Save on the tab
+   pages, the wizard's flow buttons inside the wizard. Nothing else in the
+   tabs is primary (the per-list Add buttons were demoted in markup). */
 
 .btn {
   padding: 6px 14px;
   font-size: 12px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--text);
@@ -56,31 +90,58 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
 
 .hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 
-.row { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.row { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
 .mono { font-family: Consolas, monospace; font-size: 11.5px; }
 
 .hidden { display: none !important; }
+
+/* ---- Section cards (ticket 41) ----
+   The one grouping unit: every tab's concerns live in these. Single-concern
+   tabs (General, Glossary, Text Style, Hotkeys, About) get one card; the
+   multi-concern tabs (Engines, Profiles) one per concern. The engine cards
+   and wizard steps share the exact geometry, so everything on the page
+   reads as one system. */
+
+.settings-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 14px 16px;
+  margin-top: 12px;
+}
+.settings-section > h3:first-child,
+.settings-section > .form-grid:first-child,
+.settings-section > .row:first-child { margin-top: 0; }
+/* A trailing note (About's privacy hint) breathes below the actions row. */
+.settings-section > .row + p.hint { margin-top: 10px; }
 
 /* ---- Wizard ---- */
 
 .wizard {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 22px;
+  padding: 20px 22px 24px;
 }
+/* One content width, centered when the window grows past it (same 680px
+   cap as the tab pages). */
+.wizard > * { max-width: 680px; margin-left: auto; margin-right: auto; }
 .wizard h2 { font-size: 16px; margin-bottom: 8px; }
 .wizard-lede { font-size: 12.5px; color: var(--muted); line-height: 1.55; max-width: 640px; }
 
 .wizard-step {
-  margin-top: 16px;
+  margin-top: 14px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   padding: 14px 16px;
 }
 .wizard-step h3 { margin-top: 0; }
-.wizard-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 0; }
+.wizard-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 0 4px; }
+
+/* An engine card nested in a wizard step would vanish against the step's
+   panel ground — inset it to the window background instead. */
+.wizard-step .engine-card { background: var(--bg); }
 
 .packs { list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .pack-row {
@@ -101,18 +162,22 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   padding: 3px 9px;
   border-radius: 999px;
   font-weight: 600;
+  border: 1px solid transparent;
 }
-.pill.ok { background: rgba(55, 194, 110, 0.16); color: var(--ok); }
-.pill.err { background: rgba(255, 85, 102, 0.16); color: var(--err); }
+.pill.ok { background: rgba(55, 194, 110, 0.16); color: var(--ok); border-color: rgba(55, 194, 110, 0.4); }
+.pill.err { background: rgba(255, 85, 102, 0.16); color: var(--err); border-color: rgba(255, 85, 102, 0.45); }
 
+/* Per-engine configuration cards — same geometry as .settings-section, so
+   the Engines tab reads as a stack of equal siblings. */
 .engine-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-top: 8px;
+  border-radius: var(--radius-card);
+  padding: 14px 16px;
+  margin-top: 12px;
 }
 .engine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.engine-title strong { font-size: 12.5px; }
 
 /* ---- Tabs ---- */
 
@@ -136,37 +201,95 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
-.pages { flex: 1; overflow-y: auto; padding: 16px 22px; }
-.page { display: none; max-width: 680px; }
+.pages { flex: 1; overflow-y: auto; padding: 16px 22px 24px; }
+/* One content width everywhere; centered once the window outgrows it,
+   untouched at the 620px minimum (680 > the ~576px that remains). */
+.page { display: none; max-width: 680px; margin-inline: auto; }
 .page.active { display: block; }
 
-.form-grid { display: flex; flex-direction: column; gap: 9px; }
+/* ---- Form grid (ticket 41): one label+control pattern ----
+   180px label column, control column beside it, and a per-control hint on
+   its own line UNDER the control (grid-column 2) — the one hint placement
+   app-wide. minmax(0, 1fr) lets long content shrink instead of overflowing
+   at the window minimum. */
+
+.form-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+/* Rows inside the grid rely on the grid's gap (the Text Style preview row). */
+.form-grid > .row { margin-top: 0; }
 .form-row {
   display: grid;
-  grid-template-columns: 170px 1fr;
+  grid-template-columns: 180px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  column-gap: 12px;
+  row-gap: 3px;
 }
-.form-row > span { font-size: 12.5px; color: var(--text); }
+.form-row > span:first-child { font-size: 12.5px; color: var(--text); }
+.form-row > .hint { grid-column: 2; }
+
+/* ---- Unified controls (ticket 41): one surface, one height, one focus ---- */
+
 .form-row input[type="text"],
 .form-row input[type="number"],
-.form-row select {
+.form-row select,
+.style-pair select,
+.glossary-add input[type="text"],
+.glossary-add input[type="password"],
+.glossary-add input[type="number"],
+.glossary-add select,
+.glossary-io select,
+.prompt-field textarea {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   color: var(--text);
   padding: 6px 9px;
   font-size: 12.5px;
+  font-family: inherit;
+}
+.form-row input[type="text"],
+.form-row input[type="number"],
+.form-row select {
   max-width: 320px;
 }
-.form-row input:focus, .form-row select:focus { outline: none; border-color: var(--accent); }
-.style-pair { display: flex; align-items: center; gap: 8px; }
+.form-row input:disabled, .form-row select:disabled { opacity: 0.5; }
+.form-row input[type="text"]:focus,
+.form-row input[type="number"]:focus,
+.form-row select:focus,
+.style-pair select:focus,
+.glossary-add input:focus,
+.glossary-add select:focus,
+.glossary-io select:focus,
+.prompt-field textarea:focus { outline: none; border-color: var(--accent); }
+
+/* Toggles and sliders take the accent, checkboxes keep their own cell
+   alignment (a stretched checkbox would drift mid-column). */
+input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+input[type="range"] { accent-color: var(--accent); width: 160px; max-width: 100%; }
+.form-row input[type="checkbox"] { justify-self: start; }
+input[type="color"] {
+  width: 44px;
+  height: 28px;
+  padding: 2px 3px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* Number inputs beside flexed text inputs (engine temperatures). */
+.glossary-add input[type="number"] { width: 72px; flex: none; }
+.glossary-add input[type="text"],
+.glossary-add input[type="password"] { flex: 1; }
+
+.style-pair { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.style-pair.stack { flex-direction: column; align-items: stretch; }
 
 /* Exact Text Style preview (ticket 26): the pill element inside is styled
    by the overlay's shared renderer (pill-style.js) against the in-form
    values, so the preview shows what the In-place Overlay will draw. The
    stage backdrop is only a stand-in scene — real pills float over
-   arbitrary screen content. */
+   arbitrary screen content. Ticket 41 keeps the scene gradient (it must
+   read as "game content", not as app chrome) and fits the frame to the
+   card system. */
 
 /* Bundled Noto Sans Thai, same declaration as overlay.css (canonical
    there): the preview renders the bundled font even when no Thai-capable
@@ -185,8 +308,9 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   gap: 6px;
   padding: 16px 18px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   background: linear-gradient(160deg, #3a4152 0%, #262b38 55%, #1a1d27 100%);
+  width: 100%;
   max-width: 420px;
   overflow: hidden;
 }
@@ -197,7 +321,7 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
    border-box here, same as the overlay's explicit rule. paint-order and
    the stroke come from the shared applyPillStyle, not from here.
    inline-block keeps the pill hugging the text the way the overlay's div
-   does. */
+   does. These metrics are overlay-parity — do not restyle. */
 #style-preview-pill {
   display: inline-block;
   max-width: 300px;
@@ -210,7 +334,17 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   color: rgba(255, 255, 255, 0.65);
 }
 
-/* ---- Glossary ---- */
+/* The vision-reading warning (ticket 12) as a callout: amber tint like the
+   Results Window's warnings line, so a cost/latency caveat never looks
+   like ordinary hint text. */
+#engines-reading-warning {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(242, 182, 60, 0.35);
+  border-radius: 8px;
+  background: rgba(242, 182, 60, 0.08);
+}
+#engines-reading-warning strong { color: var(--glossary); }
 
 /* Custom LLM prompt fields (ticket 37, Engines tab): multi-line free
    text, styled like the other form inputs but full-width. */
@@ -218,8 +352,9 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   display: flex;
   flex-direction: column;
   gap: 5px;
-  margin-top: 9px;
+  margin-top: 12px;
 }
+.prompt-field:first-of-type { margin-top: 0; }
 .prompt-head {
   display: flex;
   align-items: center;
@@ -228,41 +363,17 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
 }
 .prompt-label { font-size: 12.5px; color: var(--text); }
 .prompt-field textarea {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text);
-  padding: 6px 9px;
-  font-size: 12.5px;
-  font-family: inherit;
   line-height: 1.45;
   width: 100%;
   resize: vertical;
 }
-.prompt-field textarea:focus { outline: none; border-color: var(--accent); }
+
+/* ---- Glossary / zone lists ---- */
 
 /* Key inputs sit in glossary-add rows too (Engines tab, wizard upgrade);
    type=password keeps keys shoulder-safe. */
-.glossary-add input[type="text"],
-.glossary-add input[type="password"] {
-  flex: 1;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text);
-  padding: 6px 9px;
-  font-size: 12.5px;
-}
-.glossary-add input:focus { outline: none; border-color: var(--accent); }
 
-.glossary-io select {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  color: var(--text);
-  padding: 4px 8px;
-  font-size: 11.5px;
-}
+.glossary-io { margin-top: 8px; }
 
 .glossary-list { list-style: none; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .glossary-row {
@@ -270,7 +381,7 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  background: var(--panel);
+  background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
@@ -282,11 +393,13 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   color: var(--text);
   padding: 4px 6px;
   font-size: 12.5px;
+  min-width: 0;
 }
 .glossary-row input:hover { border-color: var(--border); }
-.glossary-row input:focus { outline: none; border-color: var(--accent); background: var(--panel-2); }
+.glossary-row input:focus { outline: none; border-color: var(--accent); background: var(--panel); }
 .glossary-row .term { font-weight: 600; }
 .glossary-row .thai { color: var(--text); }
+.glossary-row .hint { flex: 1; min-width: 0; }
 
 .delete-btn {
   border: none;
@@ -295,41 +408,71 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   cursor: pointer;
   font-size: 13px;
   padding: 2px 6px;
+  border-radius: 6px;
+  flex: none;
 }
-.delete-btn:hover { color: var(--err); }
+.delete-btn:hover { color: var(--err); background: rgba(255, 85, 102, 0.12); }
 
-.empty { margin-top: 12px; font-size: 12px; color: var(--muted); }
+/* Empty states (ticket 41): one dashed, centered, muted pattern for every
+   list — glossary, profile glossary layer, capture zones, and the
+   no-profiles case. The JS only toggles .hidden; the text stays the
+   JS/HTML's own. */
+.empty {
+  margin-top: 10px;
+  padding: 16px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+}
 
 /* ---- About ---- */
 
 .about-grid {
   display: grid;
-  grid-template-columns: 130px 1fr;
-  gap: 7px 12px;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 8px 12px;
   font-size: 12.5px;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
 }
 .about-grid > span:first-child { color: var(--muted); }
+/* Hand-written config paths have no spaces — let them break anywhere
+   instead of overflowing the label column at the window minimum. */
+.about-grid .mono { overflow-wrap: anywhere; }
 
-/* ---- Sticky Save footer (ticket 39) ---- */
+/* ---- Sticky Save footer (tickets 39 + 41) ---- */
 
 /* One Save for every explicit-save tab, pinned to the window bottom (body
    is a column flex, the pages main scrolls above it) and shown only while
    the dirty tracker finds unsaved edits — hidden means display:none, so it
-   takes no space when clean. Ticket 41 restyles this footer. */
+   takes no space when clean. Ticket 41 gives it its final form: lifted off
+   the scrolling content by a border + drop shadow, button right-aligned,
+   comfortably sized — THE primary action of the page. */
 .save-footer {
   display: flex;
   justify-content: flex-end;
-  padding: 10px 22px;
+  align-items: center;
+  padding: 12px 22px;
   border-top: 1px solid var(--border);
   background: var(--panel);
+  box-shadow: var(--shadow-footer);
+  position: relative;
+  z-index: 1;
+}
+.save-footer .btn.primary {
+  padding: 8px 24px;
+  font-size: 12.5px;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(255, 201, 31, 0.25);
 }
 
 /* ---- Toast ---- */
 
 .toast {
   position: fixed;
-  bottom: 16px;
+  bottom: 64px; /* clears the sticky footer when it is showing */
   left: 50%;
   transform: translateX(-50%);
   background: var(--panel-2);
@@ -339,6 +482,8 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
   border-radius: 8px;
   font-size: 12px;
   max-width: 80%;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  z-index: 2;
 }
 .toast.error { border-color: var(--err); color: var(--err); }
 .toast.ok { border-color: var(--ok); color: var(--ok); }

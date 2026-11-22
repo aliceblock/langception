@@ -112,6 +112,9 @@
     <main id="tab-pages" class="pages hidden">
       <section id="tab-general" class="page active">
         <h2>General</h2>
+        <!-- Ticket 41: one concern (the global settings) — the whole body
+             lives in a single section card. -->
+        <div class="settings-section">
         <div class="form-grid">
           <label class="form-row">
             <span>Source language</span>
@@ -156,10 +159,14 @@
             Genderless Mode (Settings → Profiles).
           </span>
         </div>
+        </div>
       </section>
 
       <section id="tab-engines" class="page">
         <h2>Engines</h2>
+        <!-- Ticket 41: three concern groups — the engine choice, the
+             per-engine cards (their own cards), and prompts + OCR packs. -->
+        <div class="settings-section">
         <h3>Translate Engine</h3>
         <p class="hint">
           The default engine translates every Text Block; per-app Profiles can
@@ -202,6 +209,7 @@
           screen costs nothing. Choose a vision-capable model in the engine's card
           below (e.g. <code>gemini-2.0-flash</code>).
         </p>
+        </div>
         <div class="engine-card">
           <div class="engine-title">
             <strong>Google Translate (unofficial)</strong>
@@ -314,6 +322,7 @@
             <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
           </div>
         </div>
+        <div class="settings-section">
         <h3>Prompts (advanced)</h3>
         <p class="hint">
           The system prompts Langception sends to the LLM engines (Gemini,
@@ -351,6 +360,8 @@
           <button id="engines-test" class="btn small">Test default engine</button>
           <span id="engines-note" class="hint"></span>
         </div>
+        </div>
+        <div class="settings-section">
         <h3>OCR Engine — Windows OCR language packs</h3>
         <p class="hint">
           The OCR engine reads the screen locally. It needs a Windows language
@@ -365,6 +376,7 @@
           </button>
           <span id="engines-packs-note" class="hint"></span>
         </div>
+        </div>
       </section>
 
       <section id="tab-glossary" class="page">
@@ -374,10 +386,14 @@
           shows the pinned Thai without calling the engine. Partial matches
           are left to the engine.
         </p>
+        <!-- Ticket 41: the management area (add/import/export/list) in one
+             section card; the Add button is a plain secondary — the sticky
+             footer's Save is the page's only primary. -->
+        <div class="settings-section">
         <div class="row glossary-add">
           <input id="glossary-new-term" type="text" placeholder="Term (e.g. Vertin)" spellcheck="false" />
           <input id="glossary-new-thai" type="text" placeholder="Thai (e.g. เวอร์ติน)" spellcheck="false" />
-          <button id="glossary-add-btn" class="btn primary">Add</button>
+          <button id="glossary-add-btn" class="btn">Add</button>
         </div>
         <div class="row glossary-io">
           <button id="glossary-export" class="btn small">Export JSON…</button>
@@ -390,6 +406,7 @@
         </div>
         <ul id="glossary-list" class="glossary-list"></ul>
         <div id="glossary-empty" class="empty hidden">No terms yet.</div>
+        </div>
       </section>
 
       <section id="tab-profiles" class="page">
@@ -413,6 +430,9 @@
         </div>
 
         <div id="profile-editor" class="hidden">
+          <!-- Ticket 41: the editor's three concerns (identity, glossary
+               layer, capture zones) each get a section card. -->
+          <div class="settings-section">
           <h3>Profile</h3>
           <div class="form-grid">
             <label class="form-row">
@@ -464,7 +484,9 @@
               relative to that window) is watched.
             </span>
           </div>
+          </div>
 
+          <div class="settings-section">
           <h3>Glossary layer</h3>
           <p class="hint">
             Merged over the global Glossary while this profile is active —
@@ -474,7 +496,7 @@
           <div class="row glossary-add">
             <input id="profile-glossary-new-term" type="text" placeholder="Term" spellcheck="false" />
             <input id="profile-glossary-new-thai" type="text" placeholder="Thai" spellcheck="false" />
-            <button id="profile-glossary-add-btn" class="btn primary">Add</button>
+            <button id="profile-glossary-add-btn" class="btn">Add</button>
           </div>
           <div class="row glossary-io">
             <button id="profile-glossary-export" class="btn small">Export JSON…</button>
@@ -486,7 +508,9 @@
           </div>
           <ul id="profile-glossary-list" class="glossary-list"></ul>
           <div id="profile-glossary-empty" class="empty hidden">No terms in this profile's layer yet.</div>
+          </div>
 
+          <div class="settings-section">
           <h3>Capture Zones (inside the app's window)</h3>
           <p class="hint">
             Stored relative to the app window's top-left, so they follow it
@@ -498,16 +522,20 @@
             <button id="profile-zone-draw" class="btn small">Draw zone on screen…</button>
             <span class="hint">Drag a rectangle over the app's visible window.</span>
           </div>
+          </div>
         </div>
       </section>
 
       <section id="tab-text-style" class="page">
         <h2>Text Style</h2>
         <p class="hint">How Thai text is drawn on the In-place Overlay — applies live.</p>
+        <!-- Ticket 41: one live-style concern — one section card; per-control
+             hints sit under their control (the one hint pattern app-wide). -->
+        <div class="settings-section">
         <div class="form-grid">
           <label class="form-row">
             <span>Font</span>
-            <span class="style-pair" style="flex-direction: column; align-items: stretch;">
+            <span class="style-pair stack">
               <input id="style-font" type="text" spellcheck="false" list="font-list" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" placeholder="Noto Sans Thai" />
               <datalist id="font-list"></datalist>
             </span>
@@ -532,8 +560,8 @@
             <span>Auto colors</span>
             <span class="style-pair">
               <input id="style-auto-colors" type="checkbox" title="Sample each block's text and pill colors from the captured pixels" />
-              <span class="hint">colors follow the game — sampled text/pill adapt per block; the manual Color is the fallback</span>
             </span>
+            <span class="hint">colors follow the game — sampled text/pill adapt per block; the manual Color is the fallback</span>
           </label>
           <label class="form-row">
             <span>Color</span>
@@ -557,8 +585,8 @@
             <span>Cover source</span>
             <span class="style-pair">
               <input id="style-cover-source" type="checkbox" title="Stretch the pill over the whole original text block" />
-              <span class="hint">stretch the pill over the whole original block instead of hugging the translation (needs Background pill)</span>
             </span>
+            <span class="hint">stretch the pill over the whole original block instead of hugging the translation (needs Background pill)</span>
           </label>
           <!-- Text Alignment (tickets 36/38) only means anything inside a
                Cover Source pill — horizontal and vertical — so the row
@@ -577,8 +605,8 @@
                 <option value="center">Center</option>
                 <option value="bottom">Bottom</option>
               </select>
-              <span class="hint">where the translated text sits inside the stretched pill (horizontal, vertical)</span>
             </span>
+            <span class="hint">where the translated text sits inside the stretched pill (horizontal, vertical)</span>
           </label>
           <label class="form-row">
             <span>Placement</span>
@@ -589,9 +617,10 @@
                 <option value="below">Below the original</option>
                 <option value="beside">Beside the original</option>
               </select>
-              <span class="hint">where the translation sits relative to each block; Cover Source wins when it is on</span>
             </span>
+            <span class="hint">where the translation sits relative to each block; Cover Source wins when it is on</span>
           </label>
+        </div>
         </div>
       </section>
 
@@ -602,6 +631,7 @@
           "Ctrl+Shift+Z", "F9". Saving re-registers them immediately — if a
           key is taken by another app, a warning appears in the Results Window.
         </p>
+        <div class="settings-section">
         <div class="form-grid">
           <label class="form-row">
             <span>Toggle translation</span>
@@ -624,10 +654,14 @@
             <input id="hotkey-one-shot" type="text" spellcheck="false" />
           </label>
         </div>
+        </div>
       </section>
 
       <section id="tab-about" class="page">
         <h2>About</h2>
+        <!-- Ticket 41: info grid, folder actions and the privacy note in one
+             section card, like every other single-concern tab. -->
+        <div class="settings-section">
         <div class="about-grid">
           <span>Product</span><span id="about-product">—</span>
           <span>Version</span><span id="about-version">—</span>
@@ -647,6 +681,7 @@
           hand-editable — zones you draw and blocks you exclude are saved
           there automatically.
         </p>
+        </div>
       </section>
     </main>
 
