@@ -359,6 +359,10 @@ const generalCadence = document.getElementById("general-cadence");
 const generalStability = document.getElementById("general-stability");
 const generalGenderless = document.getElementById("general-genderless");
 const generalAutostart = document.getElementById("general-autostart");
+// The window on-top toggles (ticket 34): saved with General, applied to
+// the live windows immediately.
+const generalResultsOnTop = document.getElementById("general-results-on-top");
+const generalSettingsOnTop = document.getElementById("general-settings-on-top");
 let generalLoaded = false;
 
 function loadGeneral(status) {
@@ -369,6 +373,8 @@ function loadGeneral(status) {
   generalStability.value = status.stabilityMs;
   generalGenderless.checked = Boolean(status.genderless);
   generalAutostart.checked = Boolean(status.startWithWindows);
+  generalResultsOnTop.checked = Boolean(status.resultsOnTop);
+  generalSettingsOnTop.checked = Boolean(status.settingsOnTop);
 }
 
 document.getElementById("general-save").addEventListener("click", async () => {
@@ -381,6 +387,8 @@ document.getElementById("general-save").addEventListener("click", async () => {
         cadenceMs: cadence,
         stabilityMs: stability,
         genderless: generalGenderless.checked,
+        resultsOnTop: generalResultsOnTop.checked,
+        settingsOnTop: generalSettingsOnTop.checked,
       },
     });
     toast("General settings saved");

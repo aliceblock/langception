@@ -138,14 +138,23 @@
             <span>Start with Windows</span>
             <input id="general-autostart" type="checkbox" />
           </label>
+          <label class="form-row" title="Keep the Results Window above other apps — translations stay readable while a game fills the screen. Applies with Save.">
+            <span>Keep Results window on top</span>
+            <input id="general-results-on-top" type="checkbox" />
+          </label>
+          <label class="form-row" title="Keep the Settings window above other apps — useful for tweaking while the game keeps focus. Applies with Save.">
+            <span>Keep Settings window on top</span>
+            <input id="general-settings-on-top" type="checkbox" />
+          </label>
         </div>
         <div class="row">
           <button id="general-save" class="btn primary">Save</button>
           <span class="hint">
             Language, cadence, stability and Genderless Mode apply when
             translation (re)starts — a running loop restarts automatically.
-            Start-with-Windows applies immediately. Per-app Profiles can
-            override Genderless Mode (Settings → Profiles).
+            Start-with-Windows applies immediately; the window on-top
+            toggles apply with Save. Per-app Profiles can override
+            Genderless Mode (Settings → Profiles).
           </span>
         </div>
       </section>

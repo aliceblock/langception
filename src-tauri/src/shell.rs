@@ -9,7 +9,7 @@
 
 use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{
-    AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextStyle,
+    AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextStyle, WindowSettings,
 };
 use langception_core::deepl::DeepLTranslateEngine;
 use langception_core::fused::{GeminiFusedEngine, OpenAiFusedEngine};
@@ -112,6 +112,10 @@ pub struct Status {
     /// Whether Langception launches at Windows sign-in (OS-managed, not in
     /// config.toml).
     pub start_with_windows: bool,
+    /// Which ordinary window is pinned above other apps (ticket 34,
+    /// Settings → General). The overlay and picker are not configurable.
+    pub settings_on_top: bool,
+    pub results_on_top: bool,
     /// The per-app Profiles (ticket 07), with an `active` flag on each.
     pub profiles: Vec<ProfileStatus>,
     /// The id of the Profile currently matched to the foreground app, or
@@ -509,6 +513,9 @@ pub fn run() {
                         "could not exclude the Results Window from capture: {message}"
                     ));
                 }
+                // The conf ships always-on-top (today's default); config
+                // decides (ticket 34) — applied before the first show.
+                apply_always_on_top_from_config(&handle);
                 let _ = window.show();
             }
             apply_state(&handle);
@@ -865,6 +872,29 @@ pub(crate) fn apply_state(app: &AppHandle) {
     let _ = app.emit("engine-state", &status_for(app));
 }
 
+/// Applies the configured always-on-top flags to whichever of the two
+/// ordinary windows exists right now (ticket 34, Settings → General):
+/// called at startup, when the settings window is created, and when
+/// General saves. A hidden window takes the flag too — it simply waits
+/// for its next show (the tray-first lifecycle hides instead of closing).
+/// The overlay and the one-shot picker are untouched: always-on-top is
+/// structural there (ADR-0001), not a preference. A broken config falls
+/// back to today's behavior — Results floats, Settings doesn't.
+pub(crate) fn apply_always_on_top_from_config(app: &AppHandle) {
+    let windows = match current_config(app) {
+        Ok(config) => config.windows,
+        Err(_) => WindowSettings::default(),
+    };
+    for (label, on_top) in [
+        (crate::settings::SETTINGS_LABEL, windows.settings_on_top),
+        (RESULTS_LABEL, windows.results_on_top),
+    ] {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.set_always_on_top(on_top);
+        }
+    }
+}
+
 fn status_for(app: &AppHandle) -> Status {
     let state = app.state::<AppState>();
     let running = state.running.lock().unwrap_or_else(|p| p.into_inner()).is_some();
@@ -1017,6 +1047,14 @@ fn status_for(app: &AppHandle) -> Status {
         Some(Err(_)) | None => Vec::new(),
     };
 
+    // The window on-top flags (ticket 34). A broken or not-yet-loaded
+    // config falls back to today's behavior: Results floats, Settings
+    // doesn't — the same defaults the WebviewWindowBuilder/conf ship.
+    let windows = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
+        Some(Ok(config)) => config.windows,
+        Some(Err(_)) | None => WindowSettings::default(),
+    };
+
     Status {
         running,
         paused,
@@ -1047,6 +1085,8 @@ fn status_for(app: &AppHandle) -> Status {
         privacy_engine,
         first_run: state.first_run,
         start_with_windows,
+        settings_on_top: windows.settings_on_top,
+        results_on_top: windows.results_on_top,
         profiles,
         active_profile_id,
     }

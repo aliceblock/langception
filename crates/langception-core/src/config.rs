@@ -294,6 +294,34 @@ pub const DEFAULT_PAUSE_HOTKEY: &str = "Alt+P";
 pub const DEFAULT_ADJUST_HOTKEY: &str = "Alt+A";
 pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Q";
 
+/// Which of the two ordinary windows stay pinned above other apps (ticket
+/// 34). The In-place Overlay and the one-shot picker are deliberately not
+/// here: always-on-top is structural to how they work (ADR-0001's
+/// transparent/click-through recipe; the picker must stay above the
+/// capture target to be drawn at all).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowSettings {
+    /// The Results Window floats above the foreground app so translations
+    /// stay readable mid-game — today's behavior, and the default.
+    pub results_on_top: bool,
+    /// The Settings window behaves like a normal window (today's
+    /// behavior); pinning it on top helps while tweaking mid-game.
+    pub settings_on_top: bool,
+}
+
+// Defaults preserve today's window behavior for every config written
+// before ticket 34 — serde's field-default via Default::default() would
+// pin nothing, so the impl is manual.
+impl Default for WindowSettings {
+    fn default() -> Self {
+        Self {
+            results_on_top: true,
+            settings_on_top: false,
+        }
+    }
+}
+
 /// The Translate Engines this build offers, by config name — the accepted
 /// values for the global engine setting and a Profile's `engine` choice.
 /// An unknown name in a hand-edited config must be a visible validation
@@ -489,6 +517,10 @@ pub struct AppConfig {
     pub mode: ModeSettings,
     #[serde(default)]
     pub hotkeys: HotkeySettings,
+    /// Which ordinary window floats above other apps (ticket 34, Settings
+    /// → General). The overlay and picker are not configurable here.
+    #[serde(default)]
+    pub windows: WindowSettings,
     #[serde(default)]
     pub text_style: TextStyle,
     #[serde(default)]
@@ -849,6 +881,17 @@ new_zone = "Alt+Z"
 pause_translation = "Alt+P"
 adjust_mode = "Alt+A"
 one_shot_capture = "Alt+Q"
+
+[windows]
+# Which of the app's own windows stay pinned above other apps — both
+# toggled in Settings → General and applied immediately. results_on_top
+# keeps the translations list readable while a game fills the screen
+# (today's default); settings_on_top pins the settings window for
+# tweaking mid-game (off by default, so it behaves like a normal window).
+# The In-place Overlay and the one-shot picker are always on top
+# unconditionally: that is how they work, not a preference.
+results_on_top = true
+settings_on_top = false
 
 [glossary]
 # Terms that pin a fixed Thai translation. A block whose ENTIRE text
@@ -2035,5 +2078,57 @@ language = "en"
         );
         let config = AppConfig::from_toml_str(&legacy).unwrap();
         assert!(!config.genderless);
+    }
+
+    // ---- Window on-top toggles (ticket 34) ----
+
+    #[test]
+    fn default_template_keeps_results_on_top_and_settings_off() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert!(config.windows.results_on_top);
+        assert!(!config.windows.settings_on_top);
+    }
+
+    #[test]
+    fn ticket34_config_without_windows_gets_todays_defaults() {
+        // A config from before ticket 34 has no [windows] table — strip it
+        // line-wise (the ticket-11 engines-strip trick) and parse: serde
+        // fills today's behavior, never silently un-pinning Results.
+        let mut in_windows = false;
+        let legacy: String = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("[windows]") {
+                    in_windows = true;
+                    return false;
+                }
+                if in_windows {
+                    if trimmed.starts_with('[') {
+                        in_windows = false; // the next section ([glossary])
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert!(config.windows.results_on_top);
+        assert!(!config.windows.settings_on_top);
+    }
+
+    #[test]
+    fn window_on_top_toggles_roundtrip_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("results_on_top = true", "results_on_top = false")
+            .replace("settings_on_top = false", "settings_on_top = true");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert!(!config.windows.results_on_top);
+        assert!(config.windows.settings_on_top);
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
     }
 }

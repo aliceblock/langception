@@ -16,8 +16,8 @@
 //! (re)start the loop goes through [`crate::shell::run_off_main`].
 
 use crate::shell::{
-    apply_state, current_config, profile_edited, push_warning, restart_loop_if_running,
-    run_off_main, with_config_mut, AppState, HotkeyStatus,
+    apply_always_on_top_from_config, apply_state, current_config, profile_edited, push_warning,
+    restart_loop_if_running, run_off_main, with_config_mut, AppState, HotkeyStatus,
 };
 use langception_core::config::HotkeySettings;
 use langception_core::glossary::Glossary;
@@ -59,6 +59,10 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
             .visible(false)
             .build()
             .map_err(|e| format!("cannot open the settings window: {e}"))?;
+
+    // Pin (or don't) per config before the first show (ticket 34) — a
+    // broken config falls back to today's off default inside the helper.
+    apply_always_on_top_from_config(app);
 
     // Same rule as the Results Window (ADR-0003): Langception's own windows
     // are never translation sources.
@@ -439,6 +443,10 @@ pub struct GeneralSettingsDto {
     pub stability_ms: u32,
     /// The Genderless Mode global toggle (ticket 08).
     pub genderless: bool,
+    /// Which ordinary window is pinned above other apps (ticket 34) —
+    /// applied to the live windows the moment this saves.
+    pub results_on_top: bool,
+    pub settings_on_top: bool,
 }
 
 #[tauri::command]
@@ -459,8 +467,14 @@ pub(crate) async fn set_general(
             config.capture.cadence_ms = settings.cadence_ms;
             config.capture.stability_ms = settings.stability_ms;
             config.genderless = settings.genderless;
+            config.windows.results_on_top = settings.results_on_top;
+            config.windows.settings_on_top = settings.settings_on_top;
             Ok(())
         })?;
+        // The on-top flags apply to the live windows immediately (ticket
+        // 34) — no relaunch, no reopen; a hidden window takes the flag
+        // for its next show.
+        apply_always_on_top_from_config(app);
         // Language/cadence/stability/genderless are read when the loop
         // starts: restart it so the change visibly applies (a language
         // change must reset tracking anyway — the OCR engine is rebuilt).
