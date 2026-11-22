@@ -33,10 +33,12 @@ browser mock. This checklist covers what only a human can see and feel.
 - [ ] **Stale text clears**: make the text disappear (close/hide the
       source) → the Thai pill disappears too, within ~2 ticks (≈1s at the
       default cadence; removals wait out OCR glitches by design).
-- [ ] **Auto-shrink-to-fit**: point a zone at short text whose translation
-      is much longer (e.g. English "OK") → the Thai shrinks to the block's
-      width instead of sprawling; very long Thai wraps to ≤ ~2× the block's
-      height rather than covering the screen.
+- [ ] **Wrap-first fit**: point a zone at short text whose translation is
+      much longer (e.g. English "OK") → the Thai wraps onto extra lines at
+      the configured font size instead of shrinking or sprawling sideways;
+      very long Thai then shrinks (wrapping kept) only once the pill would
+      tower over ~2× the block's height, never below a readable floor.
+      Translations that already fit on one line stay one line, full size.
 - [ ] **Bundled font**: the Thai renders with correct stacked vowels/tone
       marks even if no Thai-capable system font is installed (Noto Sans Thai
       ships in `ui/fonts/`, license alongside).

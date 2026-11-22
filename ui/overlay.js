@@ -22,7 +22,8 @@ const MIN_FONT_PX = 8;
 // A minimum pill width so tiny OCR boxes (single short words) don't force
 // the text into a sliver.
 const MIN_BOX_PX = 24;
-// Wrapped fallback may reach twice the OCR box height before shrinking.
+// A wrapped pill may reach twice the OCR box height before the font
+// starts shrinking (wrap-first fit, ticket 35).
 const HEIGHT_BUDGET_FACTOR = 2;
 // Dragged/resized zones stay at least this big (CSS px), matching the
 // picker's minimum.
@@ -131,13 +132,19 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-// Auto-shrink-to-fit: the Thai must not sprawl over the screen. Phase 1
-// shrinks on a single line until it fits the block's width; if even the
-// floor size doesn't fit, phase 2 wraps and keeps the pill within roughly
-// twice the original block's height. Measured on the text element's own
-// rect so the logic does not depend on container scroll quirks.
+// Text fit, wrap-first (ticket 35): a translation wider than its Text
+// Block wraps onto additional lines at the configured font size; the font
+// only steps down — wrapping kept — once the wrapped pill would tower over
+// the height budget (roughly twice the block's height), bottoming out at
+// the same minimum floor as before. The one-line nowrap probe below never
+// shrinks anything: it only decides whether wrapping is needed at all, so
+// a translation that fits its block's width keeps rendering exactly as it
+// did (a tall font on a short block stays one line — the height budget
+// answers to the wrapped pill, not to a fitting single line). Measured on
+// the text element's own rect so the logic does not depend on container
+// scroll quirks.
 function fitText(entry) {
-  const { el, textEl, boxW, boxH } = entry;
+  const { textEl, boxW, boxH } = entry;
   if (!boxW) return;
   const padX = style.background ? PILL_PAD_X : 0;
   const padY = style.background ? PILL_PAD_Y : 0;
@@ -147,16 +154,13 @@ function fitText(entry) {
   let size = style.fontSize;
   textEl.style.fontSize = size + "px"; // always explicit: the CSS has no default
   textEl.style.whiteSpace = "nowrap";
-  while (size > MIN_FONT_PX && textEl.getBoundingClientRect().width > availW) {
-    size = Math.max(MIN_FONT_PX, size - 1);
-    textEl.style.fontSize = size + "px";
-  }
+  textEl.style.overflowWrap = ""; // full reset: entries are reused in place
   if (textEl.getBoundingClientRect().width > availW) {
-    // Wrapping starts from the configured size again: the largest wrapped
-    // size that fits the height budget beats a floor-shrunk single line.
+    // Wrapping happens first, at the configured size. break-word keeps a
+    // long unbreakable run (URL, long number) inside the pill instead of
+    // overflowing it — text that fits on one line is never re-broken.
     textEl.style.whiteSpace = "normal";
-    size = style.fontSize;
-    textEl.style.fontSize = size + "px";
+    textEl.style.overflowWrap = "break-word";
     while (size > MIN_FONT_PX && textEl.getBoundingClientRect().height > budgetH) {
       size = Math.max(MIN_FONT_PX, size - 1);
       textEl.style.fontSize = size + "px";

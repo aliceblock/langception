@@ -1087,8 +1087,13 @@ function updateStylePreview() {
     stylePreviewPill.style.maxWidth = "";
   }
   // The overlay's fitText always sets the size explicitly on the text
-  // element; the preview does the same, at the configured size.
+  // element; the preview does the same, at the configured size — which
+  // since wrap-first fit (ticket 35) is also where the overlay wraps:
+  // its shrink phase only answers to a block's height budget, geometry
+  // this preview does not have. break-word mirrors fitText so a long
+  // sample can't overflow the pill sideways.
   stylePreviewText.style.fontSize = style.fontSize + "px";
+  stylePreviewText.style.overflowWrap = "break-word";
   stylePreviewNote.classList.toggle("hidden", !style.autoColors);
 }
 
