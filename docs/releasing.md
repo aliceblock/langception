@@ -27,13 +27,12 @@ their account; `gh` may not be installed locally):
 A release is a tag push; CI does the rest
 (`.github/workflows/release.yml`):
 
-1. Bump the version in **all three** places (they must stay identical):
+1. Bump the version in **both** places (they must stay identical):
 
    - `src-tauri/tauri.conf.json` → `version` (drives the installer, the
      exe's version resource, and the About tab)
-   - `crates/langception-core/Cargo.toml` → `version`
-   - `src-tauri/Cargo.toml` → `version`
-   - (`Cargo.lock` updates on the next build; commit it too if changed)
+   - `Cargo.toml` → `[workspace.package] version` (both member crates
+     inherit it via `version.workspace = true`)
 
 2. Update `Cargo.lock` and commit:
 

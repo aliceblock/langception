@@ -2,5 +2,11 @@
 members = ["crates/langception-core", "src-tauri"]
 resolver = "2"
 
+# The app version lives in src-tauri/tauri.conf.json (what the installer,
+# exe metadata, and About tab report); the crates mirror it here so a
+# release bumps exactly two files. See docs/releasing.md.
+[workspace.package]
+version = "0.1.0"
+
 [profile.dev]
 opt-level = 1

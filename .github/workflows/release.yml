@@ -34,15 +34,15 @@ jobs:
       # The tag is the release; the config version is what the installer,
       # the exe metadata, and the About tab report.
       - name: Check tag matches the app version
-        shell: bash
+        shell: pwsh
         run: |
-          app_version=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -1)
-          tag_version="${GITHUB_REF_NAME#v}"
-          if [ "$app_version" != "$tag_version" ]; then
-            echo "tag $GITHUB_REF_NAME does not match the version in src-tauri/tauri.conf.json ($app_version)"
-            exit 1
-          fi
-          echo "releasing $tag_version"
+          $ErrorActionPreference = "Stop"
+          $config = Get-Content "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          $tagVersion = $env:GITHUB_REF_NAME.TrimStart("v")
+          if ($config.version -ne $tagVersion) {
+            Write-Error "tag $env:GITHUB_REF_NAME does not match the version in src-tauri/tauri.conf.json ($($config.version))"
+          }
+          Write-Host "releasing $tagVersion"
 
       - name: Tests
         run: cargo test --workspace
