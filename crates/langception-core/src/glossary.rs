@@ -468,6 +468,20 @@ mod tests {
     }
 
     #[test]
+    fn json_roundtrip_preserves_entries_across_glossaries() {
+        // ticket 33: profile and global glossaries share ONE JSON format —
+        // what one exports, the other imports unchanged (and an empty
+        // glossary round-trips as an empty set without errors).
+        let source = glossary(&[("Vertin", "เวร์ติน"), ("Sonetto", "โซเนตโต")]);
+        let parsed = Glossary::parse_json_str(&source.to_json_string()).unwrap();
+        assert_eq!(source, parsed);
+
+        let empty = Glossary::default();
+        let parsed_empty = Glossary::parse_json_str(&empty.to_json_string()).unwrap();
+        assert_eq!(empty, parsed_empty);
+    }
+
+    #[test]
     fn json_import_survives_duplicate_and_trimmed_keys() {
         // serde_json's map keeps the last duplicate; trimming is applied by
         // upsert. Either way the result holds exactly one usable entry.

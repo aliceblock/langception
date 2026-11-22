@@ -443,6 +443,8 @@ pub fn run() {
             crate::settings::add_profile_glossary_entry,
             crate::settings::update_profile_glossary_entry,
             crate::settings::delete_profile_glossary_entry,
+            crate::settings::import_profile_glossary,
+            crate::settings::export_profile_glossary,
             crate::settings::delete_profile_zone,
             open_config_folder,
             open_logs_folder

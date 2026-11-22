@@ -446,6 +446,14 @@
             <input id="profile-glossary-new-thai" type="text" placeholder="Thai" spellcheck="false" />
             <button id="profile-glossary-add-btn" class="btn primary">Add</button>
           </div>
+          <div class="row glossary-io">
+            <button id="profile-glossary-export" class="btn small">Export JSON…</button>
+            <button id="profile-glossary-import" class="btn small">Import JSON…</button>
+            <select id="profile-glossary-import-mode" title="Import mode">
+              <option value="merge">merge (keep existing)</option>
+              <option value="replace">replace all</option>
+            </select>
+          </div>
           <ul id="profile-glossary-list" class="glossary-list"></ul>
           <div id="profile-glossary-empty" class="empty hidden">No terms in this profile's layer yet.</div>
 

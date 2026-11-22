@@ -4,7 +4,9 @@
 //! cadence, stability, Genderless Mode, start-with-Windows), Engines
 //! (engine card + OCR language-pack detection), Glossary (full
 //! management + JSON import/export), Profiles (ticket 07: per-app
-//! configuration), Text Style, Hotkeys (rebinds apply live), About.
+//! configuration, each with its own Glossary layer — entry editing plus
+//! the same JSON import/export as the global Glossary, ticket 33), Text
+//! Style, Hotkeys (rebinds apply live), About.
 //!
 //! The wizard is a view inside this window: on the first launch (no config
 //! file when the app started) the shell opens it automatically and the page
@@ -1025,6 +1027,65 @@ pub(crate) async fn delete_profile_glossary_entry(
         })?;
         profile_edited(app, &profile_id);
         Ok(())
+    })
+    .await
+}
+
+/// Exports one Profile's glossary layer as JSON to the path the save
+/// dialog picked (ticket 33): the exact format [`Glossary::to_json_string`]
+/// writes for the global Glossary — one format, files move either
+/// direction. Returns the number of exported entries (an empty layer
+/// exports as an empty set and reports 0).
+#[tauri::command]
+pub(crate) async fn export_profile_glossary(
+    app: AppHandle,
+    profile_id: String,
+    path: String,
+) -> Result<usize, String> {
+    run_off_main(app, move |app| {
+        let config = current_config(app)?;
+        let profile = config
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .ok_or_else(|| "profile not found (was it deleted elsewhere?)".to_string())?;
+        let json = profile.glossary.to_json_string();
+        std::fs::write(&path, json).map_err(|e| format!("cannot write {path}: {e}"))?;
+        Ok(profile.glossary.0.len())
+    })
+    .await
+}
+
+/// Imports a glossary JSON file into one Profile's glossary layer (ticket
+/// 33) — same format and modes as [`import_glossary`]: "merge" keeps
+/// existing entries (import wins on conflicts), "replace" empties the
+/// layer first. The file is fully parsed before anything is touched, so a
+/// malformed or wrong-shaped file leaves the profile unchanged.
+#[tauri::command]
+pub(crate) async fn import_profile_glossary(
+    app: AppHandle,
+    profile_id: String,
+    path: String,
+    mode: String,
+) -> Result<ImportReport, String> {
+    run_off_main(app, move |app| {
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+        let imported = Glossary::parse_json_str(&text)?;
+        let stats = with_profile_mut(app, &profile_id, |profile| {
+            match mode.as_str() {
+                "merge" => {}
+                "replace" => profile.glossary.clear(),
+                other => return Err(format!("unknown import mode \"{other}\"")),
+            }
+            Ok(profile.glossary.merge(&imported))
+        })?;
+        profile_edited(app, &profile_id);
+        Ok(ImportReport {
+            added: stats.added,
+            updated: stats.updated,
+            total: stats.added + stats.updated,
+        })
     })
     .await
 }

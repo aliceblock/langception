@@ -896,6 +896,49 @@ for (const input of [profileGlossaryNewTerm, profileGlossaryNewThai]) {
   });
 }
 
+// Profile glossary export/import (ticket 33): the same dialogs, JSON
+// format and import modes as the global Glossary — one file moves either
+// direction. The buttons only exist inside the profile editor, so a
+// profile is always selected when they are clickable.
+document.getElementById("profile-glossary-export").addEventListener("click", async () => {
+  if (!selectedProfileId) return;
+  try {
+    const path = await saveFileDialog({
+      title: "Export profile glossary as JSON",
+      defaultPath: "langception-glossary.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!path) return;
+    const count = await invoke("export_profile_glossary", { profileId: selectedProfileId, path });
+    toast(`Exported ${count} term${count === 1 ? "" : "s"}`);
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
+document.getElementById("profile-glossary-import").addEventListener("click", async () => {
+  if (!selectedProfileId) return;
+  try {
+    const path = await openFileDialog({
+      title: "Import profile glossary from JSON",
+      multiple: false,
+      directory: false,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!path) return;
+    const mode = document.getElementById("profile-glossary-import-mode").value;
+    const report = await invoke("import_profile_glossary", {
+      profileId: selectedProfileId,
+      path,
+      mode,
+    });
+    toast(`Imported: ${report.added} added, ${report.updated} updated`);
+    renderProfileGlossary();
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
 function renderProfileZones(profile) {
   profileZonesList.replaceChildren();
   const zones = profile?.zones || [];
