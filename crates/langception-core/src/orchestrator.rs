@@ -79,6 +79,19 @@ pub enum Stage {
     Fused,
 }
 
+impl Stage {
+    /// The stage's snake_case name — the spelling the serialized events use
+    /// (and the app log's tag for stage failures, ticket 27).
+    pub fn name(&self) -> &'static str {
+        match self {
+            Stage::Capture => "capture",
+            Stage::Ocr => "ocr",
+            Stage::Translate => "translate",
+            Stage::Fused => "fused",
+        }
+    }
+}
+
 /// Where a pipeline pass came from: one of the active Capture Zones, or a
 /// One-shot Capture (a single pass that creates no zone and has no tracking).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

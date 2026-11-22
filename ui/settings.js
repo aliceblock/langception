@@ -1094,6 +1094,7 @@ async function loadAbout() {
     document.getElementById("about-version").textContent = about.version;
     document.getElementById("about-target").textContent = about.targetLanguage;
     document.getElementById("about-config-path").textContent = about.configPath;
+    document.getElementById("about-logs-path").textContent = about.logsPath;
   } catch (e) {
     toast(String(e), "error");
   }
@@ -1101,6 +1102,10 @@ async function loadAbout() {
 
 document.getElementById("about-open-config").addEventListener("click", () => {
   invoke("open_config_folder").catch((e) => toast(String(e), "error"));
+});
+
+document.getElementById("about-open-logs").addEventListener("click", () => {
+  invoke("open_logs_folder").catch((e) => toast(String(e), "error"));
 });
 
 document.getElementById("about-wizard").addEventListener("click", showWizard);

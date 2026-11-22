@@ -106,6 +106,9 @@ pub struct About {
     pub product_name: String,
     pub version: String,
     pub config_path: String,
+    /// The `logs` folder beside the config (ticket 27); the About tab
+    /// shows it next to the "Go to logs directory" button.
+    pub logs_path: String,
     pub target_language: &'static str,
 }
 
@@ -116,6 +119,7 @@ pub(crate) fn get_about(app: AppHandle) -> About {
         product_name: app.package_info().name.clone(),
         version: app.package_info().version.to_string(),
         config_path: state.config_path.display().to_string(),
+        logs_path: crate::logging::logs_dir(&state.config_path).display().to_string(),
         target_language: TARGET_LANGUAGE,
     }
 }

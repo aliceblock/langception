@@ -317,6 +317,13 @@ pub(crate) struct AppState {
 }
 
 pub fn run() {
+    // Diagnostics first (ticket 27): the panic hook must be in place before
+    // anything can panic, and the app log opens before the config load so
+    // even the earliest failures leave a trace. Both are best-effort — a
+    // broken logs folder disables them, never the app.
+    crate::logging::install_panic_hook();
+    crate::logging::init(&config_file_path(), env!("CARGO_PKG_VERSION"));
+
     let (zones_tx, _) = watch::channel(Vec::new());
     let (paused_tx, _) = watch::channel(false);
     let (exclusions_tx, _) = watch::channel(Vec::new());
@@ -421,7 +428,8 @@ pub fn run() {
             crate::settings::update_profile_glossary_entry,
             crate::settings::delete_profile_glossary_entry,
             crate::settings::delete_profile_zone,
-            open_config_folder
+            open_config_folder,
+            open_logs_folder
         ])
         .on_window_event(|window, event| {
             // The picker overlay is ephemeral; however it dies, the session
@@ -466,7 +474,15 @@ pub fn run() {
             // file yet) opens straight into the setup wizard.
             let state = handle.state::<AppState>();
             let config_path = state.config_path.clone();
-            *state.config.lock().unwrap_or_else(|p| p.into_inner()) = Some(load_config(&config_path));
+            let loaded = load_config(&config_path);
+            match &loaded {
+                Ok(_) => crate::logging::log("config", format!("loaded {}", config_path.display())),
+                Err(message) => crate::logging::log(
+                    "config",
+                    format!("BROKEN {}: {message}", config_path.display()),
+                ),
+            }
+            *state.config.lock().unwrap_or_else(|p| p.into_inner()) = Some(loaded);
 
             build_tray(&handle)?;
             install_hotkeys(&handle)?;
@@ -1346,6 +1362,9 @@ fn spawn_forwarder(
                     router.hide_blocks(&bridge_app, origin, keys);
                 }
                 LoopEvent::Error { stage, message, .. } => {
+                    // Stage failures land in the app log too (ticket 27):
+                    // post-mortems need the errors the UI only shows live.
+                    crate::logging::log(stage.name(), message);
                     // Engine failures (quota exhaustion, invalid key,
                     // network) notify from the tray in addition to the
                     // Results Window banner (ticket 09 / ADR-0002): the
@@ -1428,7 +1447,12 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     let config_guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
     let config = match &*config_guard {
         Some(Ok(config)) => config.clone(),
-        Some(Err(message)) => return Err(message.clone()),
+        Some(Err(message)) => {
+            // Start failures land in the app log (ticket 27): a loop that
+            // never came up shows nothing in the UI to investigate.
+            crate::logging::log("loop", format!("failed to start: {message}"));
+            return Err(message.clone());
+        }
         None => return Err("config not loaded yet".into()),
     };
     drop(config_guard);
@@ -1446,7 +1470,22 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     let excluded_rx = state.exclusions_tx.subscribe();
     let _ = state.paused_tx.send(false);
     *state.paused.lock().unwrap_or_else(|p| p.into_inner()) = false;
-    let pipeline = build_pipeline(&config, &target)?;
+    let pipeline = match build_pipeline(&config, &target) {
+        Ok(pipeline) => pipeline,
+        Err(message) => {
+            crate::logging::log("loop", format!("failed to start: {message}"));
+            return Err(message);
+        }
+    };
+    // Launch summary inputs (ticket 27), captured before the pipeline and
+    // the zone list move into the orchestrator.
+    let loop_engine = pipeline
+        .fused
+        .as_ref()
+        .map(|fused| fused.name())
+        .unwrap_or_else(|| pipeline.translate.name())
+        .to_string();
+    let zone_count = target.zones.len();
     apply_watching_nothing(&state, target.zones.is_empty());
     let _ = state.zones_tx.send(target.zones);
     let _ = state.exclusions_tx.send(target.exclusions);
@@ -1488,6 +1527,25 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     });
     drop(running);
 
+    // The launch summary (ticket 27): engine switches are visible here —
+    // an active Profile swaps the engine, so its name is part of the line.
+    let profile_note = target
+        .profile_id
+        .as_ref()
+        .and_then(|id| config.profiles.iter().find(|p| p.id == *id))
+        .map(|p| format!(", profile=\"{}\"", p.name))
+        .unwrap_or_default();
+    crate::logging::log(
+        "loop",
+        format!(
+            "started — reading={} engine={} source={} zones={zone_count}{}",
+            config.reading.code(),
+            loop_engine,
+            target.language.code(),
+            profile_note,
+        ),
+    );
+
     apply_state(app);
     Ok(())
 }
@@ -1497,6 +1555,7 @@ fn stop_loop(app: &AppHandle) {
     if let Some(running) = state.running.lock().unwrap_or_else(|p| p.into_inner()).take() {
         running.orchestrator.abort();
         running.forwarder.abort();
+        crate::logging::log("loop", "stopped");
     }
     // Pause is a sub-state of running: stopping clears it.
     *state.paused.lock().unwrap_or_else(|p| p.into_inner()) = false;
@@ -1522,6 +1581,9 @@ fn stop_loop(app: &AppHandle) {
 pub(crate) fn push_warning(state: &AppState, message: String) {
     let mut warnings = state.warnings.lock().unwrap_or_else(|p| p.into_inner());
     if !warnings.iter().any(|w| w == &message) {
+        // Warnings outlive the session in the app log too (ticket 27); the
+        // dedup above keeps repeated warnings from spamming it.
+        crate::logging::log("warning", &message);
         warnings.push(message);
     }
 }
@@ -1582,6 +1644,16 @@ fn open_config_folder_inner(app: &AppHandle) {
     let state = app.state::<AppState>();
     let path = state.config_path.clone();
     let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or(path);
+    let _ = std::process::Command::new("explorer").arg(dir).spawn();
+}
+
+/// The About tab's "Go to logs directory" button (ticket 27).
+#[tauri::command]
+fn open_logs_folder(app: AppHandle) {
+    let dir = crate::logging::logs_dir(&app.state::<AppState>().config_path);
+    // The folder may not exist yet (init failed, or an ancient install);
+    // opening Explorer needs a real directory, so create it best-effort.
+    let _ = std::fs::create_dir_all(&dir);
     let _ = std::process::Command::new("explorer").arg(dir).spawn();
 }
 
@@ -2065,12 +2137,33 @@ fn profile_watch_tick(app: &AppHandle) -> Result<(), String> {
         let mut active = state.active_profile.lock().unwrap_or_else(|p| p.into_inner());
         let changed = *active != new_id;
         if changed {
-            *active = new_id;
+            // Cloned (not moved): the change handler below logs the newly
+            // active profile's name and engine.
+            *active = new_id.clone();
         }
         changed
     };
 
     if changed {
+        // Engine switches (ticket 27): the Profile activating names the
+        // engine it swaps in — the log line pairs with the loop's own
+        // start line that restart_loop_if_running produces.
+        let guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
+        match (&new_id, &*guard) {
+            (Some(id), Some(Ok(config))) => {
+                if let Some(profile) = config.profiles.iter().find(|p| p.id == *id) {
+                    let engine = profile.engine.as_deref().unwrap_or("global default");
+                    crate::logging::log(
+                        "profile",
+                        format!("activated \"{}\" (engine: {engine})", profile.name),
+                    );
+                }
+            }
+            (None, _) => {
+                crate::logging::log("profile", "deactivated — back to the global target");
+            }
+            _ => {}
+        }
         // Activation/deactivation swaps everything the pipeline reads at
         // start (language, glossary, engine, zones): restart the running
         // loop — start_loop recomputes the effective target itself, so a
@@ -2712,6 +2805,13 @@ fn run_one_shot(
     let (_paused_tx, paused_rx) = watch::channel(false);
     let (_excluded_tx, excluded_rx) = watch::channel(exclusions);
     let (events_tx, events_rx) = mpsc::unbounded_channel();
+    crate::logging::log(
+        "oneshot",
+        format!(
+            "pass started — region {},{} {}×{}",
+            region.x, region.y, region.width, region.height
+        ),
+    );
 
     // A one-shot also sends screen data to the engine: the privacy badge
     // covers it too (cleared once the pass completes).
@@ -2735,6 +2835,7 @@ fn run_one_shot(
     let task_app = app.clone();
     tauri::async_runtime::spawn(async move {
         orchestrator.capture_once(region).await;
+        crate::logging::log("oneshot", "pass finished");
         // events_tx drops with the orchestrator: the forwarder drains and exits.
         // Clear the privacy badge only if the loop is not running — a loop
         // started during the pass owns the badge now (stop_loop clears it).

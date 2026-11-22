@@ -2937,3 +2937,18 @@ async fn one_shot_capture_merges_stacked_lines_too() {
         other => panic!("expected Translated, got {other:?}"),
     }
 }
+
+#[test]
+fn stage_name_matches_the_serde_spelling() {
+    // `Stage::name()` (the app log's stage tag, ticket 27) and the serde
+    // spelling must never drift apart: both feed diagnostics consumers.
+    for (stage, spelling) in [
+        (Stage::Capture, "capture"),
+        (Stage::Ocr, "ocr"),
+        (Stage::Translate, "translate"),
+        (Stage::Fused, "fused"),
+    ] {
+        assert_eq!(stage.name(), spelling);
+        assert_eq!(serde_json::to_value(stage).unwrap(), spelling);
+    }
+}

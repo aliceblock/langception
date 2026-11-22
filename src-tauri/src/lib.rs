@@ -3,6 +3,7 @@
 pub mod capture;
 pub mod fonts;
 pub mod foreground;
+pub mod logging;
 #[cfg(windows)]
 pub mod ocr;
 #[cfg(windows)]
