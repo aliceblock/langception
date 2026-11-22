@@ -197,22 +197,25 @@ pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Q";
 /// values for the global engine setting and a Profile's `engine` choice.
 /// An unknown name in a hand-edited config must be a visible validation
 /// error, never a silent fallback.
-pub const TRANSLATE_ENGINES: [&str; 3] = ["google", "azure", "deepl"];
+pub const TRANSLATE_ENGINES: [&str; 5] = ["google", "azure", "deepl", "openai", "lmstudio"];
 
 fn default_engine() -> String {
     "google".to_string()
 }
 
-/// API keys for the keyed Translate Engines (ticket 09). Config.toml is the
-/// app's only persistence surface and lives in the user's profile directory
-/// — outside any repo — so keys are kept there like everything else. Azure's
-/// `region` is the resource's region; empty means a global resource, which
-/// takes no region header.
+/// API keys and endpoints for the non-default Translate Engines (ticket 09
+/// added the keyed cloud pair, ticket 10 the OpenAI-compatible pair).
+/// Config.toml is the app's only persistence surface and lives in the
+/// user's profile directory — outside any repo — so keys are kept there
+/// like everything else. Azure's `region` is the resource's region; empty
+/// means a global resource, which takes no region header.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EnginesSettings {
     pub azure: AzureEngineSettings,
     pub deepl: DeepLEngineSettings,
+    pub openai: OpenAiEngineSettings,
+    pub lmstudio: LmStudioEngineSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -229,6 +232,87 @@ pub struct AzureEngineSettings {
 pub struct DeepLEngineSettings {
     /// Free-tier keys end with ":fx"; the suffix picks the API host.
     pub key: String,
+}
+
+/// The generic OpenAI-compatible endpoint's settings (ticket 10): base URL,
+/// key, model, temperature — one adapter covering OpenAI, OpenRouter, and
+/// any compatible cloud provider. The key may be empty (some compatible
+/// servers need none); the model is free text, filled when the engine is
+/// chosen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OpenAiEngineSettings {
+    /// Must include the version segment (`/v1`), the OpenAI-compatible
+    /// convention for both `/chat/completions` and `/models`.
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    /// Sampling temperature (0–2); low values keep translations stable
+    /// across re-reads of unchanged text.
+    pub temperature: f64,
+}
+
+impl Default for OpenAiEngineSettings {
+    fn default() -> Self {
+        Self {
+            base_url: OPENAI_DEFAULT_BASE_URL.to_string(),
+            api_key: String::new(),
+            model: String::new(),
+            temperature: DEFAULT_LLM_TEMPERATURE,
+        }
+    }
+}
+
+/// The OpenAI API's own endpoint — the engine's default base URL.
+pub const OPENAI_DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// LM Studio's settings (ticket 10): its local server's base URL and a
+/// model picked from the server's `/models` list. No key field — LM Studio
+/// needs none. The model is empty until a server check fills the dropdown
+/// and the user picks one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LmStudioEngineSettings {
+    /// LM Studio's default local endpoint (Developer tab → Start server).
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f64,
+}
+
+impl Default for LmStudioEngineSettings {
+    fn default() -> Self {
+        Self {
+            base_url: LM_STUDIO_DEFAULT_BASE_URL.to_string(),
+            model: String::new(),
+            temperature: DEFAULT_LLM_TEMPERATURE,
+        }
+    }
+}
+
+/// LM Studio serves an OpenAI-compatible API on this port by default.
+pub const LM_STUDIO_DEFAULT_BASE_URL: &str = "http://localhost:1234/v1";
+
+/// Default sampling temperature for the LLM engines: near-deterministic,
+/// so re-translating unchanged text stays stable.
+pub const DEFAULT_LLM_TEMPERATURE: f64 = 0.2;
+
+/// Shape checks for one LLM endpoint's settings: temperature range (0–2,
+/// the OpenAI-compatible convention) and a `http(s)://` base URL — every
+/// compatible server, local or cloud, is served over plain HTTP.
+fn validate_llm_endpoint(section: &str, base_url: &str, temperature: f64) -> Result<(), ConfigError> {
+    if !(0.0..=2.0).contains(&temperature) {
+        return Err(ConfigError::Validation(format!(
+            "[{section}] temperature must be between 0 and 2"
+        )));
+    }
+    let base_url = base_url.trim();
+    if !(base_url.is_empty() || base_url.starts_with("http://") || base_url.starts_with("https://"))
+    {
+        return Err(ConfigError::Validation(format!(
+            "[{section}] base_url must start with http:// or https://"
+        )));
+    }
+    Ok(())
 }
 
 /// Everything the app reads from the config file.
@@ -325,6 +409,19 @@ impl AppConfig {
                 list = TRANSLATE_ENGINES.join(", ")
             )));
         }
+        // The LLM engines' endpoint settings are structural (valid even
+        // while another engine is the default, because a Profile may pick
+        // them): temperature range + a schemed base URL, always checked.
+        validate_llm_endpoint(
+            "engines.openai",
+            &self.engines.openai.base_url,
+            self.engines.openai.temperature,
+        )?;
+        validate_llm_endpoint(
+            "engines.lmstudio",
+            &self.engines.lmstudio.base_url,
+            self.engines.lmstudio.temperature,
+        )?;
         if let Some(region) = &self.region {
             if region.width == 0 || region.height == 0 {
                 return Err(ConfigError::Validation(
@@ -490,8 +587,10 @@ genderless = false
 
 # The default Translate Engine (Settings → Engines): "google" (the keyless
 # default, ADR-0002), "azure" or "deepl" (keyed — set the key under
-# [engines.*] below). A Profile's "engine" value below can override this
-# per app; omitted there means "inherit this one".
+# [engines.*] below), "openai" (any OpenAI-compatible cloud endpoint), or
+# "lmstudio" (local/offline, served by LM Studio on this machine). A
+# Profile's "engine" value below can override this per app; omitted there
+# means "inherit this one".
 engine = "google"
 
 [engines.azure]
@@ -505,6 +604,26 @@ region = ""
 # DeepL free tier (500k chars/month, Thai supported). Free keys end with
 # ":fx"; the suffix picks the right API host, so paste the whole key.
 key = ""
+
+[engines.openai]
+# Any OpenAI-compatible endpoint (OpenAI itself, OpenRouter, …). The base
+# URL must include the version segment; the key is omitted from requests
+# when left empty; "model" is free text (e.g. "gpt-4o-mini"); temperature
+# is 0–2, sampled per translation.
+base_url = "https://api.openai.com/v1"
+api_key = ""
+model = ""
+temperature = 0.2
+
+[engines.lmstudio]
+# LM Studio (local/offline — screen text never leaves this machine). Start
+# its server (Developer tab → Start server, default port 1234) and load a
+# model; the base URL below is LM Studio's default. The model dropdown in
+# Settings → Engines fills from the running server; "model" is what was
+# picked (empty until then). temperature is 0–2.
+base_url = "http://localhost:1234/v1"
+model = ""
+temperature = 0.2
 
 [source]
 # Language Langception expects to read: "en" | "ja" | "zh" | "ko"
@@ -595,7 +714,7 @@ one_shot_capture = "Alt+Q"
 # the whole window is watched. Its glossary is merged over the global one
 # above (the profile wins on conflict); genderless: "inherit" (follows
 # the genderless key above) | "on" | "off"; engine: "google" | "azure" |
-# "deepl", or omit to inherit the global engine.
+# "deepl" | "openai" | "lmstudio", or omit to inherit the global engine.
 # [[profiles]]
 # id = "p1700000000000000000"
 # name = "Reverse: 1999"
@@ -1326,6 +1445,135 @@ language = "en"
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.engine, "deepl");
         assert_eq!(config.profiles[0].engine.as_deref(), Some("azure"));
+    }
+
+    // ---- OpenAI-compatible + LM Studio engines (ticket 10) ----
+
+    #[test]
+    fn default_template_carries_openai_and_lmstudio_defaults() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.engines.openai.base_url, "https://api.openai.com/v1");
+        assert_eq!(config.engines.openai.api_key, "");
+        assert_eq!(config.engines.openai.model, "");
+        assert_eq!(config.engines.openai.temperature, 0.2);
+        assert_eq!(
+            config.engines.lmstudio.base_url,
+            "http://localhost:1234/v1"
+        );
+        assert_eq!(config.engines.lmstudio.model, "");
+        assert_eq!(config.engines.lmstudio.temperature, 0.2);
+    }
+
+    #[test]
+    fn ticket09_config_without_llm_engines_gets_the_defaults() {
+        // A config from before ticket 10 predates [engines.openai] and
+        // [engines.lmstudio]: strip both tables line-wise (the ticket-08
+        // engines-strip trick, extended) and parse — serde fills defaults.
+        let mut in_llm = false;
+        let legacy: String = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("[engines.openai]") || trimmed.starts_with("[engines.lmstudio]")
+                {
+                    in_llm = true;
+                    return false;
+                }
+                if in_llm {
+                    if trimmed.starts_with('[') {
+                        in_llm = false; // the next section
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert_eq!(
+            config.engines.openai.base_url,
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            config.engines.lmstudio.base_url,
+            "http://localhost:1234/v1"
+        );
+        assert_eq!(config.engines.lmstudio.temperature, 0.2);
+    }
+
+    #[test]
+    fn openai_engine_settings_roundtrip_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("engine = \"google\"", "engine = \"openai\"")
+            .replace(
+                "base_url = \"https://api.openai.com/v1\"\napi_key = \"\"\nmodel = \"\"",
+                "base_url = \"https://openrouter.ai/api/v1\"\napi_key = \"sk-or-v1-abc\"\nmodel = \"google/gemini-flash-1.5\"",
+            );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.engine, "openai");
+        assert_eq!(
+            config.engines.openai.base_url,
+            "https://openrouter.ai/api/v1"
+        );
+        assert_eq!(config.engines.openai.api_key, "sk-or-v1-abc");
+        assert_eq!(config.engines.openai.model, "google/gemini-flash-1.5");
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn lmstudio_engine_settings_roundtrip_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("engine = \"google\"", "engine = \"lmstudio\"")
+            .replace(
+                "base_url = \"http://localhost:1234/v1\"\nmodel = \"\"",
+                "base_url = \"http://127.0.0.1:1234/v1\"\nmodel = \"qwen2.5-7b-instruct\"",
+            );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.engine, "lmstudio");
+        assert_eq!(
+            config.engines.lmstudio.base_url,
+            "http://127.0.0.1:1234/v1"
+        );
+        assert_eq!(config.engines.lmstudio.model, "qwen2.5-7b-instruct");
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn absurd_llm_temperature_is_rejected() {
+        for replacement in ["temperature = 2.5", "temperature = -0.1"] {
+            // Replaces both LLM sections at once — either rejection is fine.
+            let text = AppConfig::DEFAULT_TEMPLATE.replace("temperature = 0.2", replacement);
+            let err = AppConfig::from_toml_str(&text).unwrap_err();
+            assert!(
+                err.to_string().contains("temperature"),
+                "{replacement} should name the field, was: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn unschemed_llm_base_url_is_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace(
+            "base_url = \"http://localhost:1234/v1\"",
+            "base_url = \"localhost:1234/v1\"",
+        );
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("base_url"), "was: {err}");
+    }
+
+    #[test]
+    fn empty_llm_base_url_parses() {
+        // Structural checks only: an empty base URL parses — completeness
+        // is the settings surface's / loop start's job (like the Azure key,
+        // which config validation also does not require).
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("base_url = \"http://localhost:1234/v1\"", "base_url = \"\"");
+        AppConfig::from_toml_str(&text).unwrap();
     }
 
     #[test]

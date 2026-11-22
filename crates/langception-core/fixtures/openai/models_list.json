@@ -1,0 +1,8 @@
+{
+  "object": "list",
+  "data": [
+    { "id": "qwen2.5-7b-instruct", "object": "model", "owned_by": "lmstudio" },
+    { "id": "gpt-4o-mini", "object": "model", "owned_by": "system" },
+    { "id": "mistral-nemo-instruct-2407", "object": "model", "owned_by": "lmstudio" }
+  ]
+}

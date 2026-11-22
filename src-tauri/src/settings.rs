@@ -114,17 +114,21 @@ pub(crate) fn get_about(app: AppHandle) -> About {
     }
 }
 
-// ---- Engines tab (ticket 09) ----
+// ---- Engines tab (tickets 09 + 10) ----
 
-/// The Engines tab's editing surface: the global default engine plus each
-/// keyed engine's settings. Keys round-trip to the page so edits prefill;
-/// the window is local-only.
+/// The Engines tab's editing surface: the global default engine plus every
+/// configurable engine's settings. Keys and URLs round-trip to the page so
+/// edits prefill; the window is local-only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnginesDto {
     pub default_engine: String,
     pub azure: AzureEngineDto,
     pub deepl: DeepLEngineDto,
+    /// The generic OpenAI-compatible endpoint (ticket 10).
+    pub openai: OpenAiEngineDto,
+    /// LM Studio's local server (ticket 10; no key — its server needs none).
+    pub lmstudio: LmStudioEngineDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,6 +144,23 @@ pub struct DeepLEngineDto {
     pub key: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenAiEngineDto {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub temperature: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LmStudioEngineDto {
+    pub base_url: String,
+    pub model: String,
+    pub temperature: f64,
+}
+
 #[tauri::command]
 pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
     match &*app.state::<AppState>().config.lock().unwrap() {
@@ -151,6 +172,17 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
             },
             deepl: DeepLEngineDto {
                 key: config.engines.deepl.key.clone(),
+            },
+            openai: OpenAiEngineDto {
+                base_url: config.engines.openai.base_url.clone(),
+                api_key: config.engines.openai.api_key.clone(),
+                model: config.engines.openai.model.clone(),
+                temperature: config.engines.openai.temperature,
+            },
+            lmstudio: LmStudioEngineDto {
+                base_url: config.engines.lmstudio.base_url.clone(),
+                model: config.engines.lmstudio.model.clone(),
+                temperature: config.engines.lmstudio.temperature,
             },
         }),
         Some(Err(message)) => Err(message.clone()),
@@ -179,21 +211,121 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
     if default_engine == "deepl" && deepl_key.is_empty() {
         return Err("DeepL needs an API key — create one with the link above, then paste it".into());
     }
+    // Same rule for the LLM engines (ticket 10): completeness is enforced
+    // only for the SELECTED default — the other engine's fields may be
+    // half-filled and saved for later (a Profile may pick them).
+    let openai_base = engines.openai.base_url.trim().to_string();
+    let openai_key = engines.openai.api_key.trim().to_string();
+    let openai_model = engines.openai.model.trim().to_string();
+    let openai_temperature = engines.openai.temperature;
+    let lmstudio_base = engines.lmstudio.base_url.trim().to_string();
+    let lmstudio_model = engines.lmstudio.model.trim().to_string();
+    let lmstudio_temperature = engines.lmstudio.temperature;
+    if !(0.0..=2.0).contains(&openai_temperature) {
+        return Err("OpenAI-compatible temperature must be between 0 and 2".into());
+    }
+    if !(0.0..=2.0).contains(&lmstudio_temperature) {
+        return Err("LM Studio temperature must be between 0 and 2".into());
+    }
+    if default_engine == "openai" {
+        if openai_base.is_empty() {
+            return Err("OpenAI-compatible engine needs a base URL — add one above".into());
+        }
+        if openai_model.is_empty() {
+            return Err("OpenAI-compatible engine needs a model — type one above".into());
+        }
+    }
+    if default_engine == "lmstudio" {
+        if lmstudio_base.is_empty() {
+            return Err("LM Studio engine needs a server URL — add one above".into());
+        }
+        if lmstudio_model.is_empty() {
+            return Err(
+                "LM Studio engine needs a model — check the server above and pick one from the list"
+                    .into(),
+            );
+        }
+    }
     run_off_main(app, move |app| {
         with_config_mut(app, |config| {
             config.engine = default_engine.clone();
             config.engines.azure.key = azure_key.clone();
             config.engines.azure.region = azure_region.clone();
             config.engines.deepl.key = deepl_key.clone();
+            config.engines.openai.base_url = openai_base.clone();
+            config.engines.openai.api_key = openai_key.clone();
+            config.engines.openai.model = openai_model.clone();
+            config.engines.openai.temperature = openai_temperature;
+            config.engines.lmstudio.base_url = lmstudio_base.clone();
+            config.engines.lmstudio.model = lmstudio_model.clone();
+            config.engines.lmstudio.temperature = lmstudio_temperature;
             Ok(())
         })?;
-        // The engine and its key are read when the loop starts: restart so
-        // the change visibly applies.
+        // The engine and its endpoint settings are read when the loop
+        // starts: restart so the change visibly applies.
         restart_loop_if_running(app);
         apply_state(app);
         Ok(())
     })
     .await
+}
+
+/// The result of the LM Studio card's server check (ticket 10): one
+/// `GET /models` round-trip answers reachability AND model discovery.
+/// Failures come back as `reachable: false` with a plain-language message
+/// (connection refused names the URL) so the card can show an inline
+/// status instead of a toast.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LmStudioCheck {
+    pub reachable: bool,
+    pub models: Vec<String>,
+    pub message: String,
+}
+
+/// Live check for the LM Studio card: pings the server URL as typed (the
+/// saved value is NOT required — the check validates the field before
+/// saving) and lists the models it serves. Pure HTTP, no state touched.
+#[tauri::command]
+pub(crate) async fn check_lmstudio(base_url: String) -> Result<LmStudioCheck, String> {
+    let base_url = base_url.trim().to_string();
+    if base_url.is_empty() {
+        return Err(
+            "Enter the LM Studio server URL first (default: http://localhost:1234/v1)".into(),
+        );
+    }
+    let engine = langception_core::openai::OpenAiCompatibleEngine::new(
+        &base_url,
+        "",
+        "unused",
+        0.0,
+        langception_core::openai::LM_STUDIO_LABEL,
+    )
+    .map_err(|e| e.message)?;
+    match engine.check_endpoint().await {
+        Ok(models) => {
+            let message = if models.is_empty() {
+                "Server reachable, but it serves no models — load one in LM Studio (Developer tab), then check again"
+                    .to_string()
+            } else {
+                format!(
+                    "Server reachable — {count} model{s} available",
+                    count = models.len(),
+                    s = if models.len() == 1 { "" } else { "s" }
+                )
+            };
+            Ok(LmStudioCheck {
+                reachable: true,
+                models,
+                message,
+            })
+        }
+        Err(error) => Ok(LmStudioCheck {
+            reachable: false,
+            models: Vec::new(),
+            message: error.message,
+        }),
+    }
 }
 
 /// Live check for the Engines tab: translates one phrase through the named

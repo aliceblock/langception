@@ -145,10 +145,14 @@
         <h3>Translate Engine</h3>
         <p class="hint">
           The default engine translates every Text Block; per-app Profiles can
-          override it (Settings → Profiles). All three are cloud engines:
-          whenever translation runs, screen text leaves the machine — the ☁
-          badge shows this in the tray tooltip and the Results Window. Quota,
-          key, and network failures surface there and as tray notifications.
+          override it (Settings → Profiles). Google, Azure, DeepL and the
+          OpenAI-compatible endpoint are cloud engines: whenever translation
+          runs, screen text leaves the machine — the ☁ badge shows this in
+          the tray tooltip and the Results Window. LM Studio runs on this
+          machine (offline; text never leaves it), and even it keeps the
+          badge honest: point its URL at another computer and the ☁ badge
+          returns. Quota, key, network and parsing failures surface in the
+          Results Window and as tray notifications.
         </p>
         <div class="form-grid">
           <label class="form-row">
@@ -157,6 +161,8 @@
               <option value="google">Google Translate (unofficial) — free, no key</option>
               <option value="azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
               <option value="deepl">DeepL — free tier, 500k chars/month</option>
+              <option value="openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
+              <option value="lmstudio">LM Studio — local & offline, no key</option>
             </select>
           </label>
         </div>
@@ -206,6 +212,50 @@
           <div class="row">
             <button id="engines-deepl-link" class="btn small">Sign up for a free key…</button>
           </div>
+        </div>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>OpenAI-compatible</strong>
+            <span class="chip privacy" title="Screen text is sent to whatever server the base URL points at">☁ cloud (unless your URL is local)</span>
+          </div>
+          <p class="hint">
+            One adapter for OpenAI, OpenRouter, or any OpenAI-compatible API:
+            set the base URL (must include <code>/v1</code>), paste its key,
+            and type the model name (e.g. <code>gpt-4o-mini</code>). Cloud
+            URLs show the ☁ badge while running; a loopback URL counts as
+            local and does not.
+          </p>
+          <div class="row glossary-add">
+            <input id="engines-openai-base-url" type="text" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
+            <input id="engines-openai-key" type="password" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="row glossary-add">
+            <input id="engines-openai-model" type="text" placeholder="Model name (e.g. gpt-4o-mini)" spellcheck="false" />
+            <input id="engines-openai-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+          </div>
+        </div>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>LM Studio</strong>
+            <span class="chip ok" title="Runs on this machine — screen text never leaves it">Local · offline</span>
+          </div>
+          <p class="hint">
+            Local translation through LM Studio's server: start it (LM Studio
+            → Developer → Start server, default port 1234), load a model,
+            then check the server here — the model dropdown fills from what
+            it serves. No key, no cloud: screen text stays on this machine.
+          </p>
+          <div class="row glossary-add">
+            <input id="engines-lmstudio-base-url" type="text" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
+            <button id="engines-lmstudio-check" class="btn small">Check server</button>
+          </div>
+          <div class="row glossary-add">
+            <select id="engines-lmstudio-model" title="Models served by the LM Studio server">
+              <option value="">— check the server to list models —</option>
+            </select>
+            <input id="engines-lmstudio-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+          </div>
+          <span id="engines-lmstudio-note" class="hint"></span>
         </div>
         <div class="row">
           <button id="engines-save" class="btn primary">Save engines</button>
@@ -303,6 +353,8 @@
                 <option value="google">Google Translate (unofficial)</option>
                 <option value="azure">Azure AI Translator</option>
                 <option value="deepl">DeepL</option>
+                <option value="openai">OpenAI-compatible</option>
+                <option value="lmstudio">LM Studio (local)</option>
               </select>
             </label>
             <label class="form-row">

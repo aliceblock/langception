@@ -132,10 +132,10 @@ wirePacks("engines");
 document.getElementById("wizard-finish").addEventListener("click", finishWizard);
 document.getElementById("wizard-skip").addEventListener("click", finishWizard);
 
-// Engines (ticket 09) ----------------------------------------------------------
-// The global default engine + the keyed engines' settings (keys live in
-// config.toml like every other setting). The wizard's Azure upgrade shares
-// this loader so its action can merge with the already-saved keys.
+// Engines (tickets 09 + 10) -----------------------------------------------------
+// The global default engine + every configurable engine's settings (they
+// live in config.toml like every other setting). The wizard's Azure upgrade
+// shares this loader so its action can merge with the already-saved values.
 
 const AZURE_CREATE_KEY_URL =
   "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation";
@@ -145,6 +145,14 @@ const enginesDefault = document.getElementById("engines-default");
 const enginesAzureKey = document.getElementById("engines-azure-key");
 const enginesAzureRegion = document.getElementById("engines-azure-region");
 const enginesDeeplKey = document.getElementById("engines-deepl-key");
+const enginesOpenAiBaseUrl = document.getElementById("engines-openai-base-url");
+const enginesOpenAiKey = document.getElementById("engines-openai-key");
+const enginesOpenAiModel = document.getElementById("engines-openai-model");
+const enginesOpenAiTemperature = document.getElementById("engines-openai-temperature");
+const enginesLmStudioBaseUrl = document.getElementById("engines-lmstudio-base-url");
+const enginesLmStudioModel = document.getElementById("engines-lmstudio-model");
+const enginesLmStudioTemperature = document.getElementById("engines-lmstudio-temperature");
+const enginesLmStudioNote = document.getElementById("engines-lmstudio-note");
 const enginesNote = document.getElementById("engines-note");
 const wizardAzureKey = document.getElementById("wizard-azure-key");
 const wizardAzureRegion = document.getElementById("wizard-azure-region");
@@ -152,6 +160,35 @@ const wizardAzureNote = document.getElementById("wizard-azure-note");
 
 let enginesLoaded = false;
 let savedEngines = null; // the last values confirmed by get_engines
+
+// The LM Studio model dropdown's placeholder option (ticket 10: the list
+// fills from the server's /models — no free-text model entry needed).
+const LMSTUDIO_MODEL_PLACEHOLDER = "— check the server to list models —";
+
+function renderLmStudioModels(models, chosen) {
+  enginesLmStudioModel.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = models.length
+    ? LMSTUDIO_MODEL_PLACEHOLDER
+    : "— no models loaded in LM Studio —";
+  enginesLmStudioModel.append(placeholder);
+  // The saved model stays selectable even when the server no longer serves
+  // it (it may be offline right now) so the config never silently changes.
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model;
+    option.textContent = model;
+    enginesLmStudioModel.append(option);
+  }
+  if (chosen && !models.includes(chosen)) {
+    const option = document.createElement("option");
+    option.value = chosen;
+    option.textContent = `${chosen} (saved, not currently served)`;
+    enginesLmStudioModel.append(option);
+  }
+  enginesLmStudioModel.value = chosen || "";
+}
 
 async function loadEngines() {
   try {
@@ -161,6 +198,13 @@ async function loadEngines() {
     enginesAzureKey.value = savedEngines.azure.key;
     enginesAzureRegion.value = savedEngines.azure.region;
     enginesDeeplKey.value = savedEngines.deepl.key;
+    enginesOpenAiBaseUrl.value = savedEngines.openai.baseUrl;
+    enginesOpenAiKey.value = savedEngines.openai.apiKey;
+    enginesOpenAiModel.value = savedEngines.openai.model;
+    enginesOpenAiTemperature.value = savedEngines.openai.temperature;
+    enginesLmStudioBaseUrl.value = savedEngines.lmstudio.baseUrl;
+    enginesLmStudioTemperature.value = savedEngines.lmstudio.temperature;
+    renderLmStudioModels([], savedEngines.lmstudio.model);
     // The wizard's fields prefill too, so a half-finished setup survives
     // re-running the wizard.
     wizardAzureKey.value = savedEngines.azure.key;
@@ -180,6 +224,17 @@ function collectEngines(defaultEngine) {
     deepl: {
       key: enginesDeeplKey.value.trim(),
     },
+    openai: {
+      baseUrl: enginesOpenAiBaseUrl.value.trim(),
+      apiKey: enginesOpenAiKey.value.trim(),
+      model: enginesOpenAiModel.value.trim(),
+      temperature: Number(enginesOpenAiTemperature.value) || 0,
+    },
+    lmstudio: {
+      baseUrl: enginesLmStudioBaseUrl.value.trim(),
+      model: enginesLmStudioModel.value.trim(),
+      temperature: Number(enginesLmStudioTemperature.value) || 0,
+    },
   };
 }
 
@@ -189,6 +244,30 @@ document.getElementById("engines-save").addEventListener("click", async () => {
     toast("Engines saved");
   } catch (e) {
     toast(String(e), "error");
+  }
+});
+
+// LM Studio server check (ticket 10): one round-trip answers reachability
+// AND fills the model dropdown from /models. Runs against the URL as typed
+// — you can validate a fix before saving it.
+document.getElementById("engines-lmstudio-check").addEventListener("click", async () => {
+  const btn = document.getElementById("engines-lmstudio-check");
+  btn.disabled = true;
+  enginesLmStudioNote.textContent = "checking…";
+  try {
+    const result = await invoke("check_lmstudio", { baseUrl: enginesLmStudioBaseUrl.value.trim() });
+    renderLmStudioModels(result.models, enginesLmStudioModel.value.trim());
+    enginesLmStudioNote.textContent = result.message;
+    if (result.reachable) {
+      toast(result.message);
+    } else {
+      toast(result.message, "error");
+    }
+  } catch (e) {
+    enginesLmStudioNote.textContent = "";
+    toast(String(e), "error");
+  } finally {
+    btn.disabled = false;
   }
 });
 
@@ -232,6 +311,8 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
         defaultEngine: "azure",
         azure: { key, region: wizardAzureRegion.value.trim() },
         deepl: { key: savedEngines?.deepl?.key || "" },
+        openai: savedEngines?.openai || { baseUrl: "", apiKey: "", model: "", temperature: 0.2 },
+        lmstudio: savedEngines?.lmstudio || { baseUrl: "", model: "", temperature: 0.2 },
       },
     });
     await loadEngines();

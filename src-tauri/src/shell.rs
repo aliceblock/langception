@@ -12,6 +12,7 @@ use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, TextStyle
 use langception_core::deepl::DeepLTranslateEngine;
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
+use langception_core::openai::{GENERIC_LABEL, LM_STUDIO_LABEL, OpenAiCompatibleEngine};
 use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, Stage, SystemClock};
 use langception_core::ports::{ExcludedBlock, Region, SourceLanguage, TranslateEngine, Zone, TARGET_LANGUAGE};
 use langception_core::profile::{GenderlessOverride, Profile, ProfileZone};
@@ -385,6 +386,7 @@ pub fn run() {
             crate::settings::get_about,
             crate::settings::get_engines,
             crate::settings::set_engines,
+            crate::settings::check_lmstudio,
             crate::settings::test_engine,
             crate::settings::open_engine_link,
             crate::settings::set_general,
@@ -1076,9 +1078,9 @@ fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeli
 /// Profile's explicit `engine` wins; `None` inherits the global default
 /// (`config.engine`, ticket 09). Config validation rejects unknown names,
 /// so they cannot reach here from a valid config — the match still fails
-/// loudly rather than falling back. Keyed engines need their key: an empty
-/// one is a start-time error naming the settings surface, never a silent
-/// no-op.
+/// loudly rather than falling back. Keyed engines need their key and the
+/// LLM engines their endpoint+model: an empty one is a start-time error
+/// naming the settings surface, never a silent no-op.
 pub(crate) fn build_translate_engine(
     config: &AppConfig,
     engine: Option<&str>,
@@ -1118,6 +1120,60 @@ pub(crate) fn build_translate_engine(
             Ok(Arc::new(
                 DeepLTranslateEngine::new(key)
                     .map_err(|e| format!("failed to initialize DeepL engine: {e}"))?,
+            ))
+        }
+        "openai" => {
+            let openai = &config.engines.openai;
+            let base_url = openai.base_url.trim();
+            let model = openai.model.trim();
+            if base_url.is_empty() {
+                return Err(
+                    "OpenAI-compatible engine selected, but no base URL is set — add one in Settings → Engines"
+                        .into(),
+                );
+            }
+            if model.is_empty() {
+                return Err(
+                    "OpenAI-compatible engine selected, but no model is set — type one in Settings → Engines"
+                        .into(),
+                );
+            }
+            Ok(Arc::new(
+                OpenAiCompatibleEngine::new(
+                    base_url,
+                    openai.api_key.trim(),
+                    model,
+                    openai.temperature,
+                    GENERIC_LABEL,
+                )
+                .map_err(|e| format!("failed to initialize OpenAI-compatible engine: {e}"))?,
+            ))
+        }
+        "lmstudio" => {
+            let lmstudio = &config.engines.lmstudio;
+            let base_url = lmstudio.base_url.trim();
+            let model = lmstudio.model.trim();
+            if base_url.is_empty() {
+                return Err(
+                    "LM Studio engine selected, but no server URL is set — add one in Settings → Engines"
+                        .into(),
+                );
+            }
+            if model.is_empty() {
+                return Err(
+                    "LM Studio engine selected, but no model is picked — check the server in Settings → Engines and choose one"
+                        .into(),
+                );
+            }
+            Ok(Arc::new(
+                OpenAiCompatibleEngine::new(
+                    base_url,
+                    "",
+                    model,
+                    lmstudio.temperature,
+                    LM_STUDIO_LABEL,
+                )
+                .map_err(|e| format!("failed to initialize LM Studio engine: {e}"))?,
             ))
         }
         other => Err(format!("unknown engine \"{other}\"")),

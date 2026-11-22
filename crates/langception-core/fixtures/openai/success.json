@@ -1,0 +1,20 @@
+{
+  "id": "chatcmpl-b8f3a1d2",
+  "object": "chat.completion",
+  "created": 1764000000,
+  "model": "gpt-4o-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "สวัสดีชาวโลก" },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 9,
+    "completion_tokens": 5,
+    "total_tokens": 14
+  },
+  "system_fingerprint": "fp_0123456789"
+}
