@@ -140,6 +140,7 @@ document.getElementById("wizard-skip").addEventListener("click", finishWizard);
 const AZURE_CREATE_KEY_URL =
   "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation";
 const DEEPL_API_URL = "https://www.deepl.com/en/pro-api";
+const GEMINI_CREATE_KEY_URL = "https://aistudio.google.com/apikey";
 
 const enginesDefault = document.getElementById("engines-default");
 const enginesAzureKey = document.getElementById("engines-azure-key");
@@ -153,6 +154,9 @@ const enginesLmStudioBaseUrl = document.getElementById("engines-lmstudio-base-ur
 const enginesLmStudioModel = document.getElementById("engines-lmstudio-model");
 const enginesLmStudioTemperature = document.getElementById("engines-lmstudio-temperature");
 const enginesLmStudioNote = document.getElementById("engines-lmstudio-note");
+const enginesGeminiKey = document.getElementById("engines-gemini-key");
+const enginesGeminiModel = document.getElementById("engines-gemini-model");
+const enginesGeminiTemperature = document.getElementById("engines-gemini-temperature");
 const enginesNote = document.getElementById("engines-note");
 const wizardAzureKey = document.getElementById("wizard-azure-key");
 const wizardAzureRegion = document.getElementById("wizard-azure-region");
@@ -205,6 +209,9 @@ async function loadEngines() {
     enginesLmStudioBaseUrl.value = savedEngines.lmstudio.baseUrl;
     enginesLmStudioTemperature.value = savedEngines.lmstudio.temperature;
     renderLmStudioModels([], savedEngines.lmstudio.model);
+    enginesGeminiKey.value = savedEngines.gemini.apiKey;
+    enginesGeminiModel.value = savedEngines.gemini.model;
+    enginesGeminiTemperature.value = savedEngines.gemini.temperature;
     // The wizard's fields prefill too, so a half-finished setup survives
     // re-running the wizard.
     wizardAzureKey.value = savedEngines.azure.key;
@@ -234,6 +241,11 @@ function collectEngines(defaultEngine) {
       baseUrl: enginesLmStudioBaseUrl.value.trim(),
       model: enginesLmStudioModel.value.trim(),
       temperature: Number(enginesLmStudioTemperature.value) || 0,
+    },
+    gemini: {
+      apiKey: enginesGeminiKey.value.trim(),
+      model: enginesGeminiModel.value.trim(),
+      temperature: Number(enginesGeminiTemperature.value) || 0,
     },
   };
 }
@@ -290,6 +302,7 @@ for (const [buttonId, url] of [
   ["engines-azure-link", AZURE_CREATE_KEY_URL],
   ["wizard-azure-link", AZURE_CREATE_KEY_URL],
   ["engines-deepl-link", DEEPL_API_URL],
+  ["engines-gemini-link", GEMINI_CREATE_KEY_URL],
 ]) {
   document.getElementById(buttonId).addEventListener("click", () => {
     invoke("open_engine_link", { url }).catch((e) => toast(String(e), "error"));
@@ -313,6 +326,7 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
         deepl: { key: savedEngines?.deepl?.key || "" },
         openai: savedEngines?.openai || { baseUrl: "", apiKey: "", model: "", temperature: 0.2 },
         lmstudio: savedEngines?.lmstudio || { baseUrl: "", model: "", temperature: 0.2 },
+        gemini: savedEngines?.gemini || { apiKey: "", model: "", temperature: 0.2 },
       },
     });
     await loadEngines();

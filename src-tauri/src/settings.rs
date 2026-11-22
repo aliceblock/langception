@@ -114,7 +114,7 @@ pub(crate) fn get_about(app: AppHandle) -> About {
     }
 }
 
-// ---- Engines tab (tickets 09 + 10) ----
+// ---- Engines tab (tickets 09 + 10 + 11) ----
 
 /// The Engines tab's editing surface: the global default engine plus every
 /// configurable engine's settings. Keys and URLs round-trip to the page so
@@ -129,6 +129,8 @@ pub struct EnginesDto {
     pub openai: OpenAiEngineDto,
     /// LM Studio's local server (ticket 10; no key — its server needs none).
     pub lmstudio: LmStudioEngineDto,
+    /// Google Gemini (ticket 11; the endpoint is Google's fixed API root).
+    pub gemini: GeminiEngineDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +163,14 @@ pub struct LmStudioEngineDto {
     pub temperature: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GeminiEngineDto {
+    pub api_key: String,
+    pub model: String,
+    pub temperature: f64,
+}
+
 #[tauri::command]
 pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
     match &*app.state::<AppState>().config.lock().unwrap() {
@@ -183,6 +193,11 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
                 base_url: config.engines.lmstudio.base_url.clone(),
                 model: config.engines.lmstudio.model.clone(),
                 temperature: config.engines.lmstudio.temperature,
+            },
+            gemini: GeminiEngineDto {
+                api_key: config.engines.gemini.api_key.clone(),
+                model: config.engines.gemini.model.clone(),
+                temperature: config.engines.gemini.temperature,
             },
         }),
         Some(Err(message)) => Err(message.clone()),
@@ -221,11 +236,17 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
     let lmstudio_base = engines.lmstudio.base_url.trim().to_string();
     let lmstudio_model = engines.lmstudio.model.trim().to_string();
     let lmstudio_temperature = engines.lmstudio.temperature;
-    if !(0.0..=2.0).contains(&openai_temperature) {
-        return Err("OpenAI-compatible temperature must be between 0 and 2".into());
-    }
-    if !(0.0..=2.0).contains(&lmstudio_temperature) {
-        return Err("LM Studio temperature must be between 0 and 2".into());
+    let gemini_key = engines.gemini.api_key.trim().to_string();
+    let gemini_model = engines.gemini.model.trim().to_string();
+    let gemini_temperature = engines.gemini.temperature;
+    for (label, temperature) in [
+        ("OpenAI-compatible", openai_temperature),
+        ("LM Studio", lmstudio_temperature),
+        ("Gemini", gemini_temperature),
+    ] {
+        if !(0.0..=2.0).contains(&temperature) {
+            return Err(format!("{label} temperature must be between 0 and 2"));
+        }
     }
     if default_engine == "openai" {
         if openai_base.is_empty() {
@@ -246,6 +267,16 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
             );
         }
     }
+    if default_engine == "gemini" {
+        if gemini_key.is_empty() {
+            return Err(
+                "Gemini needs an API key — create one with the link above, then paste it".into(),
+            );
+        }
+        if gemini_model.is_empty() {
+            return Err("Gemini engine needs a model — type one above".into());
+        }
+    }
     run_off_main(app, move |app| {
         with_config_mut(app, |config| {
             config.engine = default_engine.clone();
@@ -259,6 +290,9 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
             config.engines.lmstudio.base_url = lmstudio_base.clone();
             config.engines.lmstudio.model = lmstudio_model.clone();
             config.engines.lmstudio.temperature = lmstudio_temperature;
+            config.engines.gemini.api_key = gemini_key.clone();
+            config.engines.gemini.model = gemini_model.clone();
+            config.engines.gemini.temperature = gemini_temperature;
             Ok(())
         })?;
         // The engine and its endpoint settings are read when the loop
@@ -352,9 +386,10 @@ pub(crate) async fn test_engine(app: AppHandle, engine: String) -> Result<String
 /// webview window must never become a general URL opener.
 #[tauri::command]
 pub(crate) fn open_engine_link(url: String) -> Result<(), String> {
-    const ALLOWED: [&str; 2] = [
+    const ALLOWED: [&str; 3] = [
         "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
         "https://www.deepl.com/en/pro-api",
+        "https://aistudio.google.com/apikey",
     ];
     if !ALLOWED.contains(&url.as_str()) {
         return Err(format!("link \"{url}\" is not one of the engine signup pages"));

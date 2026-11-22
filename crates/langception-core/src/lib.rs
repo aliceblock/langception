@@ -6,6 +6,7 @@
 pub mod azure;
 pub mod config;
 pub mod deepl;
+pub mod gemini;
 pub mod genderless;
 pub mod glossary;
 pub mod google;
@@ -14,3 +15,6 @@ pub mod openai;
 pub mod orchestrator;
 pub mod ports;
 pub mod profile;
+pub mod prompt;
+#[cfg(test)]
+pub(crate) mod test_support;

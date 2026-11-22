@@ -163,6 +163,7 @@
               <option value="deepl">DeepL — free tier, 500k chars/month</option>
               <option value="openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
               <option value="lmstudio">LM Studio — local & offline, no key</option>
+              <option value="gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
             </select>
           </label>
         </div>
@@ -256,6 +257,27 @@
             <input id="engines-lmstudio-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
           </div>
           <span id="engines-lmstudio-note" class="hint"></span>
+        </div>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>Gemini</strong>
+            <span class="chip privacy" title="Screen text is sent to Google's Generative Language API">☁ cloud</span>
+          </div>
+          <p class="hint">
+            Google's LLM API: create a free API key at AI Studio with the
+            link, paste it, and type a model id (e.g.
+            <code>gemini-2.0-flash</code>). Like every LLM engine, Glossary
+            terms appearing in a block are injected into the prompt, and
+            Genderless Mode is requested there too.
+          </p>
+          <div class="row glossary-add">
+            <input id="engines-gemini-key" type="password" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
+            <button id="engines-gemini-link" class="btn small">Create a free key…</button>
+          </div>
+          <div class="row glossary-add">
+            <input id="engines-gemini-model" type="text" placeholder="Model name (e.g. gemini-2.0-flash)" spellcheck="false" />
+            <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+          </div>
         </div>
         <div class="row">
           <button id="engines-save" class="btn primary">Save engines</button>
@@ -355,6 +377,7 @@
                 <option value="deepl">DeepL</option>
                 <option value="openai">OpenAI-compatible</option>
                 <option value="lmstudio">LM Studio (local)</option>
+                <option value="gemini">Gemini</option>
               </select>
             </label>
             <label class="form-row">

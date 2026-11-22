@@ -197,18 +197,18 @@ pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Q";
 /// values for the global engine setting and a Profile's `engine` choice.
 /// An unknown name in a hand-edited config must be a visible validation
 /// error, never a silent fallback.
-pub const TRANSLATE_ENGINES: [&str; 5] = ["google", "azure", "deepl", "openai", "lmstudio"];
+pub const TRANSLATE_ENGINES: [&str; 6] = ["google", "azure", "deepl", "openai", "lmstudio", "gemini"];
 
 fn default_engine() -> String {
     "google".to_string()
 }
 
 /// API keys and endpoints for the non-default Translate Engines (ticket 09
-/// added the keyed cloud pair, ticket 10 the OpenAI-compatible pair).
-/// Config.toml is the app's only persistence surface and lives in the
-/// user's profile directory — outside any repo — so keys are kept there
-/// like everything else. Azure's `region` is the resource's region; empty
-/// means a global resource, which takes no region header.
+/// added the keyed cloud pair, ticket 10 the OpenAI-compatible pair,
+/// ticket 11 Gemini). Config.toml is the app's only persistence surface and
+/// lives in the user's profile directory — outside any repo — so keys are
+/// kept there like everything else. Azure's `region` is the resource's
+/// region; empty means a global resource, which takes no region header.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EnginesSettings {
@@ -216,6 +216,7 @@ pub struct EnginesSettings {
     pub deepl: DeepLEngineSettings,
     pub openai: OpenAiEngineSettings,
     pub lmstudio: LmStudioEngineSettings,
+    pub gemini: GeminiEngineSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -292,19 +293,52 @@ impl Default for LmStudioEngineSettings {
 /// LM Studio serves an OpenAI-compatible API on this port by default.
 pub const LM_STUDIO_DEFAULT_BASE_URL: &str = "http://localhost:1234/v1";
 
+/// Gemini's settings (ticket 11): the AI Studio key and a Generative
+/// Language model id. The endpoint is Google's fixed API root — no base URL
+/// to configure (the OpenAI-compatible card exists precisely for pointing
+/// at other hosts).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeminiEngineSettings {
+    /// The AI Studio API key ("AIza…").
+    pub api_key: String,
+    /// Model id served under `v1beta` (e.g. "gemini-2.0-flash").
+    pub model: String,
+    /// Sampling temperature (0–2); low values keep translations stable
+    /// across re-reads of unchanged text.
+    pub temperature: f64,
+}
+
+impl Default for GeminiEngineSettings {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            model: String::new(),
+            temperature: DEFAULT_LLM_TEMPERATURE,
+        }
+    }
+}
+
 /// Default sampling temperature for the LLM engines: near-deterministic,
 /// so re-translating unchanged text stays stable.
 pub const DEFAULT_LLM_TEMPERATURE: f64 = 0.2;
 
-/// Shape checks for one LLM endpoint's settings: temperature range (0–2,
-/// the OpenAI-compatible convention) and a `http(s)://` base URL — every
-/// compatible server, local or cloud, is served over plain HTTP.
-fn validate_llm_endpoint(section: &str, base_url: &str, temperature: f64) -> Result<(), ConfigError> {
+/// Shape check for an LLM engine's sampling temperature (0–2, the
+/// OpenAI-compatible convention).
+fn validate_llm_temperature(section: &str, temperature: f64) -> Result<(), ConfigError> {
     if !(0.0..=2.0).contains(&temperature) {
         return Err(ConfigError::Validation(format!(
             "[{section}] temperature must be between 0 and 2"
         )));
     }
+    Ok(())
+}
+
+/// Shape checks for one LLM endpoint's settings: temperature range (0–2,
+/// the OpenAI-compatible convention) and a `http(s)://` base URL — every
+/// compatible server, local or cloud, is served over plain HTTP.
+fn validate_llm_endpoint(section: &str, base_url: &str, temperature: f64) -> Result<(), ConfigError> {
+    validate_llm_temperature(section, temperature)?;
     let base_url = base_url.trim();
     if !(base_url.is_empty() || base_url.starts_with("http://") || base_url.starts_with("https://"))
     {
@@ -422,6 +456,9 @@ impl AppConfig {
             &self.engines.lmstudio.base_url,
             self.engines.lmstudio.temperature,
         )?;
+        // Gemini has no base URL to check — the endpoint is Google's fixed
+        // API root; only the temperature range applies.
+        validate_llm_temperature("engines.gemini", self.engines.gemini.temperature)?;
         if let Some(region) = &self.region {
             if region.width == 0 || region.height == 0 {
                 return Err(ConfigError::Validation(
@@ -587,8 +624,9 @@ genderless = false
 
 # The default Translate Engine (Settings → Engines): "google" (the keyless
 # default, ADR-0002), "azure" or "deepl" (keyed — set the key under
-# [engines.*] below), "openai" (any OpenAI-compatible cloud endpoint), or
-# "lmstudio" (local/offline, served by LM Studio on this machine). A
+# [engines.*] below), "openai" (any OpenAI-compatible cloud endpoint),
+# "lmstudio" (local/offline, served by LM Studio on this machine), or
+# "gemini" (keyed LLM — an AI Studio key under [engines.gemini] below). A
 # Profile's "engine" value below can override this per app; omitted there
 # means "inherit this one".
 engine = "google"
@@ -622,6 +660,17 @@ temperature = 0.2
 # Settings → Engines fills from the running server; "model" is what was
 # picked (empty until then). temperature is 0–2.
 base_url = "http://localhost:1234/v1"
+model = ""
+temperature = 0.2
+
+[engines.gemini]
+# Google Gemini (keyed LLM — bring your own key). Create a free key at
+# Google AI Studio (https://aistudio.google.com/apikey) and paste it below;
+# "model" is a Generative Language model id (e.g. "gemini-2.0-flash").
+# When a Gemini or other LLM engine is active, Glossary entries whose term
+# appears in the block being translated are injected into the prompt, and
+# Genderless Mode is requested at prompt level too. temperature is 0–2.
+api_key = ""
 model = ""
 temperature = 0.2
 
@@ -714,7 +763,8 @@ one_shot_capture = "Alt+Q"
 # the whole window is watched. Its glossary is merged over the global one
 # above (the profile wins on conflict); genderless: "inherit" (follows
 # the genderless key above) | "on" | "off"; engine: "google" | "azure" |
-# "deepl" | "openai" | "lmstudio", or omit to inherit the global engine.
+# "deepl" | "openai" | "lmstudio" | "gemini", or omit to inherit the global
+# engine.
 # [[profiles]]
 # id = "p1700000000000000000"
 # name = "Reverse: 1999"
@@ -1331,10 +1381,10 @@ language = "en"
     fn unknown_profile_engine_is_rejected() {
         let text = template_with_profile().replace(
             "genderless = \"inherit\"",
-            "genderless = \"inherit\"\nengine = \"gemini\"",
+            "genderless = \"inherit\"\nengine = \"babelfish\"",
         );
         let err = AppConfig::from_toml_str(&text).unwrap_err();
-        assert!(err.to_string().contains("engine \"gemini\""), "was: {err}");
+        assert!(err.to_string().contains("engine \"babelfish\""), "was: {err}");
     }
 
     #[test]
@@ -1426,10 +1476,10 @@ language = "en"
 
     #[test]
     fn unknown_global_engine_is_rejected() {
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"google\"", "engine = \"gemini\"");
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"google\"", "engine = \"babelfish\"");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(
-            err.to_string().contains("engine \"gemini\""),
+            err.to_string().contains("engine \"babelfish\""),
             "was: {err}"
         );
     }
@@ -1574,6 +1624,76 @@ language = "en"
         let text = AppConfig::DEFAULT_TEMPLATE
             .replace("base_url = \"http://localhost:1234/v1\"", "base_url = \"\"");
         AppConfig::from_toml_str(&text).unwrap();
+    }
+
+    // ---- Gemini engine (ticket 11) ----
+
+    #[test]
+    fn default_template_carries_gemini_defaults() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.engines.gemini.api_key, "");
+        assert_eq!(config.engines.gemini.model, "");
+        assert_eq!(config.engines.gemini.temperature, 0.2);
+        assert!(TRANSLATE_ENGINES.contains(&"gemini"), "gemini is offered");
+    }
+
+    #[test]
+    fn ticket10_config_without_gemini_gets_the_defaults() {
+        // A config from before ticket 11 predates [engines.gemini]: strip
+        // the table line-wise (the ticket-09 engines-strip trick) and
+        // parse — serde fills the defaults.
+        let mut in_gemini = false;
+        let legacy: String = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("[engines.gemini]") {
+                    in_gemini = true;
+                    return false;
+                }
+                if in_gemini {
+                    if trimmed.starts_with('[') {
+                        in_gemini = false; // the next section ([source])
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert_eq!(config.engines.gemini.api_key, "");
+        assert_eq!(config.engines.gemini.model, "");
+        assert_eq!(config.engines.gemini.temperature, 0.2);
+    }
+
+    #[test]
+    fn gemini_engine_settings_roundtrip_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("engine = \"google\"", "engine = \"gemini\"")
+            .replace(
+                "api_key = \"\"\nmodel = \"\"\ntemperature = 0.2\n\n[source]",
+                "api_key = \"AIzaSyDemo0123456789\"\nmodel = \"gemini-2.0-flash\"\ntemperature = 0.3\n\n[source]",
+            );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.engine, "gemini");
+        assert_eq!(config.engines.gemini.api_key, "AIzaSyDemo0123456789");
+        assert_eq!(config.engines.gemini.model, "gemini-2.0-flash");
+        assert_eq!(config.engines.gemini.temperature, 0.3);
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn profile_can_pick_gemini_independent_of_the_global_choice() {
+        let text = template_with_profile().replace(
+            "genderless = \"inherit\"",
+            "genderless = \"inherit\"\nengine = \"gemini\"",
+        );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.profiles[0].engine.as_deref(), Some("gemini"));
     }
 
     #[test]

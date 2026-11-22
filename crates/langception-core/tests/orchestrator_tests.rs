@@ -214,10 +214,23 @@ impl OcrEngine for FakeOcr {
 }
 
 /// Records every requested translation and answers from a scripted queue
-/// (default: `[TH] <text>`).
+/// (default: `[TH] <text>`). It stands in for the fake HTTP LLM engine of
+/// ticket 11: it also records the per-block prompt guidance it was handed
+/// (glossary entries + genderless flag), which is what an LLM adapter would
+/// fold into its request body.
 struct FakeTranslate {
     requests: Mutex<Vec<String>>,
+    guided: Mutex<Vec<GuidedCall>>,
     responses: AsyncMutex<mpsc::Receiver<Result<String, TranslateError>>>,
+}
+
+/// One `translate_guided` call: the text plus the guidance the orchestrator
+/// computed for its block.
+#[derive(Debug, Clone, PartialEq)]
+struct GuidedCall {
+    text: String,
+    glossary: Vec<(String, String)>,
+    genderless: bool,
 }
 
 impl FakeTranslate {
@@ -227,6 +240,7 @@ impl FakeTranslate {
             tx,
             Self {
                 requests: Mutex::new(Vec::new()),
+                guided: Mutex::new(Vec::new()),
                 responses: AsyncMutex::new(rx),
             },
         )
@@ -234,6 +248,21 @@ impl FakeTranslate {
 
     fn calls(&self) -> Vec<String> {
         self.requests.lock().unwrap().clone()
+    }
+
+    fn guided_calls(&self) -> Vec<GuidedCall> {
+        self.guided.lock().unwrap().clone()
+    }
+
+    /// The shared answer path of both port methods: a scripted response
+    /// (queued before the tick) wins; otherwise the default translation.
+    /// Never awaits an empty channel — that would deadlock the tick.
+    async fn answer(&self, text: &str) -> Result<String, TranslateError> {
+        let mut rx = self.responses.lock().await;
+        match rx.try_recv() {
+            Ok(response) => response,
+            Err(_) => Ok(format!("[TH] {text}")),
+        }
     }
 }
 
@@ -246,14 +275,23 @@ impl TranslateEngine for FakeTranslate {
         _target: &str,
     ) -> Result<String, TranslateError> {
         self.requests.lock().unwrap().push(text.to_string());
-        // A scripted response (queued before the tick) wins; otherwise the
-        // default translation. Never await an empty channel here — that
-        // would deadlock the tick under test.
-        let mut rx = self.responses.lock().await;
-        match rx.try_recv() {
-            Ok(response) => response,
-            Err(_) => Ok(format!("[TH] {text}")),
-        }
+        self.answer(text).await
+    }
+
+    async fn translate_guided(
+        &self,
+        text: &str,
+        _source: SourceLanguage,
+        _target: &str,
+        guidance: &langception_core::ports::TranslationGuidance,
+    ) -> Result<String, TranslateError> {
+        self.requests.lock().unwrap().push(text.to_string());
+        self.guided.lock().unwrap().push(GuidedCall {
+            text: text.to_string(),
+            glossary: guidance.glossary.clone(),
+            genderless: guidance.genderless,
+        });
+        self.answer(text).await
     }
 }
 
@@ -1565,6 +1603,310 @@ async fn genderless_mode_never_scrubs_glossary_output() {
         } => {
             assert_eq!(translation, "ข้าคือเวอร์ตินค่ะ", "pinned Thai shows verbatim");
             assert_eq!(via, Via::Glossary);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+// ---- LLM prompt guidance (ticket 11) ----
+//
+// Prompt construction is asserted at the pipeline seam: the fake engine
+// records exactly the guidance the orchestrator computed for the block —
+// the same guidance a real LLM adapter (OpenAI-compatible / Gemini) folds
+// into its request body. The adapters' request-side rendering of that
+// guidance is covered by their offline golden tests (prompt / openai /
+// gemini modules).
+
+#[tokio::test]
+async fn glossary_entries_appearing_in_the_block_ride_in_the_engine_guidance() {
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("Vertin".to_string(), "เวอร์ติน".to_string());
+    glossary
+        .0
+        .insert("Regulus".to_string(), "เรกุลุส".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, false).await;
+
+    // "Vertin" occurs in the sentence; "Regulus" does not. The block is
+    // NOT a whole-block match, so the engine is called — with the relevant
+    // entry injected, never the irrelevant one.
+    feed_tick(&h, 1, vec![block(0, 0, "Vertin picks up the case")]).await;
+    orch.tick().await;
+
+    assert_eq!(
+        h.translate.guided_calls(),
+        vec![GuidedCall {
+            text: "Vertin picks up the case".into(),
+            glossary: vec![("Vertin".into(), "เวอร์ติน".into())],
+            genderless: false,
+        }],
+        "exactly the in-sentence glossary entry must reach the engine"
+    );
+    // The translation flows through the engine path.
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, via, .. } => {
+            assert_eq!(translation, "[TH] Vertin picks up the case");
+            assert_eq!(via, Via::Engine);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn blocks_without_glossary_terms_carry_empty_guidance() {
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("Vertin".to_string(), "เวอร์ติน".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, false).await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Pay 500 gold")]).await;
+    orch.tick().await;
+
+    assert_eq!(
+        h.translate.guided_calls(),
+        vec![GuidedCall {
+            text: "Pay 500 gold".into(),
+            glossary: Vec::new(),
+            genderless: false,
+        }],
+        "no relevant term → an empty glossary injection"
+    );
+    let _ = next_event(&mut h.events).await;
+}
+
+#[tokio::test]
+async fn genderless_mode_rides_in_the_engine_guidance() {
+    let (mut h, mut orch) = harness_genderless().await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+
+    assert_eq!(
+        h.translate.guided_calls(),
+        vec![GuidedCall {
+            text: "Hello".into(),
+            glossary: Vec::new(),
+            genderless: true,
+        }],
+        "the mode-on flag must reach the LLM prompt path"
+    );
+    let _ = next_event(&mut h.events).await;
+
+    // Mode off → the flag stays false (a fresh harness, default config).
+    let (mut h2, mut orch2) = harness().await;
+    feed_tick(&h2, 1, vec![block(0, 0, "Hello")]).await;
+    orch2.tick().await;
+    assert!(!h2.translate.guided_calls()[0].genderless);
+    let _ = next_event(&mut h2.events).await;
+}
+
+#[tokio::test]
+async fn in_sentence_glossary_terms_come_back_per_glossary_in_engine_output() {
+    // The full ticket-11 story: "Vertin picks up the case" reaches the LLM
+    // with the pinned translation injected, and the model's glossary-faithful
+    // answer is what gets displayed (via the engine).
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("Vertin".to_string(), "เวอร์ติน".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, false).await;
+    h.responses
+        .send(Ok("เวอร์ตินหยิบคดีขึ้นมา".to_string()))
+        .await
+        .unwrap();
+
+    feed_tick(&h, 1, vec![block(0, 0, "Vertin picks up the case")]).await;
+    orch.tick().await;
+
+    assert_eq!(h.translate.calls(), ["Vertin picks up the case"]);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated {
+            translation,
+            via,
+            ..
+        } => {
+            assert_eq!(translation, "เวอร์ตินหยิบคดีขึ้นมา");
+            assert_eq!(via, Via::Engine);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn glossary_and_genderless_guidance_compose_for_llm_engines() {
+    // Reverse: 1999's combination — pinned names AND no speaker gender, in
+    // one guidance payload.
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("Vertin".to_string(), "เวอร์ติน".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, true).await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Vertin speaks")]).await;
+    orch.tick().await;
+
+    let call = &h.translate.guided_calls()[0];
+    assert_eq!(
+        call.glossary,
+        vec![("Vertin".to_string(), "เวอร์ติน".to_string())]
+    );
+    assert!(call.genderless);
+    let _ = next_event(&mut h.events).await;
+}
+
+// ---- Prompt construction through the pipeline seam, fake HTTP engine (ticket 11) ----
+//
+// The trait-level tests above assert what the orchestrator COMPUTES; this
+// one composes the other half: the REAL OpenAI-compatible adapter driven by
+// a pipeline tick, with a localhost HTTP server standing in for the LLM
+// endpoint. The captured request body proves the guidance actually renders
+// into the prompt; the golden response proves the loop completes with the
+// engine's answer.
+
+/// A localhost HTTP server that records every request body and answers
+/// each with `response` (a canned chat-completions JSON, served with
+/// `Connection: close` so every request is its own connection).
+async fn fake_http_engine(response: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let bodies = Arc::new(Mutex::new(Vec::new()));
+    let recorded = bodies.clone();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let recorded = recorded.clone();
+            tokio::spawn(async move {
+                // Headers first: read until the blank line.
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let header_end = loop {
+                    let n = socket.read(&mut chunk).await.expect("read request headers");
+                    if n == 0 {
+                        panic!("connection closed before headers completed");
+                    }
+                    buffer.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                };
+                let content_length = String::from_utf8_lossy(&buffer[..header_end])
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if !name.trim().eq_ignore_ascii_case("content-length") {
+                            return None;
+                        }
+                        value.trim().parse::<usize>().ok()
+                    })
+                    .unwrap_or(0);
+                // Then exactly Content-Length bytes of body.
+                while buffer.len() < header_end + content_length {
+                    let n = socket.read(&mut chunk).await.expect("read request body");
+                    if n == 0 {
+                        panic!("connection closed before the request body completed");
+                    }
+                    buffer.extend_from_slice(&chunk[..n]);
+                }
+                recorded.lock().unwrap().push(
+                    String::from_utf8_lossy(&buffer[header_end..header_end + content_length])
+                        .into_owned(),
+                );
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                );
+                socket.write_all(reply.as_bytes()).await.ok();
+                socket.shutdown().await.ok();
+            });
+        }
+    });
+    (format!("http://{addr}/v1"), bodies)
+}
+
+#[tokio::test]
+async fn pipeline_tick_sends_the_guided_prompt_to_the_http_engine() {
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("Vertin".to_string(), "เวอร์ติน".to_string());
+
+    let (url, bodies) =
+        fake_http_engine(include_str!("../fixtures/openai/success.json")).await;
+    let engine = langception_core::openai::OpenAiCompatibleEngine::new(
+        &url,
+        "test-key",
+        "test-model",
+        0.2,
+        langception_core::openai::GENERIC_LABEL,
+    )
+    .unwrap();
+
+    let (images_tx, capture) = FakeCapture::new();
+    let (ocr_tx, ocr) = FakeOcr::new();
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (_zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
+    let (_paused_tx, paused_rx) = watch::channel(false);
+    let (_excluded_tx, excluded_rx) = watch::channel(Vec::new());
+
+    let mut orchestrator = Orchestrator::new(
+        Arc::new(capture),
+        Arc::new(ocr),
+        Arc::new(engine),
+        Arc::new(langception_core::orchestrator::SystemClock),
+        LoopConfig {
+            genderless: true,
+            ..config()
+        },
+        glossary,
+        zones_rx,
+        paused_rx,
+        excluded_rx,
+        events_tx,
+    );
+
+    let blocks = vec![block(0, 0, "Vertin picks up the case")];
+    images_tx.send(frame_for(&blocks)).await.unwrap();
+    ocr_tx.send(Ok(blocks)).await.unwrap();
+
+    // The tick awaits the full HTTP round trip — when it returns, the
+    // request has been captured and the response parsed.
+    tokio::time::timeout(Duration::from_secs(5), orchestrator.tick())
+        .await
+        .expect("the pipeline tick (with its HTTP call) should finish within 5s");
+
+    // The captured body IS the prompt construction: the system message
+    // carries the injected glossary entry and the genderless instruction;
+    // the user message stays the bare screen text. (The guard is scoped:
+    // the assert below awaits, and a std lock must not span it.)
+    let (call_count, captured) = {
+        let recorded = bodies.lock().unwrap();
+        (recorded.len(), recorded.first().cloned().unwrap_or_default())
+    };
+    assert_eq!(
+        call_count, 1,
+        "one tick = one engine call, bodies were: {captured:?}"
+    );
+    let body: serde_json::Value = serde_json::from_str(&captured).unwrap();
+    let system = body["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
+    assert!(system.contains("Genderless Mode"), "was: {system}");
+    assert!(system.contains("(translation-prompt v1)"), "was: {system}");
+    assert_eq!(body["messages"][1]["content"], "Vertin picks up the case");
+
+    // And the loop completed with the engine's answer from the golden body.
+    match next_event(&mut events).await {
+        LoopEvent::Translated {
+            translation,
+            via,
+            ..
+        } => {
+            assert_eq!(translation, "สวัสดีชาวโลก");
+            assert_eq!(via, Via::Engine);
         }
         other => panic!("expected Translated, got {other:?}"),
     }

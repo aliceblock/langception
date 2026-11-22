@@ -14,4 +14,6 @@ reqwest = { version = "0.13", features = ["query"] }
 tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+# "net" + "io-util" drive the fake HTTP engine of the prompt-seam tests
+# (a localhost server that captures the adapter's request bodies).
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net", "io-util"] }

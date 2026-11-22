@@ -159,6 +159,28 @@ pub trait OcrEngine: Send + Sync {
     ) -> Result<Vec<TextBlock>, OcrError>;
 }
 
+/// Extra instructions an LLM-backed engine folds into its prompt (ticket
+/// 11): the Glossary entries relevant to the Text Block being translated,
+/// and whether Genderless Mode is on. The orchestrator computes both per
+/// block; non-LLM engines ignore it ([`TranslateEngine::translate_guided`]'s
+/// default), keyed/MT engines translate the bare text as before.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TranslationGuidance {
+    /// `(source term, thai)` pairs whose term occurs in the block's text,
+    /// already filtered by the caller (empty = nothing to inject).
+    pub glossary: Vec<(String, String)>,
+    /// Genderless Mode (CONTEXT.md) is on: the prompt must ask for Thai
+    /// that carries no speaker gender.
+    pub genderless: bool,
+}
+
+impl TranslationGuidance {
+    /// No glossary entries, Genderless off — the plain-translation request.
+    pub fn plain() -> Self {
+        Self::default()
+    }
+}
+
 /// A pluggable component that translates text from a Source Language to a target.
 #[async_trait]
 pub trait TranslateEngine: Send + Sync {
@@ -168,6 +190,22 @@ pub trait TranslateEngine: Send + Sync {
         source: SourceLanguage,
         target: &str,
     ) -> Result<String, TranslateError>;
+
+    /// [`Self::translate`] with per-block LLM guidance (ticket 11): LLM
+    /// engines fold `guidance` into their prompt (glossary injection +
+    /// genderless instruction, [`crate::prompt`]); every other engine keeps
+    /// this default, which discards the guidance and translates the bare
+    /// text — so existing engines and test fakes need no changes.
+    async fn translate_guided(
+        &self,
+        text: &str,
+        source: SourceLanguage,
+        target: &str,
+        guidance: &TranslationGuidance,
+    ) -> Result<String, TranslateError> {
+        let _ = guidance;
+        self.translate(text, source, target).await
+    }
 
     /// Display name of the engine (privacy badge, Engines tab).
     fn name(&self) -> &str {

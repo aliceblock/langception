@@ -1,7 +1,8 @@
 //! The translation loop: capture → change detection → OCR → Excluded Block
 //! filter → per-block stability window → glossary short-circuit → translate
-//! → genderless scrub (ticket 08) → events, across every active Capture
-//! Zone.
+//! (LLM engines get per-block prompt guidance: relevant Glossary entries +
+//! the Genderless instruction, ticket 11) → genderless scrub (ticket 08) →
+//! events, across every active Capture Zone.
 //!
 //! All collaborators are ports (`capture`, `ocr`, `translate`, `clock`) plus
 //! the watched zone list, the paused flag, and the active Excluded Blocks,
@@ -563,27 +564,43 @@ impl Orchestrator {
         let screen_block = screen_block(rect, region);
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
-            None => self
-                .translate
-                .translate(
-                    text,
-                    self.config.source_language,
-                    crate::ports::TARGET_LANGUAGE,
-                )
-                .await
-                .map(|thai| {
-                    // Genderless Mode (ticket 08): engine output is
-                    // scrubbed before display; the glossary path above
-                    // short-circuits past this — a pinned translation is
-                    // the user's own Thai, never rewritten.
-                    let thai = if self.config.genderless {
-                        crate::genderless::scrub(&thai)
-                    } else {
-                        thai
-                    };
-                    (thai, Via::Engine)
-                })
-                .map_err(|e| e.message),
+            None => {
+                // LLM guidance (ticket 11): the Glossary entries whose term
+                // occurs in this block ride in the prompt so in-sentence
+                // names translate per the Glossary, and Genderless Mode
+                // rides as a prompt instruction for LLM engines. Non-LLM
+                // engines discard the guidance (the port's default) and
+                // keep relying on the output scrub below.
+                let guidance = crate::ports::TranslationGuidance {
+                    glossary: self.glossary.relevant_entries(text),
+                    genderless: self.config.genderless,
+                };
+                self.translate
+                    .translate_guided(
+                        text,
+                        self.config.source_language,
+                        crate::ports::TARGET_LANGUAGE,
+                        &guidance,
+                    )
+                    .await
+                    .map(|thai| {
+                        // Genderless Mode (ticket 08): engine output is
+                        // scrubbed before display; the glossary path above
+                        // short-circuits past this — a pinned translation is
+                        // the user's own Thai, never rewritten. The prompt
+                        // instruction (above) is the LLM mechanism; this
+                        // rule-based scrub stays as the belt-and-braces
+                        // guarantee for every engine (it is a no-op on
+                        // already-genderless text).
+                        let thai = if self.config.genderless {
+                            crate::genderless::scrub(&thai)
+                        } else {
+                            thai
+                        };
+                        (thai, Via::Engine)
+                    })
+                    .map_err(|e| e.message)
+            }
         };
         match translated {
             Ok((translation, via)) => {

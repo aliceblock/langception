@@ -10,6 +10,7 @@
 use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, TextStyle};
 use langception_core::deepl::DeepLTranslateEngine;
+use langception_core::gemini::GeminiEngine;
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
 use langception_core::openai::{GENERIC_LABEL, LM_STUDIO_LABEL, OpenAiCompatibleEngine};
@@ -1174,6 +1175,27 @@ pub(crate) fn build_translate_engine(
                     LM_STUDIO_LABEL,
                 )
                 .map_err(|e| format!("failed to initialize LM Studio engine: {e}"))?,
+            ))
+        }
+        "gemini" => {
+            let gemini = &config.engines.gemini;
+            let key = gemini.api_key.trim();
+            if key.is_empty() {
+                return Err(
+                    "Gemini engine selected, but no API key is set — add one in Settings → Engines"
+                        .into(),
+                );
+            }
+            let model = gemini.model.trim();
+            if model.is_empty() {
+                return Err(
+                    "Gemini engine selected, but no model is set — type one in Settings → Engines"
+                        .into(),
+                );
+            }
+            Ok(Arc::new(
+                GeminiEngine::new(key, model, gemini.temperature)
+                    .map_err(|e| format!("failed to initialize Gemini engine: {e}"))?,
             ))
         }
         other => Err(format!("unknown engine \"{other}\"")),

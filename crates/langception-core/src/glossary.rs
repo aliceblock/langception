@@ -8,6 +8,31 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// Whether `needle` (lowercased) occurs in `haystack` (lowercased chars) at
+/// a word edge — the injection rule of [`Glossary::relevant_entries`]. A
+/// match glued to an ASCII letter/digit/underscore is inside a different
+/// word and does not count; anything else (space, punctuation, start/end,
+/// or a character from a script without word separation) does.
+fn contains_at_word_edge(haystack: &[char], needle: &str) -> bool {
+    let needle: Vec<char> = needle.chars().collect();
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return false;
+    }
+    let is_word_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    for start in 0..=haystack.len().saturating_sub(needle.len()) {
+        if haystack[start..start + needle.len()] != needle[..] {
+            continue;
+        }
+        let glued_before = start > 0 && is_word_char(haystack[start - 1]);
+        let end = start + needle.len();
+        let glued_after = end < haystack.len() && is_word_char(haystack[end]);
+        if !glued_before && !glued_after {
+            return true;
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Glossary(#[serde(default)] pub BTreeMap<String, String>);
 
@@ -43,6 +68,33 @@ impl Glossary {
                 .0
                 .keys()
                 .any(|key| key.trim().eq_ignore_ascii_case(&wanted))
+    }
+
+    /// The entries whose source term occurs anywhere in `block_text`
+    /// (trimmed, case-insensitive) — the LLM prompt injection set (ticket
+    /// 11): when an LLM engine translates the block, these ride in the
+    /// prompt so in-sentence names come back per the Glossary even though
+    /// the block is not an exact match (whole-block matches never reach
+    /// here; they short-circuit the engine entirely). Ordered by term (the
+    /// map's own order), so prompts are deterministic.
+    ///
+    /// Matching is at word edges for space-delimited scripts: a match
+    /// glued to ASCII letters/digits is part of a DIFFERENT word ("Son"
+    /// inside "Person" must not inject a pinned translation into an
+    /// unrelated word). Scripts without word separation (Thai, Japanese,
+    /// Chinese — the Source Languages) match as substrings: their
+    /// characters are morphemes, there are no spaces to bound with, and a
+    /// substring hit is the word.
+    pub fn relevant_entries(&self, block_text: &str) -> Vec<(String, String)> {
+        let haystack: Vec<char> = block_text.to_lowercase().chars().collect();
+        self.0
+            .iter()
+            .filter(|(term, _)| {
+                let term = term.trim();
+                !term.is_empty() && contains_at_word_edge(&haystack, &term.to_lowercase())
+            })
+            .map(|(term, thai)| (term.trim().to_string(), thai.clone()))
+            .collect()
     }
 
     /// Inserts or updates one entry (both sides trimmed). Returns whether
@@ -260,6 +312,105 @@ mod tests {
         assert_eq!(g.lookup("vertin"), Some("new".to_string()));
         assert_eq!(g.lookup("keep"), Some("keep".to_string()));
         assert_eq!(g.0.len(), 3);
+    }
+
+    // ---- In-sentence relevance (LLM prompt injection, ticket 11) ----
+
+    #[test]
+    fn relevant_entries_find_terms_inside_a_sentence() {
+        let g = glossary(&[("Vertin", "เวอร์ติน")]);
+        assert_eq!(
+            g.relevant_entries("Vertin picks up the case"),
+            vec![("Vertin".to_string(), "เวอร์ติน".to_string())]
+        );
+    }
+
+    #[test]
+    fn relevant_entries_match_case_insensitively() {
+        let g = glossary(&[("Vertin", "เวอร์ติน")]);
+        assert_eq!(
+            g.relevant_entries("VERTIN PICKS UP THE CASE").len(),
+            1,
+            "case differences must not hide a relevant term"
+        );
+    }
+
+    #[test]
+    fn relevant_entries_return_only_the_terms_that_appear() {
+        let g = glossary(&[("Vertin", "เวอร์ติน"), ("Regulus", "เรกุลุส"), ("Sonetto", "โซเน็ตโต")]);
+        assert_eq!(
+            g.relevant_entries("Regulus glares at Sonetto"),
+            vec![
+                ("Regulus".to_string(), "เรกุลุส".to_string()),
+                ("Sonetto".to_string(), "โซเน็ตโต".to_string()),
+            ],
+            "map order (alphabetical) keeps prompts deterministic"
+        );
+    }
+
+    #[test]
+    fn block_without_any_term_has_no_relevant_entries() {
+        let g = glossary(&[("Vertin", "เวอร์ติน")]);
+        assert!(g.relevant_entries("Pay 500 gold").is_empty());
+        assert!(g.relevant_entries("").is_empty());
+    }
+
+    #[test]
+    fn relevant_entries_skip_empty_terms_and_trim_themselves() {
+        let g = glossary(&[("  Vertin  ", "เวอร์ติน")]);
+        assert_eq!(
+            g.relevant_entries("well, Vertin again"),
+            vec![("Vertin".to_string(), "เวอร์ติน".to_string())],
+            "the prompt sees the trimmed term, never padded whitespace"
+        );
+    }
+
+    #[test]
+    fn non_latin_terms_are_found_in_sentence() {
+        let g = glossary(&[("勇者", "ผู้กล้า")]);
+        assert_eq!(
+            g.relevant_entries("その勇者は強い"),
+            vec![("勇者".to_string(), "ผู้กล้า".to_string())]
+        );
+    }
+
+    #[test]
+    fn terms_glued_into_a_larger_word_do_not_inject() {
+        // "Son" inside "Person" is a different word — injecting a pinned
+        // translation for it would corrupt the sentence.
+        let g = glossary(&[("Son", "ลูกชาย")]);
+        assert!(g.relevant_entries("Person arrives").is_empty());
+        assert!(g.relevant_entries("Sonetto picks up the case").is_empty());
+        assert!(g.relevant_entries("the Sonnet").is_empty());
+        // Numbers and underscore glue too ("V2" inside "V25").
+        assert!(glossary(&[("V2", "วีสอง")])
+            .relevant_entries("route V25")
+            .is_empty());
+    }
+
+    #[test]
+    fn the_standalone_word_still_injects() {
+        let g = glossary(&[("Son", "ลูกชาย")]);
+        assert_eq!(
+            g.relevant_entries("Son speaks"),
+            vec![("Son".to_string(), "ลูกชาย".to_string())]
+        );
+        // Punctuation counts as an edge.
+        assert_eq!(
+            g.relevant_entries("(Son), please"),
+            vec![("Son".to_string(), "ลูกชาย".to_string())]
+        );
+    }
+
+    #[test]
+    fn thai_terms_match_as_substrings_no_word_edges_exist() {
+        // Thai writes clauses fused: a Thai term inside Thai text cannot be
+        // boundary-checked (no spaces), so the substring IS the match.
+        let g = glossary(&[("ไปกิน", "ไปกินข้าว")]);
+        assert_eq!(
+            g.relevant_entries("ฉันไปกินแล้ว"),
+            vec![("ไปกิน".to_string(), "ไปกินข้าว".to_string())]
+        );
     }
 
     // ---- JSON import/export (spec: backup and share term lists) ----

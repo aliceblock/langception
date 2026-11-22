@@ -11,7 +11,8 @@
 //! `fixtures/openai/` (no network in tests). Live servers are covered by a
 //! manual smoke checklist.
 
-use crate::ports::{SourceLanguage, TranslateEngine, TranslateError};
+use crate::ports::{SourceLanguage, TranslateEngine, TranslateError, TranslationGuidance};
+use crate::prompt;
 use async_trait::async_trait;
 use std::time::Duration;
 
@@ -51,40 +52,22 @@ pub fn is_local_url(base_url: &str) -> bool {
 
 /// Builds the chat request's `messages` array — pure so the prompt is
 /// testable offline. The system prompt pins the contract (translate only,
-/// keep formatting); the user message carries the screen text.
-pub fn translation_messages(text: &str, source: SourceLanguage, target: &str) -> Vec<serde_json::Value> {
+/// keep formatting) and carries the per-block guidance (Glossary injection,
+/// Genderless Mode — [`crate::prompt`] is the single versioned template);
+/// the user message carries the screen text.
+pub fn translation_messages(
+    text: &str,
+    source: SourceLanguage,
+    target: &str,
+    guidance: &TranslationGuidance,
+) -> Vec<serde_json::Value> {
     vec![
         serde_json::json!({
             "role": "system",
-            "content": format!(
-                "You are a translation engine. Translate the user's text from {source} to {target}. \
-                 Reply with ONLY the translation — no explanations, no quotes around it, no notes. \
-                 Preserve line breaks and surrounding whitespace. If the text is already in {target}, \
-                 repeat it unchanged.",
-                source = source_name(source),
-                target = target_name(target),
-            ),
+            "content": prompt::system_prompt(source, target, guidance),
         }),
         serde_json::json!({ "role": "user", "content": text }),
     ]
-}
-
-/// Language names for the prompt — models follow names better than ISO
-/// codes, and "th" alone reads ambiguous.
-pub fn source_name(source: SourceLanguage) -> &'static str {
-    match source {
-        SourceLanguage::En => "English",
-        SourceLanguage::Ja => "Japanese",
-        SourceLanguage::Zh => "Chinese",
-        SourceLanguage::Ko => "Korean",
-    }
-}
-
-pub fn target_name(target: &str) -> String {
-    match target {
-        "th" => "Thai".to_string(),
-        other => other.to_string(),
-    }
 }
 
 /// Builds the chat-completions request body: the chosen model, the
@@ -96,12 +79,13 @@ pub fn request_body(
     text: &str,
     source: SourceLanguage,
     target: &str,
+    guidance: &TranslationGuidance,
 ) -> String {
     serde_json::json!({
         "model": model,
         "temperature": temperature,
         "stream": false,
-        "messages": translation_messages(text, source, target),
+        "messages": translation_messages(text, source, target, guidance),
     })
     .to_string()
 }
@@ -285,21 +269,22 @@ impl OpenAiCompatibleEngine {
         let body = self.get_models().await?;
         parse_models_response(&body)
     }
-}
 
-#[async_trait]
-impl TranslateEngine for OpenAiCompatibleEngine {
-    async fn translate(
+    /// One chat-completions round trip — the request side both port methods
+    /// share. `guidance` shapes the system prompt only for LLM concerns;
+    /// with [`TranslationGuidance::plain`] it is the ticket-10 request.
+    async fn chat(
         &self,
         text: &str,
         source: SourceLanguage,
         target: &str,
+        guidance: &TranslationGuidance,
     ) -> Result<String, TranslateError> {
         let mut request = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .header("Content-Type", "application/json")
-            .body(request_body(&self.model, self.temperature, text, source, target));
+            .body(request_body(&self.model, self.temperature, text, source, target, guidance));
         if let Some((name, value)) = self.auth_header() {
             request = request.header(name, value);
         }
@@ -324,6 +309,31 @@ impl TranslateEngine for OpenAiCompatibleEngine {
             return Err(classify_error(status.as_u16(), &body));
         }
         parse_chat_completion(&body)
+    }
+}
+
+#[async_trait]
+impl TranslateEngine for OpenAiCompatibleEngine {
+    async fn translate(
+        &self,
+        text: &str,
+        source: SourceLanguage,
+        target: &str,
+    ) -> Result<String, TranslateError> {
+        self.chat(text, source, target, &TranslationGuidance::plain())
+            .await
+    }
+
+    /// LLM engine (ticket 11): the block's relevant Glossary entries and
+    /// the Genderless flag ride in the system prompt.
+    async fn translate_guided(
+        &self,
+        text: &str,
+        source: SourceLanguage,
+        target: &str,
+        guidance: &TranslationGuidance,
+    ) -> Result<String, TranslateError> {
+        self.chat(text, source, target, guidance).await
     }
 
     /// The privacy badge names this engine while it is active.
@@ -371,7 +381,14 @@ mod tests {
 
     #[test]
     fn body_carries_model_temperature_and_two_messages() {
-        let body = request_body("gpt-4o-mini", 0.2, "Pay 500 gold", SourceLanguage::En, "th");
+        let body = request_body(
+            "gpt-4o-mini",
+            0.2,
+            "Pay 500 gold",
+            SourceLanguage::En,
+            "th",
+            &TranslationGuidance::plain(),
+        );
         let value: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(value["model"], "gpt-4o-mini");
         assert_eq!(value["temperature"], 0.2);
@@ -385,7 +402,7 @@ mod tests {
 
     #[test]
     fn system_prompt_names_both_languages() {
-        let messages = translation_messages("สวัสดี", SourceLanguage::Ja, "th");
+        let messages = translation_messages("สวัสดี", SourceLanguage::Ja, "th", &TranslationGuidance::plain());
         let prompt = messages[0]["content"].as_str().unwrap();
         assert!(prompt.contains("Japanese"), "was: {prompt}");
         assert!(prompt.contains("Thai"), "was: {prompt}");
@@ -393,10 +410,44 @@ mod tests {
 
     #[test]
     fn chinese_source_maps_to_chinese_in_the_prompt() {
-        let messages = translation_messages("你好", SourceLanguage::Zh, "th");
+        let messages = translation_messages("你好", SourceLanguage::Zh, "th", &TranslationGuidance::plain());
         assert!(
             messages[0]["content"].as_str().unwrap().contains("Chinese"),
             "zh must say Chinese, not the code"
+        );
+    }
+
+    // ---- Prompt guidance (ticket 11) ----
+
+    use crate::test_support::guided;
+
+    #[test]
+    fn glossary_guidance_rides_in_the_system_message() {
+        let messages = translation_messages(
+            "Vertin picks up the case",
+            SourceLanguage::En,
+            "th",
+            &guided(&[("Vertin", "เวอร์ติน")], false),
+        );
+        let prompt = messages[0]["content"].as_str().unwrap();
+        assert!(prompt.contains("- Vertin → เวอร์ติน"), "was: {prompt}");
+        // The user message stays the bare screen text — the glossary is
+        // instructions, not a rewrite of what is being translated.
+        assert_eq!(messages[1]["content"], "Vertin picks up the case");
+    }
+
+    #[test]
+    fn genderless_guidance_rides_in_the_system_message() {
+        let on = translation_messages("Hello", SourceLanguage::En, "th", &guided(&[], true));
+        assert!(
+            on[0]["content"].as_str().unwrap().contains("Genderless Mode"),
+            "was: {}",
+            on[0]["content"].as_str().unwrap()
+        );
+        let off = translation_messages("Hello", SourceLanguage::En, "th", &TranslationGuidance::plain());
+        assert!(
+            !off[0]["content"].as_str().unwrap().contains("Genderless Mode"),
+            "mode off must not mention it"
         );
     }
 
