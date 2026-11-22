@@ -39,6 +39,7 @@ const DEFAULT_STYLE = {
   autoColors: false,
   coverSource: false,
   placement: "over",
+  textAlignment: "left",
 };
 
 let style = { ...DEFAULT_STYLE };
@@ -95,16 +96,15 @@ function applyStyleTo(entry) {
   // Block instead of shrink-wrapping the text, so the original is
   // dressed over. The negative margin shifts the pill out by the same
   // pad the min width/height add, so it spans the block rect plus a
-  // small border; the text centers inside it. Sampled pill colors (Auto
-  // Colors above) apply to the stretched shape unchanged. It lives here,
-  // not in the shared technique, because it needs this block's geometry.
+  // small border. Sampled pill colors (Auto Colors above) apply to the
+  // stretched shape unchanged. The size lives here — it needs this
+  // block's geometry — while the inside of the stretch (flex row,
+  // vertical centering, Text Alignment, ticket 36) comes from the shared
+  // technique above.
   if (s.background && s.coverSource) {
     entry.el.style.margin = -COVER_PAD_PX + "px";
     entry.el.style.minWidth = entry.boxW + COVER_PAD_PX * 2 + "px";
     entry.el.style.minHeight = entry.boxH + COVER_PAD_PX * 2 + "px";
-    entry.el.style.display = "flex";
-    entry.el.style.alignItems = "center";
-    entry.el.style.justifyContent = "center";
   }
 }
 

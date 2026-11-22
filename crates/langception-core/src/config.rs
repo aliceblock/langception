@@ -84,6 +84,12 @@ pub struct TextStyle {
     /// each pill's position from the block's rect, so a change restyles
     /// live without a loop restart, and Cover Source overrides it.
     pub placement: Placement,
+    /// Text Alignment (ticket 36, CONTEXT.md): where the translated text
+    /// sits horizontally inside a Cover Source pill — [`TextAlignment::Left`]
+    /// (the default), [`TextAlignment::Center`], or [`TextAlignment::Right`].
+    /// Only means anything while `cover_source` is on (a hug-the-text pill
+    /// has nothing to align within); display-only like Placement.
+    pub text_alignment: TextAlignment,
 }
 
 impl Default for TextStyle {
@@ -99,6 +105,7 @@ impl Default for TextStyle {
             auto_colors: false,
             cover_source: false,
             placement: Placement::Over,
+            text_alignment: TextAlignment::Left,
         }
     }
 }
@@ -157,6 +164,54 @@ impl std::fmt::Display for Placement {
             Placement::Above => "Above",
             Placement::Below => "Below",
             Placement::Beside => "Beside",
+        })
+    }
+}
+
+/// Where the translated text sits horizontally inside a Cover Source pill
+/// (ticket 36, CONTEXT.md "Text Alignment"): [`TextAlignment::Left`] (the
+/// default), [`TextAlignment::Center`], or [`TextAlignment::Right`]. Only
+/// means anything while Cover Source is on — a hugging pill wraps the text,
+/// so there is nothing to align within. Display-only like Placement: the
+/// restyle broadcast applies it live, no loop restart.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
+impl TextAlignment {
+    /// The config-file / settings-surface spelling.
+    pub fn code(self) -> &'static str {
+        match self {
+            TextAlignment::Left => "left",
+            TextAlignment::Center => "center",
+            TextAlignment::Right => "right",
+        }
+    }
+
+    /// Parses [`TextAlignment::code`] output; `None` for anything else, so
+    /// an unknown hand-edited name can be rejected with a visible error.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "left" => Some(TextAlignment::Left),
+            "center" => Some(TextAlignment::Center),
+            "right" => Some(TextAlignment::Right),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TextAlignment {
+    /// The UI label.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            TextAlignment::Left => "Left",
+            TextAlignment::Center => "Center",
+            TextAlignment::Right => "Right",
         })
     }
 }
@@ -870,6 +925,10 @@ auto_colors = false
 # "below" it, or "beside" it (right of the block; near the screen edge it
 # flips left). Applies live; cover_source above wins when both are on.
 placement = "over"
+# Text Alignment (CONTEXT.md): where the translated text sits horizontally
+# inside a Cover Source pill — "left" (the default), "center", or "right".
+# Only means anything while cover_source above is on. Applies live.
+text_alignment = "left"
 
 [hotkeys]
 # Global hotkeys, rebindable. Format: modifiers + key, e.g. "Alt+T",
@@ -1016,7 +1075,8 @@ language = "en"
             .replace("background_opacity = 0.6", "background_opacity = 0.25")
             .replace("cover_source = false", "cover_source = true")
             .replace("auto_colors = false", "auto_colors = true")
-            .replace("placement = \"over\"", "placement = \"beside\"");
+            .replace("placement = \"over\"", "placement = \"beside\"")
+            .replace("text_alignment = \"left\"", "text_alignment = \"right\"");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(
             config.text_style,
@@ -1031,6 +1091,7 @@ language = "en"
                 auto_colors: true,
                 cover_source: true,
                 placement: Placement::Beside,
+                text_alignment: TextAlignment::Right,
             }
         );
 
@@ -1128,6 +1189,70 @@ language = "en"
             assert_eq!(placement.to_string(), label);
         }
         assert_eq!(Placement::from_code("diagonal"), None);
+    }
+
+    #[test]
+    fn text_alignment_defaults_to_left_for_configs_written_before_it() {
+        // A pre-ticket-36 config has no `text_alignment` key; serde's
+        // container default must fill it in (Left) rather than reject the
+        // file — even though Center was the old Cover Source rendering,
+        // the ticket pins Left as the new default.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("text_alignment"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.text_style.text_alignment, TextAlignment::Left);
+        assert_eq!(config.text_style, TextStyle::default());
+    }
+
+    #[test]
+    fn text_alignment_roundtrips_through_toml() {
+        for (code, expected) in [
+            ("left", TextAlignment::Left),
+            ("center", TextAlignment::Center),
+            ("right", TextAlignment::Right),
+        ] {
+            let text = AppConfig::DEFAULT_TEMPLATE.replace(
+                "text_alignment = \"left\"",
+                &format!("text_alignment = \"{code}\""),
+            );
+            let config = AppConfig::from_toml_str(&text).unwrap();
+            assert_eq!(config.text_style.text_alignment, expected, "{code} parses");
+
+            let serialized = config.to_toml_string().unwrap();
+            assert!(
+                serialized.contains(&format!("text_alignment = \"{code}\"")),
+                "the alignment stays a hand-editable TOML string: {serialized}"
+            );
+            assert_eq!(config, AppConfig::from_toml_str(&serialized).unwrap());
+        }
+    }
+
+    #[test]
+    fn unknown_text_alignment_is_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("text_alignment = \"left\"", "text_alignment = \"middle\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("text_alignment"), "was: {err}");
+    }
+
+    #[test]
+    fn text_alignment_codes_and_display_labels_roundtrip() {
+        // `code` is the config-file spelling, `Display` the UI label; each
+        // variant's code parses back to itself.
+        for (alignment, code, label) in [
+            (TextAlignment::Left, "left", "Left"),
+            (TextAlignment::Center, "center", "Center"),
+            (TextAlignment::Right, "right", "Right"),
+        ] {
+            assert_eq!(alignment.code(), code);
+            assert_eq!(TextAlignment::from_code(code), Some(alignment));
+            assert_eq!(alignment.to_string(), label);
+        }
+        assert_eq!(TextAlignment::from_code("middle"), None);
+        assert_eq!(TextAlignment::from_code("justify"), None);
     }
 
     #[test]

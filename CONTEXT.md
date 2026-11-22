@@ -52,6 +52,10 @@ _Avoid_: offset, position mode, anchor
 A Text Style setting that stretches the pill over the whole Text Block instead of hugging the translated text. Takes precedence over Placement when both are on.
 _Avoid_: full background, block background
 
+**Text Alignment**:
+A Text Style setting that aligns translated text horizontally inside a Cover Source pill: Left (default), Center, or Right.
+_Avoid_: justify, text position
+
 **Adjust Mode**:
 A hotkey-toggled state in which Capture Zones and overlays become draggable/resizable instead of click-through.
 _Avoid_: edit mode, config mode

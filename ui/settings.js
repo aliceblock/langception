@@ -1002,6 +1002,8 @@ const styleOutlineColor = document.getElementById("style-outline-color");
 const styleBackground = document.getElementById("style-background");
 const styleOpacity = document.getElementById("style-opacity");
 const styleCoverSource = document.getElementById("style-cover-source");
+const styleAlignmentRow = document.getElementById("style-alignment-row");
+const styleTextAlignment = document.getElementById("style-text-alignment");
 const stylePlacement = document.getElementById("style-placement");
 let styleLoaded = false;
 let styleSaveTimer = null;
@@ -1029,7 +1031,17 @@ function loadStyleInputs(style) {
   styleBackground.checked = style.background;
   styleOpacity.value = style.backgroundOpacity;
   styleCoverSource.checked = style.coverSource;
+  styleTextAlignment.value = style.textAlignment || "left";
+  updateAlignmentRowVisibility();
   stylePlacement.value = style.placement || "over";
+}
+
+// Text Alignment (ticket 36) only means anything inside a Cover Source
+// pill, so the selector is shown only while Cover Source is checked. The
+// stored value stays put either way — unticking Cover Source never loses
+// the chosen alignment.
+function updateAlignmentRowVisibility() {
+  styleAlignmentRow.classList.toggle("hidden", !styleCoverSource.checked);
 }
 
 function collectStyle() {
@@ -1043,6 +1055,7 @@ function collectStyle() {
     background: styleBackground.checked,
     backgroundOpacity: Number(styleOpacity.value) || 0,
     coverSource: styleCoverSource.checked,
+    textAlignment: styleTextAlignment.value,
     placement: stylePlacement.value,
   };
 }
@@ -1050,11 +1063,15 @@ function collectStyle() {
 // Exact live preview (ticket 26): collectStyle() is the single source of
 // truth — the exact object a save would store — pushed through the
 // overlay's shared pill renderer (pill-style.js), so the preview cannot
-// drift from what the In-place Overlay draws. Geometry (Placement, Cover
-// Source stretch) is out of scope: it depends on each block's source rect,
-// which settings does not have. Auto Colors sampling needs capture data,
-// so the manual colors — the documented fallback — always show; the note
-// under the pill says so while Auto Colors is on.
+// drift from what the In-place Overlay draws. Block geometry (Placement)
+// is out of scope: it depends on each block's source rect, which settings
+// does not have. With Cover Source on (ticket 36) the preview box stands
+// in for the Text Block: the pill stretches across it so the Text
+// Alignment inside shows exactly as the overlay draws it — the size is
+// preview geometry, the inside layout is the shared technique. Auto
+// Colors sampling needs capture data, so the manual colors — the
+// documented fallback — always show; the note under the pill says so
+// while Auto Colors is on.
 const stylePreviewPill = document.getElementById("style-preview-pill");
 const stylePreviewText = document.getElementById("style-preview-text");
 const stylePreviewNote = document.getElementById("style-preview-note");
@@ -1062,6 +1079,13 @@ const stylePreviewNote = document.getElementById("style-preview-note");
 function updateStylePreview() {
   const style = collectStyle();
   applyPillStyle(stylePreviewPill, style, null);
+  if (style.background && style.coverSource) {
+    stylePreviewPill.style.width = "100%";
+    stylePreviewPill.style.maxWidth = "none";
+  } else {
+    stylePreviewPill.style.width = "";
+    stylePreviewPill.style.maxWidth = "";
+  }
   // The overlay's fitText always sets the size explicitly on the text
   // element; the preview does the same, at the configured size.
   stylePreviewText.style.fontSize = style.fontSize + "px";
@@ -1081,7 +1105,7 @@ function scheduleStyleSave() {
   }, 250);
 }
 
-for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity, styleCoverSource, stylePlacement]) {
+for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity, styleCoverSource, styleTextAlignment, stylePlacement]) {
   // The preview repaints instantly from the in-form values; the save to
   // config.toml stays debounced behind it.
   control.addEventListener("input", updateStylePreview);
@@ -1095,6 +1119,12 @@ for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleO
 styleAutoColors.addEventListener("change", () => {
   styleColor.disabled = styleAutoColors.checked;
 });
+
+// The alignment selector lives in the Cover Source context: it appears
+// only while Cover Source is checked (the preview restyles via the
+// shared listeners above, since the row's visibility does not change the
+// collected style).
+styleCoverSource.addEventListener("change", updateAlignmentRowVisibility);
 
 // Font selector (ticket 15): the dropdown lists the fonts actually installed
 // on this PC (DirectWrite), while the field stays typeable so a hand-edited

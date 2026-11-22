@@ -9,7 +9,8 @@
 
 use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{
-    AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextStyle, WindowSettings,
+    AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextAlignment, TextStyle,
+    WindowSettings,
 };
 use langception_core::deepl::DeepLTranslateEngine;
 use langception_core::fused::{GeminiFusedEngine, OpenAiFusedEngine};
@@ -208,6 +209,9 @@ pub struct TextStyleDto {
     /// Placement (ticket 25): "over" | "below" | "beside" — where the
     /// translated pill sits relative to its Text Block.
     pub placement: String,
+    /// Text Alignment (ticket 36): "left" | "center" | "right" — where the
+    /// translated text sits inside a Cover Source pill.
+    pub text_alignment: String,
 }
 
 impl From<&TextStyle> for TextStyleDto {
@@ -223,6 +227,7 @@ impl From<&TextStyle> for TextStyleDto {
             auto_colors: style.auto_colors,
             cover_source: style.cover_source,
             placement: style.placement.code().to_string(),
+            text_alignment: style.text_alignment.code().to_string(),
         }
     }
 }
@@ -242,6 +247,7 @@ impl From<TextStyleDto> for TextStyle {
             // set_text_style rejects unknown codes before this conversion
             // runs; the fallback only keeps the conversion total.
             placement: Placement::from_code(dto.placement.trim()).unwrap_or_default(),
+            text_alignment: TextAlignment::from_code(dto.text_alignment.trim()).unwrap_or_default(),
         }
     }
 }
@@ -2663,6 +2669,13 @@ fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
         return Err(format!(
             "placement \"{}\" is unknown — placements: over, above, below, beside",
             style.placement.trim()
+        ));
+    }
+    // Same for an unknown alignment (ticket 36).
+    if TextAlignment::from_code(style.text_alignment.trim()).is_none() {
+        return Err(format!(
+            "text_alignment \"{}\" is unknown — alignments: left, center, right",
+            style.text_alignment.trim()
         ));
     }
     let text_style = TextStyle::from(style);

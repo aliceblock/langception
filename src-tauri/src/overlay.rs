@@ -264,6 +264,10 @@ struct StylePayload<'a> {
     /// sits relative to its source Text Block rect. Display-only geometry
     /// like `cover_source`, which wins over it when both are on.
     placement: &'a str,
+    /// Text Alignment (ticket 36): "left" | "center" | "right" — where the
+    /// translated text sits inside a Cover Source pill. Display-only like
+    /// `placement`.
+    text_alignment: &'a str,
 }
 
 impl<'a> From<&'a TextStyle> for StylePayload<'a> {
@@ -279,6 +283,7 @@ impl<'a> From<&'a TextStyle> for StylePayload<'a> {
             auto_colors: style.auto_colors,
             cover_source: style.cover_source,
             placement: style.placement.code(),
+            text_alignment: style.text_alignment.code(),
         }
     }
 }
