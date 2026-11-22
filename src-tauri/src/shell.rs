@@ -11,7 +11,8 @@ use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, TextStyle
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
 use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, SystemClock};
-use langception_core::ports::{ExcludedBlock, Region, Zone, TARGET_LANGUAGE};
+use langception_core::ports::{ExcludedBlock, Region, SourceLanguage, Zone, TARGET_LANGUAGE};
+use langception_core::profile::{GenderlessOverride, Profile, ProfileZone};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -36,12 +37,16 @@ const FULLSCREEN_ZONE_ID: &str = "fullscreen";
 const FULLSCREEN_ZONE_NAME: &str = "Full screen";
 
 /// What the picker overlay was opened for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum PickerMode {
     /// Drag creates a persistent Capture Zone.
     Zone,
     /// Drag runs a single OCR+translate pass (One-shot Capture).
     OneShot,
+    /// Drag adds a window-relative Capture Zone to the named Profile's app
+    /// (ticket 07): the rectangle is stored relative to the app's window,
+    /// so it follows the window around the screen.
+    ProfileZone { profile_id: String },
 }
 
 /// What the Results Window needs to show: loop state, the capture target
@@ -82,6 +87,11 @@ pub struct Status {
     /// Whether Langception launches at Windows sign-in (OS-managed, not in
     /// config.toml).
     pub start_with_windows: bool,
+    /// The per-app Profiles (ticket 07), with an `active` flag on each.
+    pub profiles: Vec<ProfileStatus>,
+    /// The id of the Profile currently matched to the foreground app, or
+    /// `None` while the global fallback target applies.
+    pub active_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +120,35 @@ pub struct ExcludedStatus {
     pub id: String,
     pub monitor: String,
     pub label: String,
+    pub region: String,
+}
+
+/// One per-app Profile (ticket 07), as the Settings → Profiles tab reads
+/// and writes it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileStatus {
+    pub id: String,
+    pub name: String,
+    pub exe: String,
+    pub language: String,
+    /// The Profile's engine choice; `None` = inherit the global engine.
+    pub engine: Option<String>,
+    /// "inherit" | "on" | "off".
+    pub genderless: String,
+    pub glossary_terms: usize,
+    pub zones: Vec<ProfileZoneStatus>,
+    /// Whether this Profile is active right now (its app owns the
+    /// foreground window).
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileZoneStatus {
+    pub id: String,
+    pub name: String,
+    /// Window-relative physical px ("x,y width×height").
     pub region: String,
 }
 
@@ -237,6 +276,15 @@ pub(crate) struct AppState {
     /// True when no config file existed at startup (first launch): the
     /// settings window opens straight into the setup wizard.
     pub(crate) first_run: bool,
+    /// The Profile currently matched to the foreground app, by id (`None` =
+    /// the global fallback target). Maintained by the profile watcher and
+    /// recomputed wherever the loop target is pushed; the Status snapshot
+    /// and the profile commands read it.
+    pub(crate) active_profile: Mutex<Option<String>>,
+    /// The active Profile app's foreground window rect as of the last
+    /// target computation — the watcher compares against it to follow
+    /// window moves and resizes.
+    active_window: Mutex<Option<Region>>,
 }
 
 pub fn run() {
@@ -292,6 +340,8 @@ pub fn run() {
             picker_mode: Mutex::new(None),
             cloud_engine: Mutex::new(None),
             first_run,
+            active_profile: Mutex::new(None),
+            active_window: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
@@ -324,6 +374,15 @@ pub fn run() {
             crate::settings::delete_glossary_entry,
             crate::settings::import_glossary,
             crate::settings::export_glossary,
+            crate::settings::list_running_apps,
+            crate::settings::create_profile,
+            crate::settings::update_profile,
+            crate::settings::delete_profile,
+            crate::settings::list_profile_glossary,
+            crate::settings::add_profile_glossary_entry,
+            crate::settings::update_profile_glossary_entry,
+            crate::settings::delete_profile_glossary_entry,
+            crate::settings::delete_profile_zone,
             open_config_folder
         ])
         .on_window_event(|window, event| {
@@ -346,7 +405,9 @@ pub fn run() {
                     api.prevent_close();
                     let app = window.app_handle().clone();
                     spawn_off_main(&app, |app| {
-                        if let Some(window) = app.get_webview_window(crate::settings::SETTINGS_LABEL) {
+                        if let Some(window) =
+                            app.get_webview_window(crate::settings::SETTINGS_LABEL)
+                        {
                             let _ = window.hide();
                         }
                         Ok(())
@@ -366,6 +427,7 @@ pub fn run() {
 
             build_tray(&handle)?;
             install_hotkeys(&handle)?;
+            spawn_profile_watcher(&handle);
 
             if let Some(window) = handle.get_webview_window("results") {
                 // Langception's own windows are never translation sources
@@ -451,8 +513,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let new_zone = MenuItem::with_id(app, "new-zone", "New Capture Zone", true, None::<&str>)?;
     let one_shot = MenuItem::with_id(app, "one-shot", "One-shot Capture", true, None::<&str>)?;
-    let settings_item =
-        MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let open_config =
         MenuItem::with_id(app, "open-config", "Open Config Folder", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -831,6 +892,36 @@ fn status_for(app: &AppHandle) -> Status {
 
     let privacy_engine = state.cloud_engine.lock().unwrap().clone();
     let start_with_windows = app.autolaunch().is_enabled().unwrap_or(false);
+    let active_profile_id = state.active_profile.lock().unwrap().clone();
+    let profiles = match &*state.config.lock().unwrap() {
+        Some(Ok(config)) => config
+            .profiles
+            .iter()
+            .map(|profile| ProfileStatus {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+                exe: profile.exe.clone(),
+                language: profile.language.code().to_string(),
+                engine: profile.engine.clone(),
+                genderless: genderless_code(profile.genderless).to_string(),
+                glossary_terms: profile.glossary.0.len(),
+                zones: profile
+                    .zones
+                    .iter()
+                    .map(|zone| ProfileZoneStatus {
+                        id: zone.id.clone(),
+                        name: zone.name.clone(),
+                        region: format!(
+                            "{},{} {}×{}",
+                            zone.region.x, zone.region.y, zone.region.width, zone.region.height
+                        ),
+                    })
+                    .collect(),
+                active: active_profile_id.as_deref() == Some(profile.id.as_str()),
+            })
+            .collect(),
+        Some(Err(_)) | None => Vec::new(),
+    };
 
     Status {
         running,
@@ -860,11 +951,80 @@ fn status_for(app: &AppHandle) -> Status {
         privacy_engine,
         first_run: state.first_run,
         start_with_windows,
+        profiles,
+        active_profile_id,
+    }
+}
+
+/// The config-file spelling of [`GenderlessOverride`].
+fn genderless_code(override_: GenderlessOverride) -> &'static str {
+    match override_ {
+        GenderlessOverride::Inherit => "inherit",
+        GenderlessOverride::On => "on",
+        GenderlessOverride::Off => "off",
+    }
+}
+
+/// What the loop should watch RIGHT NOW: the active Profile's app-window
+/// target when one matches the foreground window's executable, the global
+/// capture target (zones / full-screen monitor) otherwise. Everything the
+/// pipeline reads at start follows it: Source Language, Glossary layer,
+/// engine choice, Genderless override, Excluded Blocks.
+struct EffectiveTarget {
+    profile_id: Option<String>,
+    /// The matched app's foreground window (screen px); `Some` iff a
+    /// Profile matched.
+    window: Option<Region>,
+    zones: Vec<Zone>,
+    exclusions: Vec<ExcludedBlock>,
+    language: SourceLanguage,
+    glossary: Glossary,
+    /// The Profile's engine choice (`None` = the global engine).
+    engine: Option<String>,
+    /// The effective Genderless Mode. Computed and carried now, but first
+    /// CONSUMED by ticket 08's Thai scrubber (the global toggle lands
+    /// there too — until then the global value is off, and only a
+    /// Profile's explicit "on" turns it on).
+    #[allow(dead_code)]
+    genderless: bool,
+}
+
+/// Computes the target for the current foreground app against `config`.
+fn effective_target(app: &AppHandle, config: &AppConfig) -> EffectiveTarget {
+    let foreground = crate::foreground::foreground_app();
+    let profile = foreground
+        .as_ref()
+        .and_then(|fg| Profile::resolve(&config.profiles, &fg.exe));
+    if let (Some(profile), Some(fg)) = (profile, foreground) {
+        return EffectiveTarget {
+            profile_id: Some(profile.id.clone()),
+            window: Some(fg.rect),
+            zones: profile.capture_zones(fg.rect),
+            // Excluded Blocks are a full-screen-mode concept (CONTEXT.md);
+            // a Profile's window target has none.
+            exclusions: Vec::new(),
+            language: profile.language,
+            glossary: profile.effective_glossary(&config.glossary),
+            engine: profile.engine.clone(),
+            genderless: profile.effective_genderless(false),
+        };
+    }
+    EffectiveTarget {
+        profile_id: None,
+        window: None,
+        zones: active_zones(app, config),
+        exclusions: active_exclusions(config),
+        language: config.source.language,
+        glossary: config.glossary.clone(),
+        engine: None,
+        // The global Genderless toggle lands with ticket 08.
+        genderless: false,
     }
 }
 
 /// The real Windows pipeline for translation passes: adapters wired to the
-/// configured Source Language and cadence, plus the loop's glossary.
+/// effective Source Language and the global cadence, plus the effective
+/// Glossary layer.
 struct Pipeline {
     config: LoopConfig,
     glossary: Glossary,
@@ -873,20 +1033,27 @@ struct Pipeline {
     translate: Arc<dyn langception_core::ports::TranslateEngine>,
 }
 
-fn build_pipeline(config: &AppConfig) -> Result<Pipeline, String> {
+fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeline, String> {
     Ok(Pipeline {
         config: LoopConfig {
-            source_language: config.source.language,
+            source_language: target.language,
             cadence: Duration::from_millis(config.capture.cadence_ms as u64),
             stability: Duration::from_millis(config.capture.stability_ms as u64),
         },
-        glossary: config.glossary.clone(),
+        glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
-        ocr: Arc::new(crate::ocr::WindowsOcrEngine::new(config.source.language)),
-        translate: Arc::new(
-            GoogleTranslateEngine::new()
-                .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
-        ),
+        ocr: Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)),
+        // The Profile's engine choice (None = inherit global). This build
+        // offers only the keyless Google engine (ADR-0002); tickets 09-11
+        // extend the match. Config validation rejects unknown names, so
+        // they cannot reach here from a valid config.
+        translate: match target.engine.as_deref().map(str::trim) {
+            None | Some("google") => Arc::new(
+                GoogleTranslateEngine::new()
+                    .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
+            ),
+            Some(other) => return Err(format!("unknown engine \"{other}\"")),
+        },
     })
 }
 
@@ -951,19 +1118,22 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     };
     drop(config_guard);
 
-    // A fresh loop starts unpaused, watching the target's regions (zones, or
-    // the full-screen monitor) and the Excluded Blocks in force. Subscribe
-    // BEFORE sending: a watch::send with zero receivers does not store the
-    // value, so a later subscriber would see an empty list.
+    // A fresh loop starts unpaused, watching the effective target's regions
+    // (the active Profile's app window, or the global zones / full-screen
+    // monitor) and the Excluded Blocks in force. Subscribe BEFORE sending: a
+    // watch::send with zero receivers does not store the value, so a later
+    // subscriber would see an empty list.
+    let target = effective_target(app, &config);
+    *state.active_profile.lock().unwrap() = target.profile_id.clone();
+    *state.active_window.lock().unwrap() = target.window;
     let zones_rx = state.zones_tx.subscribe();
     let paused_rx = state.paused_tx.subscribe();
     let excluded_rx = state.exclusions_tx.subscribe();
     let _ = state.paused_tx.send(false);
     *state.paused.lock().unwrap() = false;
-    let _ = state.zones_tx.send(active_zones(app, &config));
-    let _ = state.exclusions_tx.send(active_exclusions(&config));
-
-    let pipeline = build_pipeline(&config)?;
+    let pipeline = build_pipeline(&config, &target)?;
+    let _ = state.zones_tx.send(target.zones);
+    let _ = state.exclusions_tx.send(target.exclusions);
     // Privacy badge (ticket 06): record whether the active engine sends
     // screen text off-machine while the loop runs.
     *state.cloud_engine.lock().unwrap() = if pipeline.translate.is_cloud() {
@@ -977,9 +1147,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     // never stops the loop: the Results Window still works, and the warning
     // stays visible.
     let overlays = match crate::overlay::ensure_overlays(app) {
-        Ok(overlays) => {
-            overlays
-        }
+        Ok(overlays) => overlays,
         Err(message) => {
             push_warning(&state, format!("In-place Overlay unavailable: {message}"));
             Vec::new()
@@ -1163,7 +1331,10 @@ fn fullscreen_watch_monitor(app: &AppHandle, config: &AppConfig) -> Result<Monit
         .map_err(|e| format!("cannot enumerate monitors: {e}"))?;
     let wanted = config.mode.fullscreen_monitor.as_str();
     if !wanted.is_empty() {
-        if let Some(monitor) = monitors.iter().find(|m| m.name().map(|n| n.as_str()) == Some(wanted)) {
+        if let Some(monitor) = monitors
+            .iter()
+            .find(|m| m.name().map(|n| n.as_str()) == Some(wanted))
+        {
             return Ok(monitor.clone());
         }
         push_warning(
@@ -1274,7 +1445,8 @@ fn set_adjust_mode(app: &AppHandle, active: bool) {
                     if let Some(window) = app.get_webview_window(&label) {
                         let _ = window.set_ignore_cursor_events(false);
                     }
-                    let _ = app.emit_to(&label, "overlay-adjust", &adjust_payload_for(app, &monitor));
+                    let _ =
+                        app.emit_to(&label, "overlay-adjust", &adjust_payload_for(app, &monitor));
                 }
             }
             Err(message) => {
@@ -1382,7 +1554,9 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
             .warnings
             .lock()
             .unwrap()
-            .push(format!("could not exclude the picker from capture: {message}"));
+            .push(format!(
+                "could not exclude the picker from capture: {message}"
+            ));
     }
     window
         .show()
@@ -1493,6 +1667,135 @@ pub(crate) fn restart_loop_if_running(app: &AppHandle) {
     }
 }
 
+/// How often the profile watcher polls the foreground window. GetForegroundWindow
+/// plus a limited-info process query cost microseconds — 4× per second is
+/// far under any perceptible delay for focus switches.
+const PROFILE_POLL_MS: u64 = 250;
+
+/// Spawns the Profile watcher (ticket 07): it runs for the whole app
+/// lifetime, matching the foreground window's executable against the
+/// configured Profiles. A match change restarts the running loop (the
+/// pipeline's language/glossary/engine and the watched regions all follow
+/// the Profile — and stop_loop clears the previous app's overlays, so no
+/// stale pills linger); a same-Profile window move re-pushes the
+/// window-relative zones. While translation is stopped it only updates the
+/// status's active-Profile id.
+fn spawn_profile_watcher(app: &AppHandle) {
+    let task_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(PROFILE_POLL_MS)).await;
+            let tick_app = task_app.clone();
+            // The tick queries windows and (on a match change) restarts the
+            // loop — both dispatch through the main event loop and block
+            // until it pumps, so they must run off the main thread (see
+            // run_off_main).
+            if let Err(message) =
+                tauri::async_runtime::spawn_blocking(move || profile_watch_tick(&tick_app))
+                    .await
+                    .map_err(|e| format!("background task failed: {e}"))
+                    .and_then(|r| r)
+            {
+                let state = task_app.state::<AppState>();
+                push_warning(&state, message);
+            }
+        }
+    });
+}
+
+/// One watcher pass: resolve the foreground app against the Profiles and
+/// apply what changed. Failures surface as warnings, never silently.
+fn profile_watch_tick(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let foreground = crate::foreground::foreground_app();
+
+    // Which profile matches the foreground app right now (None = global
+    // fallback target). A broken or not-yet-loaded config matches nothing.
+    let matched: Option<(String, Region, Vec<Zone>)> = {
+        let guard = state.config.lock().unwrap();
+        match (&*guard, &foreground) {
+            (Some(Ok(config)), Some(fg)) => Profile::resolve(&config.profiles, &fg.exe)
+                .map(|profile| (profile.id.clone(), fg.rect, profile.capture_zones(fg.rect))),
+            _ => None,
+        }
+    };
+    let new_id = matched.as_ref().map(|(id, _, _)| id.clone());
+
+    let changed = {
+        let mut active = state.active_profile.lock().unwrap();
+        let changed = *active != new_id;
+        if changed {
+            *active = new_id;
+        }
+        changed
+    };
+
+    if changed {
+        // Activation/deactivation swaps everything the pipeline reads at
+        // start (language, glossary, engine, zones): restart the running
+        // loop — start_loop recomputes the effective target itself, so a
+        // foreground change between here and there still lands correctly.
+        restart_loop_if_running(app);
+        apply_state(app);
+        return Ok(());
+    }
+
+    // Same profile (or still none): while a profile is active, follow its
+    // window when it moves or resizes — its window-relative zones re-resolve
+    // against the new rect, and pills at the old position must not linger.
+    if let Some((_, rect, zones)) = matched {
+        let mut window = state.active_window.lock().unwrap();
+        if *window != Some(rect) {
+            *window = Some(rect);
+            drop(window);
+            crate::overlay::clear_all(app);
+            let _ = state.zones_tx.send(zones);
+        }
+    }
+    Ok(())
+}
+
+/// Recomputes and pushes what the loop should watch right now — the active
+/// Profile's window target when one matches the foreground app, the global
+/// capture target otherwise. The single push path for every config edit
+/// that can change zones or Excluded Blocks; the loop picks the new list
+/// up on its next tick (per-zone tracking state survives where the regions
+/// do). Zones that disappeared or moved have their pills cleared; zones
+/// that are untouched keep theirs (adding a zone must not blank the rest).
+fn push_active_target(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let config = current_config(app)?;
+    let target = effective_target(app, &config);
+    *state.active_profile.lock().unwrap() = target.profile_id.clone();
+    *state.active_window.lock().unwrap() = target.window;
+    let old = state.zones_tx.borrow().clone();
+    for zone in &old {
+        if !target
+            .zones
+            .iter()
+            .any(|z| z.id == zone.id && z.region == zone.region)
+        {
+            crate::overlay::clear_zone(app, &zone.id);
+        }
+    }
+    let _ = state.zones_tx.send(target.zones);
+    let _ = state.exclusions_tx.send(target.exclusions);
+    Ok(())
+}
+
+/// Applies an edit to one Profile: while that profile is active the loop
+/// restarts so its pipeline and watched zones follow (the pipeline's
+/// language/glossary are read at start); a status refresh happens either
+/// way. Shared by every profile-editing command.
+pub(crate) fn profile_edited(app: &AppHandle, profile_id: &str) {
+    let state = app.state::<AppState>();
+    let is_active = *state.active_profile.lock().unwrap() == Some(profile_id.to_string());
+    if is_active {
+        restart_loop_if_running(app);
+    }
+    apply_state(app);
+}
+
 // ---- Commands invoked from the Results Window and the picker ----
 
 /// Runs a shell operation on a blocking worker thread and awaits its
@@ -1587,15 +1890,13 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
         zone.name = name;
         Ok(())
     })?;
-    let config = current_config(&app)?;
-    let _ = state.zones_tx.send(active_zones(&app, &config));
+    push_active_target(&app)?;
     apply_state(&app);
     Ok(())
 }
 
 #[tauri::command]
 fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
-    let state = app.state::<AppState>();
     with_config_mut(&app, |config| {
         let before = config.zones.len();
         config.zones.retain(|z| z.id != id);
@@ -1604,8 +1905,7 @@ fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
         }
         Ok(())
     })?;
-    let config = current_config(&app)?;
-    let _ = state.zones_tx.send(active_zones(&app, &config));
+    push_active_target(&app)?;
     // Its translations must not linger on the overlay either.
     crate::overlay::clear_zone(&app, &id);
     apply_state(&app);
@@ -1617,7 +1917,14 @@ async fn open_zone_picker(app: AppHandle, mode: String) -> Result<(), String> {
     let mode = match mode.as_str() {
         "zone" => PickerMode::Zone,
         "oneshot" => PickerMode::OneShot,
-        other => return Err(format!("unknown picker mode \"{other}\"")),
+        // "profile:<id>" — the drag becomes a window-relative Capture Zone
+        // on the named Profile's app (Settings → Profiles).
+        other => match other.strip_prefix("profile:") {
+            Some(profile_id) if !profile_id.is_empty() => PickerMode::ProfileZone {
+                profile_id: profile_id.to_string(),
+            },
+            _ => return Err(format!("unknown picker mode \"{other}\"")),
+        },
     };
     run_off_main(app, move |app| open_picker(app, mode)).await
 }
@@ -1625,9 +1932,10 @@ async fn open_zone_picker(app: AppHandle, mode: String) -> Result<(), String> {
 /// The picker overlay asks once it has loaded what session it is serving.
 #[tauri::command]
 fn get_picker_mode(app: AppHandle) -> String {
-    match *app.state::<AppState>().picker_mode.lock().unwrap() {
+    match &*app.state::<AppState>().picker_mode.lock().unwrap() {
         Some(PickerMode::Zone) => "zone",
         Some(PickerMode::OneShot) => "oneshot",
+        Some(PickerMode::ProfileZone { .. }) => "profile",
         None => "none",
     }
     .to_string()
@@ -1650,8 +1958,9 @@ async fn commit_zone_drag(
 }
 
 /// Sync body of [`commit_zone_drag`]: closes the picker window, and in the
-/// zone branch may start the loop (which creates the overlay windows) —
-/// all off the main thread.
+/// zone branches may start/restart the loop (which creates overlay
+/// windows) — all off the main thread. A failed commit keeps the session
+/// open: the picker page shows the error and the next drag commits.
 fn commit_zone_drag_inner(
     app: &AppHandle,
     x: i32,
@@ -1669,6 +1978,26 @@ fn commit_zone_drag_inner(
         close_picker(app);
         return Ok(());
     }
+
+    let result = commit_picked_region(app, &mode, x, y, width, height);
+    if result.is_err() {
+        *state.picker_mode.lock().unwrap() = Some(mode);
+    }
+    result
+}
+
+/// The committed rectangle (CSS px relative to the primary monitor) for the
+/// session's mode. Consumes the session on success (the picker closes); on
+/// failure the caller restores it.
+fn commit_picked_region(
+    app: &AppHandle,
+    mode: &PickerMode,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
+    let state = app.state::<AppState>();
     let monitor = primary_monitor(app)?;
     let region = region_from_css(&monitor, x, y, width, height);
 
@@ -1693,9 +2022,8 @@ fn commit_zone_drag_inner(
                 });
                 Ok(())
             })?;
-            let config = current_config(app)?;
+            push_active_target(app)?;
             close_picker(app);
-            let _ = state.zones_tx.send(active_zones(app, &config));
             // Zones are what the loop watches: creating the first one starts
             // translation (matches the tray's Start).
             if state.running.lock().unwrap().is_none() {
@@ -1710,19 +2038,103 @@ fn commit_zone_drag_inner(
         }
         PickerMode::OneShot => {
             // Fallible parts (config, engine) resolve before the overlay
-            // closes, so failures stay visible in it.
+            // closes, so failures stay visible in it. The pass follows the
+            // effective target: an active Profile's language and Glossary
+            // layer, its exclusions (none) — the global settings otherwise.
             let config = match &*state.config.lock().unwrap() {
                 Some(Ok(config)) => config.clone(),
                 Some(Err(message)) => return Err(message.clone()),
                 None => return Err("config not loaded yet".into()),
             };
-            let pipeline = build_pipeline(&config)?;
-            let exclusions = active_exclusions(&config);
+            let target = effective_target(app, &config);
+            let pipeline = build_pipeline(&config, &target)?;
+            let exclusions = target.exclusions;
             close_picker(app);
             run_one_shot(app, pipeline, region, exclusions);
             Ok(())
         }
+        PickerMode::ProfileZone { profile_id } => {
+            // Fallible parts resolve before the picker closes, so failures
+            // stay visible in it (it stays open for another drag).
+            let profile_exe = {
+                let guard = state.config.lock().unwrap();
+                match &*guard {
+                    Some(Ok(config)) => config
+                        .profiles
+                        .iter()
+                        .find(|p| p.id == *profile_id)
+                        .map(|p| p.exe.clone()),
+                    _ => None,
+                }
+            }
+            .ok_or_else(|| "profile not found (was it deleted?)".to_string())?;
+            let window = crate::foreground::app_window_rect(&profile_exe).ok_or_else(|| {
+                format!(
+                    "\"{profile_exe}\" has no visible window right now — start the app (not minimized), then draw the zone"
+                )
+            })?;
+            let rel = region_in_window(window, region)?;
+            let zone_id = format!(
+                "pz{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            );
+            with_config_mut(app, |config| {
+                let profile = config
+                    .profiles
+                    .iter_mut()
+                    .find(|p| p.id == *profile_id)
+                    .ok_or_else(|| "profile not found (was it deleted?)".to_string())?;
+                profile.zones.push(ProfileZone {
+                    id: zone_id.clone(),
+                    name: next_profile_zone_name(profile),
+                    region: rel,
+                });
+                Ok(())
+            })?;
+            close_picker(app);
+            profile_edited(app, profile_id);
+            Ok(())
+        }
     }
+}
+
+/// Converts a drawn screen region into window-relative physical px for
+/// storing in a Profile: relative to the app window's top-left, clamped
+/// inside it. Errors when the rectangle does not intersect the window.
+fn region_in_window(window: Region, region: Region) -> Result<Region, String> {
+    let left = region.x.max(window.x);
+    let top = region.y.max(window.y);
+    let right = (region.x + region.width as i32).min(window.x + window.width as i32);
+    let bottom = (region.y + region.height as i32).min(window.y + window.height as i32);
+    let width = right - left;
+    let height = bottom - top;
+    if width <= 0 || height <= 0 {
+        return Err("the drawn rectangle is entirely outside the app's window".into());
+    }
+    Ok(Region {
+        x: left - window.x,
+        y: top - window.y,
+        width: width as u32,
+        height: height as u32,
+    })
+}
+
+/// The next free "Zone N" name within one Profile (existing names win).
+fn next_profile_zone_name(profile: &Profile) -> String {
+    for n in 1.. {
+        let name = format!("Zone {n}");
+        if !profile
+            .zones
+            .iter()
+            .any(|z| z.name.trim().eq_ignore_ascii_case(&name))
+        {
+            return name;
+        }
+    }
+    unreachable!()
 }
 
 /// The picker overlay cancelled (Esc / click without drag).
@@ -1782,7 +2194,10 @@ async fn set_capture_mode(app: AppHandle, mode: String, monitor: String) -> Resu
         "fullscreen" => CaptureMode::FullScreen,
         other => return Err(format!("unknown capture mode \"{other}\"")),
     };
-    run_off_main(app, move |app| set_capture_mode_inner(app, target, Some(monitor))).await
+    run_off_main(app, move |app| {
+        set_capture_mode_inner(app, target, Some(monitor))
+    })
+    .await
 }
 
 /// Shared by the tray item (which passes no monitor — it only flips the
@@ -1792,7 +2207,6 @@ fn set_capture_mode_inner(
     target: CaptureMode,
     monitor: Option<String>,
 ) -> Result<(), String> {
-    let state = app.state::<AppState>();
     with_config_mut(app, |config| {
         config.mode.target = target;
         // A monitor choice only matters in full-screen mode; switching to
@@ -1804,12 +2218,12 @@ fn set_capture_mode_inner(
         }
         Ok(())
     })?;
-    let config = current_config(app)?;
-    let _ = state.zones_tx.send(active_zones(app, &config));
-    let _ = state.exclusions_tx.send(active_exclusions(&config));
     // Pills from the previous target must not linger: a zone pill and a
     // full-screen pill for the same text are different display entries.
-    crate::overlay::clear_all(app);
+    // push_active_target clears every zone that left the watched set (when
+    // a Profile is active the global target switch changes nothing it
+    // watches, and its pills legitimately survive).
+    push_active_target(app)?;
     // The overlays' adjust view follows the target switch too.
     refresh_adjust_overlays(app);
     apply_state(app);
@@ -1832,7 +2246,6 @@ async fn update_zone_region(
         return Err("Zone width and height must be greater than zero".into());
     }
     run_off_main(app, move |app| {
-        let state = app.state::<AppState>();
         with_config_mut(app, |config| {
             let zone = config
                 .zones
@@ -1847,8 +2260,7 @@ async fn update_zone_region(
             };
             Ok(())
         })?;
-        let config = current_config(app)?;
-        let _ = state.zones_tx.send(active_zones(app, &config));
+        push_active_target(app)?;
         // Repositions/re-creates the overlay windows while adjusting.
         refresh_adjust_overlays(app);
         apply_state(app);
@@ -1869,7 +2281,6 @@ fn exclude_block(
     height: u32,
     label: String,
 ) -> Result<(), String> {
-    let state = app.state::<AppState>();
     let monitor = monitor_name_at(&app, x + width as i32 / 2, y + height as i32 / 2);
     let exclusion = ExcludedBlock {
         id: format!(
@@ -1892,10 +2303,9 @@ fn exclude_block(
         config.excluded_blocks.push(exclusion.clone());
         Ok(())
     })?;
-    let config = current_config(&app)?;
     // Active immediately in full-screen mode (the orchestrator stops
     // translating the position on its next pass).
-    let _ = state.exclusions_tx.send(active_exclusions(&config));
+    push_active_target(&app)?;
     apply_state(&app);
     Ok(())
 }
@@ -1905,7 +2315,6 @@ fn exclude_block(
 /// excluded, so the very next pass re-translates it).
 #[tauri::command]
 fn delete_excluded_block(app: AppHandle, id: String) -> Result<(), String> {
-    let state = app.state::<AppState>();
     with_config_mut(&app, |config| {
         let before = config.excluded_blocks.len();
         config.excluded_blocks.retain(|e| e.id != id);
@@ -1914,8 +2323,7 @@ fn delete_excluded_block(app: AppHandle, id: String) -> Result<(), String> {
         }
         Ok(())
     })?;
-    let config = current_config(&app)?;
-    let _ = state.exclusions_tx.send(active_exclusions(&config));
+    push_active_target(&app)?;
     apply_state(&app);
     Ok(())
 }

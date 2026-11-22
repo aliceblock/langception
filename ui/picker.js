@@ -38,7 +38,9 @@ function place(x, y, w, h) {
   setBar(
     mode === "oneshot"
       ? "One-shot Capture — drag a rectangle to translate it once · Esc to cancel"
-      : "Drag to draw a Capture Zone · Esc to cancel",
+      : mode === "profile"
+        ? "Profile Capture Zone — drag a rectangle inside the app's window · Esc to cancel"
+        : "Drag to draw a Capture Zone · Esc to cancel",
     false,
   );
 })();

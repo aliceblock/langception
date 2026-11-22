@@ -76,6 +76,7 @@
       <button class="tab active" data-tab="general">General</button>
       <button class="tab" data-tab="engines">Engines</button>
       <button class="tab" data-tab="glossary">Glossary</button>
+      <button class="tab" data-tab="profiles">Profiles</button>
       <button class="tab" data-tab="text-style">Text Style</button>
       <button class="tab" data-tab="hotkeys">Hotkeys</button>
       <button class="tab" data-tab="about">About</button>
@@ -172,6 +173,103 @@
         </div>
         <ul id="glossary-list" class="glossary-list"></ul>
         <div id="glossary-empty" class="empty hidden">No terms yet.</div>
+      </section>
+
+      <section id="tab-profiles" class="page">
+        <h2>Profiles</h2>
+        <p class="hint">
+          A Profile binds one app (by its executable) with its own Source
+          Language, engine, Capture Zones inside that app's window, a
+          Glossary layer and a Genderless Mode override. It is active while
+          the app is the foreground window; when no Profile matches, the
+          global settings above apply unchanged.
+        </p>
+        <div class="row">
+          <select id="profile-select" title="Choose a profile"></select>
+          <button id="profile-new" class="btn small">New profile…</button>
+          <button id="profile-delete" class="btn small">Delete</button>
+          <span id="profile-active-chip" class="chip ok hidden" title="This profile's app owns the foreground window right now">active</span>
+        </div>
+        <div id="profile-empty" class="empty">
+          No profiles yet. Create one to give a specific app its own source
+          language, glossary and capture zones.
+        </div>
+
+        <div id="profile-editor" class="hidden">
+          <h3>Profile</h3>
+          <div class="form-grid">
+            <label class="form-row">
+              <span>Name</span>
+              <input id="profile-name" type="text" spellcheck="false" placeholder="e.g. Reverse: 1999" />
+            </label>
+            <label class="form-row">
+              <span>App (executable)</span>
+              <span class="style-pair">
+                <select id="profile-exe" title="Running apps — from their visible windows"></select>
+                <button id="profile-exe-refresh" class="btn small" title="Re-scan running apps">↻</button>
+              </span>
+            </label>
+            <label class="form-row">
+              <span>Source language</span>
+              <select id="profile-language">
+                <option value="en">English</option>
+                <option value="ja">Japanese</option>
+                <option value="zh">Chinese</option>
+                <option value="ko">Korean</option>
+              </select>
+            </label>
+            <label class="form-row">
+              <span>Translate engine</span>
+              <select id="profile-engine">
+                <option value="">Inherit global engine</option>
+                <option value="google">Google Translate (unofficial)</option>
+              </select>
+            </label>
+            <label class="form-row">
+              <span>Genderless Mode</span>
+              <select id="profile-genderless">
+                <option value="inherit">Inherit global</option>
+                <option value="on">On</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button id="profile-save" class="btn primary">Save profile</button>
+            <span class="hint">
+              Saved values apply when translation (re)starts. The app is
+              matched case-insensitively by executable name; while it owns
+              the foreground window, only its window (or the zones below,
+              relative to that window) is watched.
+            </span>
+          </div>
+
+          <h3>Glossary layer</h3>
+          <p class="hint">
+            Merged over the global Glossary while this profile is active —
+            the profile's value wins on conflict. Game-specific names
+            (Vertin → เวอร์ติน) belong here.
+          </p>
+          <div class="row glossary-add">
+            <input id="profile-glossary-new-term" type="text" placeholder="Term" spellcheck="false" />
+            <input id="profile-glossary-new-thai" type="text" placeholder="Thai" spellcheck="false" />
+            <button id="profile-glossary-add-btn" class="btn primary">Add</button>
+          </div>
+          <ul id="profile-glossary-list" class="glossary-list"></ul>
+          <div id="profile-glossary-empty" class="empty hidden">No terms in this profile's layer yet.</div>
+
+          <h3>Capture Zones (inside the app's window)</h3>
+          <p class="hint">
+            Stored relative to the app window's top-left, so they follow it
+            around the screen. With no zones, the whole window is watched.
+          </p>
+          <ul id="profile-zones-list" class="glossary-list"></ul>
+          <div id="profile-zones-empty" class="empty hidden">No zones — the whole app window is watched.</div>
+          <div class="row">
+            <button id="profile-zone-draw" class="btn small">Draw zone on screen…</button>
+            <span class="hint">Drag a rectangle over the app's visible window.</span>
+          </div>
+        </div>
       </section>
 
       <section id="tab-text-style" class="page">

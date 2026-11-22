@@ -96,9 +96,15 @@ function renderStatus(status) {
     mode === "fullscreen"
       ? "full-screen mode"
       : `${zones.filter((z) => z.enabled).length} zone${zones.length === 1 ? "" : "s"}`;
+  // Ticket 07: when a Profile matches the foreground app, its settings are
+  // what the loop runs with — name it so the line tells the truth.
+  const activeProfile = (status.profiles || []).find(
+    (p) => p.id && p.id === status.activeProfileId,
+  );
+  const profileNote = activeProfile ? ` · profile "${activeProfile.name}"` : "";
   configLine.textContent = status.configError
     ? `Config: ${status.configPath}`
-    : `${status.language} → ${status.targetLanguage} · ${watched} · every ${status.cadenceMs}ms · hold ${status.stabilityMs}ms · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
+    : `${status.language} → ${status.targetLanguage}${profileNote} · ${watched} · every ${status.cadenceMs}ms · hold ${status.stabilityMs}ms · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
 
   if (status.warnings && status.warnings.length > 0) {
     warningsLine.textContent = status.warnings.join("\n");

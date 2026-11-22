@@ -1,9 +1,9 @@
 // Langception Settings window — vanilla JS against the Tauri global API.
 // One surface for every config: General, Engines (OCR pack detection),
-// Glossary (full management + JSON import/export), Text Style, Hotkeys
-// (rebinds apply live), About. Doubles as the first-run wizard host: when
-// status.firstRun the wizard view shows before the tabs and is skippable.
-// No build step.
+// Glossary (full management + JSON import/export), Profiles (per-app
+// configuration, ticket 07), Text Style, Hotkeys (rebinds apply live),
+// About. Doubles as the first-run wizard host: when status.firstRun the
+// wizard view shows before the tabs and is skippable. No build step.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -52,6 +52,11 @@ for (const tab of document.querySelectorAll(".tab")) {
     if (tab.dataset.tab === "engines" && !enginesPacksLoaded) {
       enginesPacksLoaded = true;
       loadPacks("engines");
+    }
+    // The Profiles tab scans the running apps the first time it is opened
+    // (its app picker only offers apps that actually have a window).
+    if (tab.dataset.tab === "profiles" && !runningAppsLoaded) {
+      loadRunningApps(false);
     }
   });
 }
@@ -317,6 +322,393 @@ document.getElementById("glossary-import").addEventListener("click", async () =>
   }
 });
 
+// Profiles (ticket 07) ---------------------------------------------------------
+
+const profileSelect = document.getElementById("profile-select");
+const profileNewBtn = document.getElementById("profile-new");
+const profileDeleteBtn = document.getElementById("profile-delete");
+const profileActiveChip = document.getElementById("profile-active-chip");
+const profileEmpty = document.getElementById("profile-empty");
+const profileEditor = document.getElementById("profile-editor");
+const profileName = document.getElementById("profile-name");
+const profileExe = document.getElementById("profile-exe");
+const profileLanguage = document.getElementById("profile-language");
+const profileEngine = document.getElementById("profile-engine");
+const profileGenderless = document.getElementById("profile-genderless");
+const profileGlossaryList = document.getElementById("profile-glossary-list");
+const profileGlossaryEmpty = document.getElementById("profile-glossary-empty");
+const profileGlossaryNewTerm = document.getElementById("profile-glossary-new-term");
+const profileGlossaryNewThai = document.getElementById("profile-glossary-new-thai");
+const profileZonesList = document.getElementById("profile-zones-list");
+const profileZonesEmpty = document.getElementById("profile-zones-empty");
+
+let profiles = [];
+let selectedProfileId = null;
+let populatedProfileId = null; // the id the editor inputs were last filled from
+let runningApps = [];
+let runningAppsLoaded = false;
+let deleteArmedTimer = null;
+
+async function loadRunningApps(force = false) {
+  if (!force && runningAppsLoaded) return;
+  try {
+    runningApps = await invoke("list_running_apps");
+    runningAppsLoaded = true;
+  } catch (e) {
+    toast(String(e), "error");
+    runningApps = [];
+  }
+  renderExeOptions();
+}
+
+function renderExeOptions() {
+  const chosen = profileExe.dataset.chosen || "";
+  profileExe.replaceChildren();
+  if (runningApps.length === 0) {
+    const option = document.createElement("option");
+    option.value = chosen;
+    option.textContent = chosen || "no running apps — start the app, then ↻";
+    profileExe.append(option);
+    return;
+  }
+  for (const app of runningApps) {
+    const option = document.createElement("option");
+    option.value = app.exe;
+    option.textContent = app.title ? `${app.title} — ${app.exe}` : app.exe;
+    profileExe.append(option);
+  }
+  const match = runningApps.find((a) => a.exe.toLowerCase() === chosen.toLowerCase());
+  profileExe.value = match ? match.exe : runningApps[0].exe;
+}
+
+function renderProfiles(status) {
+  profiles = status.profiles || [];
+  if (selectedProfileId && !profiles.some((p) => p.id === selectedProfileId)) {
+    selectedProfileId = null;
+  }
+  if (!selectedProfileId && profiles.length > 0) selectedProfileId = profiles[0].id;
+
+  // Rebuild the dropdown only when the option set changed, so a status
+  // push never slams shut a dropdown the user has open (same rule as the
+  // Results Window's monitor select).
+  const signature = profiles
+    .map((p) => `${p.id}\u0001${p.name}\u0001${p.active ? "a" : ""}`)
+    .join("\u0000");
+  if (profileSelect.dataset.sig !== signature) {
+    profileSelect.dataset.sig = signature;
+    profileSelect.replaceChildren();
+    if (profiles.length === 0) {
+      const option = document.createElement("option");
+      option.textContent = "no profiles";
+      option.value = "";
+      option.disabled = true;
+      profileSelect.append(option);
+    }
+    for (const profile of profiles) {
+      const option = document.createElement("option");
+      option.value = profile.id;
+      option.textContent = profile.active ? `${profile.name} — active` : profile.name;
+      profileSelect.append(option);
+    }
+  }
+  profileSelect.value = selectedProfileId || "";
+
+  const has = profiles.length > 0;
+  profileEmpty.classList.toggle("hidden", has);
+  profileEditor.classList.toggle("hidden", !has);
+  profileDeleteBtn.disabled = !has;
+
+  const selected = profiles.find((p) => p.id === selectedProfileId);
+  profileActiveChip.classList.toggle("hidden", !selected?.active);
+  renderProfileZones(selected);
+  // Editor inputs only refill when the selection changes (or on explicit
+  // save/create) — a status event must never clobber in-progress edits.
+  if (selected && populatedProfileId !== selected.id) populateEditor(selected);
+  if (!selected) populatedProfileId = null;
+}
+
+function populateEditor(profile) {
+  populatedProfileId = profile.id;
+  profileName.value = profile.name;
+  profileExe.dataset.chosen = profile.exe;
+  renderExeOptions();
+  profileLanguage.value = profile.language;
+  profileEngine.value = profile.engine || "";
+  profileGenderless.value = profile.genderless || "inherit";
+}
+
+profileSelect.addEventListener("change", async () => {
+  selectedProfileId = profileSelect.value || null;
+  const selected = profiles.find((p) => p.id === selectedProfileId);
+  profileActiveChip.classList.toggle("hidden", !selected?.active);
+  if (selected) populateEditor(selected);
+  renderProfileZones(selected);
+  await renderProfileGlossary();
+});
+
+profileExe.addEventListener("change", () => {
+  profileExe.dataset.chosen = profileExe.value;
+  const app = runningApps.find((a) => a.exe === profileExe.value);
+  // A fresh profile drafts its name from the app; saving renames freely.
+  if (app && profileName.dataset.drafted !== "1") {
+    profileName.value = uniqueProfileName(app.title || app.exe);
+  }
+});
+profileName.addEventListener("input", () => {
+  profileName.dataset.drafted = "1";
+});
+
+function uniqueProfileName(base) {
+  const trimmed = (base || "").trim().slice(0, 40) || "New profile";
+  let name = trimmed;
+  for (let n = 2; profiles.some((p) => p.name.toLowerCase() === name.toLowerCase()); n += 1) {
+    name = `${trimmed} ${n}`;
+  }
+  return name;
+}
+
+profileNewBtn.addEventListener("click", async () => {
+  await loadRunningApps(true);
+  if (runningApps.length === 0) {
+    toast("No running apps found — start the app you want to profile, then try again", "error");
+    return;
+  }
+  const first = runningApps[0];
+  try {
+    const id = await invoke("create_profile", {
+      profile: {
+        name: uniqueProfileName(first.title || first.exe),
+        exe: first.exe,
+        language: document.getElementById("general-language").value,
+        engine: null,
+        genderless: "inherit",
+      },
+    });
+    selectedProfileId = id;
+    renderProfiles(await invoke("get_status"));
+    await renderProfileGlossary();
+    toast("Profile created — adjust it and press Save profile");
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
+// Two-click delete (no native confirm dialogs in the webview): the first
+// click arms the button, the second deletes, idling disarms it.
+profileDeleteBtn.addEventListener("click", async () => {
+  if (!selectedProfileId) return;
+  if (profileDeleteBtn.dataset.armed !== "1") {
+    profileDeleteBtn.dataset.armed = "1";
+    profileDeleteBtn.textContent = "Really delete?";
+    clearTimeout(deleteArmedTimer);
+    deleteArmedTimer = setTimeout(disarmDelete, 3000);
+    return;
+  }
+  disarmDelete();
+  const id = selectedProfileId;
+  try {
+    await invoke("delete_profile", { id });
+    selectedProfileId = null;
+    renderProfiles(await invoke("get_status"));
+    toast("Profile deleted");
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
+function disarmDelete() {
+  clearTimeout(deleteArmedTimer);
+  profileDeleteBtn.dataset.armed = "";
+  profileDeleteBtn.textContent = "Delete";
+}
+
+document.getElementById("profile-exe-refresh").addEventListener("click", () => loadRunningApps(true));
+
+document.getElementById("profile-save").addEventListener("click", async () => {
+  if (!selectedProfileId) return;
+  try {
+    await invoke("update_profile", {
+      id: selectedProfileId,
+      profile: {
+        name: profileName.value,
+        exe: profileExe.value,
+        language: profileLanguage.value,
+        engine: profileEngine.value || null,
+        genderless: profileGenderless.value,
+      },
+    });
+    toast("Profile saved");
+    renderProfiles(await invoke("get_status"));
+    await renderProfileGlossary();
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
+// Profile glossary layer — the global glossary's row UI, scoped to the
+// selected profile and the profile-scoped commands.
+
+async function renderProfileGlossary() {
+  profileGlossaryList.replaceChildren();
+  if (!selectedProfileId) {
+    profileGlossaryEmpty.classList.add("hidden");
+    return;
+  }
+  let entries;
+  try {
+    entries = await invoke("list_profile_glossary", { profileId: selectedProfileId });
+  } catch (e) {
+    toast(String(e), "error");
+    return;
+  }
+  for (const entry of entries) profileGlossaryList.append(profileGlossaryRow(entry));
+  profileGlossaryEmpty.classList.toggle("hidden", entries.length > 0);
+}
+
+function profileGlossaryRow(entry) {
+  const li = document.createElement("li");
+  li.className = "glossary-row";
+  li.dataset.originalTerm = entry.term;
+
+  const term = document.createElement("input");
+  term.type = "text";
+  term.className = "term";
+  term.value = entry.term;
+  term.spellcheck = false;
+
+  const thai = document.createElement("input");
+  thai.type = "text";
+  thai.className = "thai";
+  thai.value = entry.thai;
+  thai.spellcheck = false;
+
+  const del = document.createElement("button");
+  del.className = "delete-btn";
+  del.title = `Delete “${entry.term}”`;
+  del.textContent = "✕";
+  del.addEventListener("click", async () => {
+    del.disabled = true;
+    try {
+      await invoke("delete_profile_glossary_entry", { profileId: selectedProfileId, term: entry.term });
+      renderProfileGlossary();
+    } catch (e) {
+      del.disabled = false;
+      toast(String(e), "error");
+    }
+  });
+
+  // Same commit-once rule as the global glossary rows: the re-render after
+  // a successful edit replaces this row, and its blur must not re-commit.
+  let committed = false;
+  const commit = async () => {
+    if (committed) return;
+    const newTerm = term.value.trim();
+    const newThai = thai.value.trim();
+    if (newTerm === entry.term && newThai === entry.thai) return;
+    committed = true;
+    try {
+      await invoke("update_profile_glossary_entry", {
+        profileId: selectedProfileId,
+        term: entry.term,
+        newTerm,
+        thai: newThai,
+      });
+      renderProfileGlossary();
+    } catch (e) {
+      toast(String(e), "error");
+      renderProfileGlossary(); // revert to the stored values
+    }
+  };
+  for (const input of [term, thai]) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") input.blur();
+      if (e.key === "Escape") {
+        input.value = input === term ? entry.term : entry.thai;
+        input.blur();
+      }
+    });
+    input.addEventListener("blur", () => commit());
+  }
+
+  li.append(term, thai, del);
+  return li;
+}
+
+async function addProfileGlossaryEntry() {
+  if (!selectedProfileId) return;
+  try {
+    await invoke("add_profile_glossary_entry", {
+      profileId: selectedProfileId,
+      term: profileGlossaryNewTerm.value,
+      thai: profileGlossaryNewThai.value,
+    });
+    profileGlossaryNewTerm.value = "";
+    profileGlossaryNewThai.value = "";
+    renderProfileGlossary();
+  } catch (e) {
+    toast(String(e), "error");
+  }
+}
+
+document.getElementById("profile-glossary-add-btn").addEventListener("click", addProfileGlossaryEntry);
+for (const input of [profileGlossaryNewTerm, profileGlossaryNewThai]) {
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addProfileGlossaryEntry();
+  });
+}
+
+function renderProfileZones(profile) {
+  profileZonesList.replaceChildren();
+  const zones = profile?.zones || [];
+  for (const zone of zones) profileZonesList.append(profileZoneRow(zone));
+  profileZonesEmpty.classList.toggle("hidden", zones.length > 0);
+  if (zones.length === 0) {
+    profileZonesEmpty.textContent = selectedProfileId
+      ? "No zones — the whole app window is watched."
+      : "";
+  }
+}
+
+function profileZoneRow(zone) {
+  const li = document.createElement("li");
+  li.className = "glossary-row";
+
+  const name = document.createElement("span");
+  name.className = "term";
+  name.textContent = zone.name;
+
+  const region = document.createElement("span");
+  region.className = "hint";
+  region.textContent = `${zone.region} (window-relative)`;
+
+  const del = document.createElement("button");
+  del.className = "delete-btn";
+  del.title = `Delete “${zone.name}”`;
+  del.textContent = "✕";
+  del.addEventListener("click", async () => {
+    del.disabled = true;
+    try {
+      await invoke("delete_profile_zone", { profileId: selectedProfileId, zoneId: zone.id });
+      renderProfiles(await invoke("get_status"));
+    } catch (e) {
+      del.disabled = false;
+      toast(String(e), "error");
+    }
+  });
+
+  li.append(name, region, del);
+  return li;
+}
+
+document.getElementById("profile-zone-draw").addEventListener("click", async () => {
+  if (!selectedProfileId) return;
+  try {
+    await invoke("open_zone_picker", { mode: `profile:${selectedProfileId}` });
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
 // Text Style -----------------------------------------------------------------
 
 const styleFont = document.getElementById("style-font");
@@ -454,6 +846,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   loadStyleInputs(status.textStyle);
   loadHotkeys(status.hotkeys);
   renderGlossary();
+  renderProfiles(status);
   loadAbout();
   updateChips(status);
 
@@ -465,6 +858,9 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   await listen("engine-state", (event) => {
     updateChips(event.payload);
+    // The Profiles list carries the per-profile `active` flags, which move
+    // with the foreground app — refresh on every status push.
+    renderProfiles(event.payload);
   });
 });
 

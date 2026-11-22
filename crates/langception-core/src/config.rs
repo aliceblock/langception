@@ -5,6 +5,7 @@
 
 use crate::glossary::Glossary;
 use crate::ports::{ExcludedBlock, Region, SourceLanguage, Zone};
+use crate::profile::Profile;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
@@ -192,6 +193,12 @@ pub const DEFAULT_PAUSE_HOTKEY: &str = "Alt+P";
 pub const DEFAULT_ADJUST_HOTKEY: &str = "Alt+A";
 pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Q";
 
+/// The Translate Engines this build offers, by config name — the accepted
+/// values for a Profile's `engine` choice (and, from ticket 09 on, for the
+/// global engine setting). An unknown name in a hand-edited config must be
+/// a visible validation error, never a silent fallback.
+pub const TRANSLATE_ENGINES: [&str; 1] = ["google"];
+
 /// Everything the app reads from the config file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -218,6 +225,13 @@ pub struct AppConfig {
     /// Mode appends here; clearing an entry makes the block translate again.
     #[serde(default)]
     pub excluded_blocks: Vec<ExcludedBlock>,
+    /// Per-app Profiles (ticket 07): each binds one executable with its own
+    /// Source Language, engine choice, window-relative Capture Zones,
+    /// Glossary layer and Genderless Mode override. The Profile whose app is
+    /// the foreground window is active; the settings above are the global
+    /// fallback when none matches.
+    #[serde(default)]
+    pub profiles: Vec<Profile>,
 }
 
 impl AppConfig {
@@ -332,6 +346,73 @@ impl AppConfig {
                 )));
             }
         }
+        let mut profile_ids = HashSet::new();
+        let mut profile_names = HashSet::new();
+        let mut profile_exes = HashSet::new();
+        for profile in &self.profiles {
+            let name = profile.name.trim();
+            if name.is_empty() {
+                return Err(ConfigError::Validation(
+                    "every profile needs a non-empty name".into(),
+                ));
+            }
+            if profile.exe.trim().is_empty() {
+                return Err(ConfigError::Validation(format!(
+                    "profile \"{name}\" needs the executable it targets (e.g. \"game.exe\")"
+                )));
+            }
+            if !profile_ids.insert(profile.id.as_str()) {
+                return Err(ConfigError::Validation(format!(
+                    "duplicate profile id \"{id}\"",
+                    id = profile.id
+                )));
+            }
+            if !profile_names.insert(name.to_lowercase()) {
+                return Err(ConfigError::Validation(format!(
+                    "two profiles are named \"{name}\" — profile names must be unique"
+                )));
+            }
+            if !profile_exes.insert(profile.exe.trim().to_lowercase()) {
+                return Err(ConfigError::Validation(format!(
+                    "two profiles target the same executable \"{exe}\" — one profile per app",
+                    exe = profile.exe.trim()
+                )));
+            }
+            if let Some(engine) = &profile.engine {
+                if !TRANSLATE_ENGINES.contains(&engine.trim().to_lowercase().as_str()) {
+                    return Err(ConfigError::Validation(format!(
+                        "profile \"{name}\" engine \"{engine}\" is unknown — engines: {}",
+                        TRANSLATE_ENGINES.join(", ")
+                    )));
+                }
+            }
+            let mut zone_ids = HashSet::new();
+            let mut zone_names = HashSet::new();
+            for zone in &profile.zones {
+                let zone_name = zone.name.trim();
+                if zone_name.is_empty() {
+                    return Err(ConfigError::Validation(format!(
+                        "profile \"{name}\" zone needs a non-empty name"
+                    )));
+                }
+                if zone.region.width == 0 || zone.region.height == 0 {
+                    return Err(ConfigError::Validation(format!(
+                        "profile \"{name}\" zone \"{zone_name}\" must have a width and height greater than zero"
+                    )));
+                }
+                if !zone_ids.insert(zone.id.as_str()) {
+                    return Err(ConfigError::Validation(format!(
+                        "profile \"{name}\" has two zones with id \"{id}\"",
+                        id = zone.id
+                    )));
+                }
+                if !zone_names.insert(zone_name.to_lowercase()) {
+                    return Err(ConfigError::Validation(format!(
+                        "profile \"{name}\" has two zones named \"{zone_name}\" — zone names must be unique"
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -424,6 +505,34 @@ one_shot_capture = "Alt+Q"
 # y = 340
 # width = 90
 # height = 24
+
+# Profiles (Settings → Profiles) bind one app — by executable file name —
+# with its own settings, active while that app is the foreground window.
+# Without a matching Profile everything above applies unchanged. A
+# Profile's zones are relative to its app's WINDOW (top-left = the
+# window's top-left corner, physical px) and move with it; with no zones
+# the whole window is watched. Its glossary is merged over the global one
+# above (the profile wins on conflict); genderless: "inherit" | "on" |
+# "off"; engine: "google" or omit to inherit the global engine.
+# [[profiles]]
+# id = "p1700000000000000000"
+# name = "Reverse: 1999"
+# exe = "Game.exe"
+# language = "en"
+# genderless = "inherit"
+#
+# [profiles.glossary]
+# Vertin = "เวอร์ติน"
+#
+# [[profiles.zones]]
+# id = "z1700000000000000000"
+# name = "Chat box"
+#
+# [profiles.zones.region]
+# x = 10
+# y = 600
+# width = 400
+# height = 120
 "##;
 }
 
@@ -700,8 +809,7 @@ height = 180
         let text = AppConfig::DEFAULT_TEMPLATE.replace("stability_ms = 400", "stability_ms = 0");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.capture.stability_ms, 0);
-        let reparsed =
-            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
     }
 
@@ -718,10 +826,7 @@ height = 180
         let text =
             AppConfig::DEFAULT_TEMPLATE.replace("stability_ms = 400", "stability_ms = 20000");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
-        assert!(
-            err.to_string().contains("stability_ms"),
-            "was: {err}"
-        );
+        assert!(err.to_string().contains("stability_ms"), "was: {err}");
     }
 
     #[test]
@@ -785,8 +890,7 @@ language = "en"
         assert_eq!(config.mode.target, CaptureMode::FullScreen);
         assert_eq!(config.mode.fullscreen_monitor, "\\\\.\\DISPLAY2");
 
-        let reparsed =
-            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
     }
 
@@ -801,7 +905,10 @@ language = "en"
         AppConfig::DEFAULT_TEMPLATE
             .replace("# [[excluded_blocks]]", "[[excluded_blocks]]")
             .replace("# id = \"x1700000000000000000\"", "id = \"x1\"")
-            .replace("# monitor = \"\\\\\\\\.\\\\DISPLAY1\"", "monitor = \"\\\\\\\\.\\\\DISPLAY1\"")
+            .replace(
+                "# monitor = \"\\\\\\\\.\\\\DISPLAY1\"",
+                "monitor = \"\\\\\\\\.\\\\DISPLAY1\"",
+            )
             .replace("# label = \"Start\"", "label = \"เริ่ม\"")
             .replace("# [excluded_blocks.region]", "[excluded_blocks.region]")
             .replace("# x = 1200", "x = 1200")
@@ -827,8 +934,7 @@ language = "en"
             }
         );
 
-        let reparsed =
-            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
     }
 
@@ -859,8 +965,7 @@ language = "en"
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.zones[0].monitor, "\\\\.\\DISPLAY2");
 
-        let reparsed =
-            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
     }
 
@@ -884,5 +989,185 @@ language = "en"
         );
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.hotkeys.adjust_mode, "Ctrl+Alt+A");
+    }
+
+    // ---- Profiles (ticket 07) ----
+
+    fn template_with_profile() -> String {
+        AppConfig::DEFAULT_TEMPLATE
+            .replace("# [[profiles]]", "[[profiles]]")
+            .replace("# id = \"p1700000000000000000\"", "id = \"p1\"")
+            .replace("# name = \"Reverse: 1999\"", "name = \"Reverse: 1999\"")
+            .replace("# exe = \"Game.exe\"", "exe = \"Game.exe\"")
+            .replace("# language = \"en\"", "language = \"en\"")
+            .replace("# genderless = \"inherit\"", "genderless = \"inherit\"")
+            .replace("# [profiles.glossary]", "[profiles.glossary]")
+            .replace("# Vertin = \"เวอร์ติน\"", "Vertin = \"เวอร์ติน\"")
+            .replace("# [[profiles.zones]]", "[[profiles.zones]]")
+            .replace("# id = \"z1700000000000000000\"", "id = \"pz1\"")
+            .replace("# name = \"Chat box\"", "name = \"Chat box\"")
+            .replace("# [profiles.zones.region]", "[profiles.zones.region]")
+            // The profile zone's region values: distinct from the global
+            // zone example's (`# x = 100` …) so the replaces never collide.
+            .replace("# x = 10\n", "x = 10\n")
+            .replace("# y = 600", "y = 600")
+            .replace("# width = 400", "width = 400")
+            .replace("# height = 120", "height = 120")
+    }
+
+    #[test]
+    fn default_template_has_no_profiles() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert!(config.profiles.is_empty());
+    }
+
+    #[test]
+    fn profile_roundtrips_through_toml() {
+        let config = AppConfig::from_toml_str(&template_with_profile()).unwrap();
+        assert_eq!(config.profiles.len(), 1);
+        let profile = &config.profiles[0];
+        assert_eq!(profile.id, "p1");
+        assert_eq!(profile.name, "Reverse: 1999");
+        assert_eq!(profile.exe, "Game.exe");
+        assert_eq!(profile.language, SourceLanguage::En);
+        assert_eq!(
+            profile.genderless,
+            crate::profile::GenderlessOverride::Inherit
+        );
+        assert_eq!(profile.engine, None, "omitted engine = inherit global");
+        assert_eq!(
+            profile.glossary.lookup("vertin"),
+            Some("เวอร์ติน".to_string())
+        );
+        assert_eq!(profile.zones.len(), 1);
+        assert_eq!(profile.zones[0].id, "pz1");
+        assert_eq!(profile.zones[0].name, "Chat box");
+        assert_eq!(
+            profile.zones[0].region,
+            Region {
+                x: 10,
+                y: 600,
+                width: 400,
+                height: 120
+            }
+        );
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn profile_engine_choice_roundtrips() {
+        let text = template_with_profile().replace(
+            "genderless = \"inherit\"",
+            "genderless = \"on\"\nengine = \"google\"",
+        );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(
+            config.profiles[0].engine.as_deref(),
+            Some("google"),
+            "empty glossary stays a table"
+        );
+        assert_eq!(
+            config.profiles[0].genderless,
+            crate::profile::GenderlessOverride::On
+        );
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn ticket06_config_without_profiles_gets_the_default() {
+        // A ticket-06 config predates profiles entirely.
+        let legacy = template_with_zone();
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert!(config.profiles.is_empty());
+    }
+
+    #[test]
+    fn profile_with_empty_name_is_rejected() {
+        let text = template_with_profile().replace("name = \"Reverse: 1999\"", "name = \"  \"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("non-empty name"), "was: {err}");
+    }
+
+    #[test]
+    fn profile_with_empty_exe_is_rejected() {
+        let text = template_with_profile().replace("exe = \"Game.exe\"", "exe = \"\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("executable"), "was: {err}");
+    }
+
+    #[test]
+    fn duplicate_profile_exe_is_rejected() {
+        let text = template_with_profile()
+            + "\n[[profiles]]\nid = \"p2\"\nname = \"Same game\"\nexe = \"GAME.EXE\"\nlanguage = \"ja\"\n";
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("same executable"), "was: {err}");
+    }
+
+    #[test]
+    fn duplicate_profile_name_is_rejected() {
+        let text = template_with_profile()
+            + "\n[[profiles]]\nid = \"p2\"\nname = \"reverse: 1999\"\nexe = \"Other.exe\"\nlanguage = \"ja\"\n";
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("must be unique"), "was: {err}");
+    }
+
+    #[test]
+    fn duplicate_profile_id_is_rejected() {
+        let text = template_with_profile()
+            + "\n[[profiles]]\nid = \"p1\"\nname = \"Other\"\nexe = \"Other.exe\"\nlanguage = \"ja\"\n";
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate profile id"),
+            "was: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_profile_engine_is_rejected() {
+        let text = template_with_profile().replace(
+            "genderless = \"inherit\"",
+            "genderless = \"inherit\"\nengine = \"azure\"",
+        );
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("engine \"azure\""), "was: {err}");
+    }
+
+    #[test]
+    fn unknown_profile_genderless_is_rejected() {
+        let text =
+            template_with_profile().replace("genderless = \"inherit\"", "genderless = \"maybe\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("genderless"), "was: {err}");
+    }
+
+    #[test]
+    fn zero_sized_profile_zone_is_rejected() {
+        let text = template_with_profile().replace("width = 400", "width = 0");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("greater than zero"), "was: {err}");
+    }
+
+    #[test]
+    fn duplicate_profile_zone_name_is_rejected() {
+        let text = template_with_profile()
+            + "\n[[profiles.zones]]\nid = \"pz2\"\nname = \"chat box\"\n\n[profiles.zones.region]\nx = 0\ny = 0\nwidth = 100\nheight = 100\n";
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("must be unique"), "was: {err}");
+    }
+
+    #[test]
+    fn profile_zones_do_not_collide_with_global_zone_names() {
+        // A Profile zone named like a global zone is fine: they are scoped
+        // to their profile (and the global zone list, respectively).
+        let text = template_with_profile()
+            + "\n[[zones]]\nid = \"z1\"\nname = \"Chat box\"\n\n[zones.region]\nx = 1\ny = 1\nwidth = 100\nheight = 100\n";
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.profiles[0].zones.len(), 1);
+        assert_eq!(config.profiles[0].zones[0].name, "Chat box");
+        assert_eq!(config.zones.len(), 1);
+        assert_eq!(config.zones[0].name, "Chat box");
     }
 }
