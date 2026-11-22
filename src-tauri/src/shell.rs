@@ -425,7 +425,7 @@ pub fn run() {
                     .state::<AppState>()
                     .picker_mode
                     .lock()
-                    .unwrap() = None;
+                    .unwrap_or_else(|p| p.into_inner()) = None;
             }
             // The settings window hides instead of closing (tray-first: the
             // app keeps running); reopening is instant and keeps page state.
@@ -454,7 +454,7 @@ pub fn run() {
             // file yet) opens straight into the setup wizard.
             let state = handle.state::<AppState>();
             let config_path = state.config_path.clone();
-            *state.config.lock().unwrap() = Some(load_config(&config_path));
+            *state.config.lock().unwrap_or_else(|p| p.into_inner()) = Some(load_config(&config_path));
 
             build_tray(&handle)?;
             install_hotkeys(&handle)?;
@@ -465,7 +465,7 @@ pub fn run() {
                 // (ADR-0003): the Results Window displays Thai, and a zone
                 // overlapping it would translate its own entries forever.
                 if let Err(message) = crate::overlay::exclude_from_capture(&window) {
-                    state.warnings.lock().unwrap().push(format!(
+                    state.warnings.lock().unwrap_or_else(|p| p.into_inner()).push(format!(
                         "could not exclude the Results Window from capture: {message}"
                     ));
                 }
@@ -567,10 +567,10 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     let state = app.state::<AppState>();
-    *state.toggle_item.lock().unwrap() = Some(toggle);
-    *state.pause_item.lock().unwrap() = Some(pause);
-    *state.adjust_item.lock().unwrap() = Some(adjust);
-    *state.fullscreen_item.lock().unwrap() = Some(fullscreen);
+    *state.toggle_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(toggle);
+    *state.pause_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(pause);
+    *state.adjust_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(adjust);
+    *state.fullscreen_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(fullscreen);
 
     // Tray menu events are handled here only (not via Builder::on_menu_event)
     // so each item fires exactly once.
@@ -589,14 +589,14 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "toggle" => spawn_off_main(app, toggle_translation),
             "pause" => toggle_pause(app),
             "adjust" => spawn_off_main(app, |app| {
-                let next = !*app.state::<AppState>().adjust_mode.lock().unwrap();
+                let next = !*app.state::<AppState>().adjust_mode.lock().unwrap_or_else(|p| p.into_inner());
                 set_adjust_mode(app, next);
                 Ok(())
             }),
             "fullscreen" => {
                 // The checkmark flips to the other target.
                 spawn_off_main(app, |app| {
-                    let current = match &*app.state::<AppState>().config.lock().unwrap() {
+                    let current = match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
                         Some(Ok(config)) => config.mode.target,
                         _ => CaptureMode::Zones,
                     };
@@ -634,7 +634,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
-    *state.tray.lock().unwrap() = Some(tray);
+    *state.tray.lock().unwrap_or_else(|p| p.into_inner()) = Some(tray);
     Ok(())
 }
 
@@ -649,7 +649,7 @@ fn install_hotkeys(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     let state = app.state::<AppState>();
-    let (hotkeys, config_broken) = match &*state.config.lock().unwrap() {
+    let (hotkeys, config_broken) = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => (config.hotkeys.clone(), false),
         _ => (HotkeySettings::default(), true),
     };
@@ -657,12 +657,12 @@ fn install_hotkeys(app: &AppHandle) -> tauri::Result<()> {
         state
             .warnings
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .push("config is broken — default hotkeys are active".into());
     }
 
     for warning in register_hotkeys(app, &hotkeys) {
-        state.warnings.lock().unwrap().push(warning);
+        state.warnings.lock().unwrap_or_else(|p| p.into_inner()).push(warning);
     }
     Ok(())
 }
@@ -702,7 +702,7 @@ pub(crate) fn register_hotkeys(app: &AppHandle, hotkeys: &HotkeySettings) -> Vec
             )),
         }
     }
-    *app.state::<AppState>().registered.lock().unwrap() = registered;
+    *app.state::<AppState>().registered.lock().unwrap_or_else(|p| p.into_inner()) = registered;
     warnings
 }
 
@@ -720,7 +720,7 @@ fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) 
         return; // key release: nothing to do
     }
     let state = app.state::<AppState>();
-    let registered = state.registered.lock().unwrap();
+    let registered = state.registered.lock().unwrap_or_else(|p| p.into_inner());
     let action = if registered.toggle.as_ref() == Some(pressed) {
         Some(Bind::Toggle)
     } else if registered.new_zone.as_ref() == Some(pressed) {
@@ -743,7 +743,7 @@ fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) 
         Some(Bind::Pause) => toggle_pause(app),
         Some(Bind::NewZone) => spawn_off_main(app, |app| open_picker(app, PickerMode::Zone)),
         Some(Bind::Adjust) => spawn_off_main(app, |app| {
-            let next = !*app.state::<AppState>().adjust_mode.lock().unwrap();
+            let next = !*app.state::<AppState>().adjust_mode.lock().unwrap_or_else(|p| p.into_inner());
             set_adjust_mode(app, next);
             Ok(())
         }),
@@ -756,22 +756,22 @@ fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) 
 /// Results Window's status snapshot.
 pub(crate) fn apply_state(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let running = state.running.lock().unwrap().is_some();
-    let paused = *state.paused.lock().unwrap();
-    let adjusting = *state.adjust_mode.lock().unwrap();
-    let fullscreen = match &*state.config.lock().unwrap() {
+    let running = state.running.lock().unwrap_or_else(|p| p.into_inner()).is_some();
+    let paused = *state.paused.lock().unwrap_or_else(|p| p.into_inner());
+    let adjusting = *state.adjust_mode.lock().unwrap_or_else(|p| p.into_inner());
+    let fullscreen = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => matches!(config.mode.target, CaptureMode::FullScreen),
         _ => false,
     };
 
-    if let Some(item) = state.toggle_item.lock().unwrap().as_ref() {
+    if let Some(item) = state.toggle_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
         let _ = item.set_text(if running {
             "Stop Translation"
         } else {
             "Start Translation"
         });
     }
-    if let Some(item) = state.pause_item.lock().unwrap().as_ref() {
+    if let Some(item) = state.pause_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
         let _ = item.set_enabled(running);
         let _ = item.set_text(if paused {
             "Resume Translation"
@@ -779,22 +779,22 @@ pub(crate) fn apply_state(app: &AppHandle) {
             "Pause Translation"
         });
     }
-    if let Some(item) = state.adjust_item.lock().unwrap().as_ref() {
+    if let Some(item) = state.adjust_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
         let _ = item.set_text(if adjusting {
             "Exit Adjust Mode"
         } else {
             "Enter Adjust Mode"
         });
     }
-    if let Some(item) = state.fullscreen_item.lock().unwrap().as_ref() {
+    if let Some(item) = state.fullscreen_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
         let _ = item.set_checked(fullscreen);
     }
-    if let Some(tray) = state.tray.lock().unwrap().as_ref() {
+    if let Some(tray) = state.tray.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
         let mode_note = if fullscreen { " · full screen" } else { "" };
         // Privacy badge (ticket 06): whenever a pipeline is in flight and
         // its Translate Engine sends screen text off-machine, the tooltip
         // says so — the user never has to open a window to know.
-        let privacy_note = match &*state.cloud_engine.lock().unwrap() {
+        let privacy_note = match &*state.cloud_engine.lock().unwrap_or_else(|p| p.into_inner()) {
             Some(engine) if running => format!(" · ☁ {engine}"),
             _ => String::new(),
         };
@@ -812,10 +812,10 @@ pub(crate) fn apply_state(app: &AppHandle) {
 
 fn status_for(app: &AppHandle) -> Status {
     let state = app.state::<AppState>();
-    let running = state.running.lock().unwrap().is_some();
-    let paused = *state.paused.lock().unwrap();
-    let adjust_mode = *state.adjust_mode.lock().unwrap();
-    let warnings = state.warnings.lock().unwrap().clone();
+    let running = state.running.lock().unwrap_or_else(|p| p.into_inner()).is_some();
+    let paused = *state.paused.lock().unwrap_or_else(|p| p.into_inner());
+    let adjust_mode = *state.adjust_mode.lock().unwrap_or_else(|p| p.into_inner());
+    let warnings = state.warnings.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let config_path = state.config_path.display().to_string();
 
     // Monitors drive the full-screen dropdown and the zones' enabled flags.
@@ -846,7 +846,7 @@ fn status_for(app: &AppHandle) -> Status {
         glossary_terms,
         hotkeys,
         text_style,
-    ) = match &*state.config.lock().unwrap() {
+    ) = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => (
             None,
             config.source.language.code().to_string(),
@@ -929,10 +929,10 @@ fn status_for(app: &AppHandle) -> Status {
         ),
     };
 
-    let privacy_engine = state.cloud_engine.lock().unwrap().clone();
+    let privacy_engine = state.cloud_engine.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let start_with_windows = app.autolaunch().is_enabled().unwrap_or(false);
-    let active_profile_id = state.active_profile.lock().unwrap().clone();
-    let profiles = match &*state.config.lock().unwrap() {
+    let active_profile_id = state.active_profile.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let profiles = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => config
             .profiles
             .iter()
@@ -1349,14 +1349,14 @@ fn notify_engine_error(app: &AppHandle, message: &str) {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     {
-        let last = state.engine_notify.lock().unwrap();
+        let last = state.engine_notify.lock().unwrap_or_else(|p| p.into_inner());
         if let Some((seen_message, at_ms)) = last.as_ref() {
             if seen_message == message && now.saturating_sub(*at_ms) < ENGINE_NOTIFY_REPEAT_MS {
                 return;
             }
         }
     }
-    *state.engine_notify.lock().unwrap() = Some((message.to_string(), now));
+    *state.engine_notify.lock().unwrap_or_else(|p| p.into_inner()) = Some((message.to_string(), now));
     if let Err(e) = app
         .notification()
         .builder()
@@ -1387,12 +1387,12 @@ fn cloud_badge(pipeline: &Pipeline) -> Option<String> {
 fn start_loop(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
 
-    let mut running = state.running.lock().unwrap();
+    let mut running = state.running.lock().unwrap_or_else(|p| p.into_inner());
     if running.is_some() {
         return Ok(());
     }
 
-    let config_guard = state.config.lock().unwrap();
+    let config_guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
     let config = match &*config_guard {
         Some(Ok(config)) => config.clone(),
         Some(Err(message)) => return Err(message.clone()),
@@ -1406,19 +1406,20 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     // watch::send with zero receivers does not store the value, so a later
     // subscriber would see an empty list.
     let target = effective_target(app, &config);
-    *state.active_profile.lock().unwrap() = target.profile_id.clone();
-    *state.active_window.lock().unwrap() = target.window;
+    *state.active_profile.lock().unwrap_or_else(|p| p.into_inner()) = target.profile_id.clone();
+    *state.active_window.lock().unwrap_or_else(|p| p.into_inner()) = target.window;
     let zones_rx = state.zones_tx.subscribe();
     let paused_rx = state.paused_tx.subscribe();
     let excluded_rx = state.exclusions_tx.subscribe();
     let _ = state.paused_tx.send(false);
-    *state.paused.lock().unwrap() = false;
+    *state.paused.lock().unwrap_or_else(|p| p.into_inner()) = false;
     let pipeline = build_pipeline(&config, &target)?;
+    apply_watching_nothing(&state, target.zones.is_empty());
     let _ = state.zones_tx.send(target.zones);
     let _ = state.exclusions_tx.send(target.exclusions);
     // Privacy badge (ticket 06): the engine sending screen data off-machine
     // while the loop runs.
-    *state.cloud_engine.lock().unwrap() = cloud_badge(&pipeline);
+    *state.cloud_engine.lock().unwrap_or_else(|p| p.into_inner()) = cloud_badge(&pipeline);
     let (events_tx, events_rx) = mpsc::unbounded_channel();
 
     // Per-monitor overlays show the translations in place. Creation failure
@@ -1460,38 +1461,61 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
 
 fn stop_loop(app: &AppHandle) {
     let state = app.state::<AppState>();
-    if let Some(running) = state.running.lock().unwrap().take() {
+    if let Some(running) = state.running.lock().unwrap_or_else(|p| p.into_inner()).take() {
         running.orchestrator.abort();
         running.forwarder.abort();
     }
     // Pause is a sub-state of running: stopping clears it.
-    *state.paused.lock().unwrap() = false;
+    *state.paused.lock().unwrap_or_else(|p| p.into_inner()) = false;
     let _ = state.paused_tx.send(false);
     // Nothing translates after this: the privacy badge goes away with the
     // pipeline.
-    *state.cloud_engine.lock().unwrap() = None;
+    *state.cloud_engine.lock().unwrap_or_else(|p| p.into_inner()) = None;
     // Nothing new is translated and stale Thai must not linger on screen.
     // While Adjust Mode is on the overlays stay visible (they carry the
     // draggable zone rectangles), so only their blocks are cleared.
-    if *state.adjust_mode.lock().unwrap() {
+    if *state.adjust_mode.lock().unwrap_or_else(|p| p.into_inner()) {
         crate::overlay::clear_all(app);
     } else {
         crate::overlay::clear_and_hide(app);
     }
+    // Nothing is watched once stopped: the warning must not linger.
+    apply_watching_nothing(&state, false);
     apply_state(app);
 }
 
 /// Adds a warning unless the exact same one is already shown (start/stop
 /// cycles must not pile up duplicates).
 pub(crate) fn push_warning(state: &AppState, message: String) {
-    let mut warnings = state.warnings.lock().unwrap();
+    let mut warnings = state.warnings.lock().unwrap_or_else(|p| p.into_inner());
     if !warnings.iter().any(|w| w == &message) {
         warnings.push(message);
     }
 }
 
+/// The warning shown while a RUNNING loop watches zero zones (global zones
+/// empty, no Profile matched): the most silent failure the app can have —
+/// everything looks alive and nothing translates. Fixed text so the push
+/// dedup keeps one copy and [`apply_watching_nothing`] can clear it again
+/// once a real target exists.
+const WATCHING_NOTHING: &str = "Translation is running, but nothing is being watched — draw a Capture Zone (Alt+Z), turn on Full-Screen Mode, or focus an app that has a Profile.";
+
+/// Adds or clears [`WATCHING_NOTHING`] to match the loop's target. Called
+/// wherever the target is (re)computed while the loop runs; stopping the
+/// loop clears it.
+fn apply_watching_nothing(state: &AppState, watching_nothing: bool) {
+    let mut warnings = state.warnings.lock().unwrap_or_else(|p| p.into_inner());
+    if watching_nothing {
+        if !warnings.iter().any(|w| w == WATCHING_NOTHING) {
+            warnings.push(WATCHING_NOTHING.to_string());
+        }
+    } else {
+        warnings.retain(|w| w != WATCHING_NOTHING);
+    }
+}
+
 fn toggle_translation(app: &AppHandle) -> Result<(), String> {
-    let running = app.state::<AppState>().running.lock().unwrap().is_some();
+    let running = app.state::<AppState>().running.lock().unwrap_or_else(|p| p.into_inner()).is_some();
     if running {
         stop_loop(app);
         Ok(())
@@ -1503,11 +1527,11 @@ fn toggle_translation(app: &AppHandle) -> Result<(), String> {
 /// Alt+P / tray: hold the loop still without resetting per-block tracking.
 fn toggle_pause(app: &AppHandle) {
     let state = app.state::<AppState>();
-    if state.running.lock().unwrap().is_none() {
+    if state.running.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
         return; // pause is a sub-state of running
     }
     let now_paused = {
-        let mut paused = state.paused.lock().unwrap();
+        let mut paused = state.paused.lock().unwrap_or_else(|p| p.into_inner());
         *paused = !*paused;
         *paused
     };
@@ -1634,7 +1658,7 @@ fn fullscreen_watch_monitor(app: &AppHandle, config: &AppConfig) -> Result<Monit
 /// zones panel stays empty — blocks are excluded by clicking them instead.
 fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
     let state = app.state::<AppState>();
-    let (target, zones) = match &*state.config.lock().unwrap() {
+    let (target, zones) = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => (config.mode.target, config.zones.clone()),
         _ => (CaptureMode::Zones, Vec::new()),
     };
@@ -1710,7 +1734,7 @@ struct AdjustZone {
 /// draggable/resizable, full-screen blocks clickable) and back on.
 fn set_adjust_mode(app: &AppHandle, active: bool) {
     let state = app.state::<AppState>();
-    *state.adjust_mode.lock().unwrap() = active;
+    *state.adjust_mode.lock().unwrap_or_else(|p| p.into_inner()) = active;
 
     if active {
         // The transient picker must be gone: Adjust Mode owns the overlays'
@@ -1730,7 +1754,7 @@ fn set_adjust_mode(app: &AppHandle, active: bool) {
             }
             Err(message) => {
                 push_warning(&state, format!("Adjust Mode unavailable: {message}"));
-                *state.adjust_mode.lock().unwrap() = false;
+                *state.adjust_mode.lock().unwrap_or_else(|p| p.into_inner()) = false;
             }
         }
     } else {
@@ -1750,7 +1774,7 @@ fn set_adjust_mode(app: &AppHandle, active: bool) {
         }
         // Adjust Mode created or showed the overlays; without the loop there
         // is nothing to see on them.
-        if state.running.lock().unwrap().is_none() {
+        if state.running.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
             crate::overlay::hide_all(app);
         }
     }
@@ -1760,7 +1784,7 @@ fn set_adjust_mode(app: &AppHandle, active: bool) {
 /// Re-sends the adjust payloads (zone rects moved, target switched) while
 /// Adjust Mode is on; no-op otherwise.
 fn refresh_adjust_overlays(app: &AppHandle) {
-    let adjusting = *app.state::<AppState>().adjust_mode.lock().unwrap();
+    let adjusting = *app.state::<AppState>().adjust_mode.lock().unwrap_or_else(|p| p.into_inner());
     if !adjusting {
         return;
     }
@@ -1787,7 +1811,7 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
     // The picker owns the overlays' attention while it is open: leave
     // Adjust Mode first (its interactive zone rectangles would fight the
     // dim + drag session).
-    if *app.state::<AppState>().adjust_mode.lock().unwrap() {
+    if *app.state::<AppState>().adjust_mode.lock().unwrap_or_else(|p| p.into_inner()) {
         set_adjust_mode(app, false);
     }
 
@@ -1798,7 +1822,7 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
     let size = monitor.size();
     let origin = monitor.position();
 
-    *app.state::<AppState>().picker_mode.lock().unwrap() = Some(mode);
+    *app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
 
     let window =
         WebviewWindowBuilder::new(app, PICKER_LABEL, WebviewUrl::App("picker.html".into()))
@@ -1813,7 +1837,7 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
             .visible(false)
             .build()
             .map_err(|e| {
-                *app.state::<AppState>().picker_mode.lock().unwrap() = None;
+                *app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = None;
                 format!("cannot open the capture overlay: {e}")
             })?;
 
@@ -1832,7 +1856,7 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
         app.state::<AppState>()
             .warnings
             .lock()
-            .unwrap()
+            .unwrap_or_else(|p| p.into_inner())
             .push(format!(
                 "could not exclude the picker from capture: {message}"
             ));
@@ -1845,12 +1869,12 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
 }
 
 fn close_picker(app: &AppHandle) {
-    *app.state::<AppState>().picker_mode.lock().unwrap() = None;
+    *app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = None;
     if let Some(window) = app.get_webview_window(PICKER_LABEL) {
         let _ = window.destroy();
     }
     // Back to in-place translations (only meaningful while the loop runs).
-    if app.state::<AppState>().running.lock().unwrap().is_some() {
+    if app.state::<AppState>().running.lock().unwrap_or_else(|p| p.into_inner()).is_some() {
         crate::overlay::show_all(app);
     }
 }
@@ -1901,7 +1925,7 @@ pub(crate) fn with_config_mut<T>(
     edit: impl FnOnce(&mut AppConfig) -> Result<T, String>,
 ) -> Result<T, String> {
     let state = app.state::<AppState>();
-    let mut guard = state.config.lock().unwrap();
+    let mut guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
     let config = match &mut *guard {
         Some(Ok(config)) => config,
         Some(Err(message)) => return Err(message.clone()),
@@ -1921,7 +1945,7 @@ pub(crate) fn with_config_mut<T>(
 
 /// A clone of the current valid config (`Err` when broken/not yet loaded).
 pub(crate) fn current_config(app: &AppHandle) -> Result<AppConfig, String> {
-    match &*app.state::<AppState>().config.lock().unwrap() {
+    match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => Ok(config.clone()),
         Some(Err(message)) => Err(message.clone()),
         None => Err("config not loaded yet".into()),
@@ -1933,7 +1957,7 @@ pub(crate) fn current_config(app: &AppHandle) -> Result<AppConfig, String> {
 /// visibly applies, resetting per-block tracking (a language change rebuilds
 /// the OCR engine anyway). No-op while stopped.
 pub(crate) fn restart_loop_if_running(app: &AppHandle) {
-    let running = app.state::<AppState>().running.lock().unwrap().is_some();
+    let running = app.state::<AppState>().running.lock().unwrap_or_else(|p| p.into_inner()).is_some();
     if !running {
         return;
     }
@@ -1984,6 +2008,10 @@ fn spawn_profile_watcher(app: &AppHandle) {
 
 /// One watcher pass: resolve the foreground app against the Profiles and
 /// apply what changed. Failures surface as warnings, never silently.
+/// The state locks are recovered (not unwrapped) so one poisoned mutex can
+/// never kill this task — a dead watcher would silently freeze the app on
+/// the global capture target forever, which reads to the user as "Profiles
+/// don't work".
 fn profile_watch_tick(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let foreground = crate::foreground::foreground_app();
@@ -1991,7 +2019,7 @@ fn profile_watch_tick(app: &AppHandle) -> Result<(), String> {
     // Which profile matches the foreground app right now (None = global
     // fallback target). A broken or not-yet-loaded config matches nothing.
     let matched: Option<(String, Region, Vec<Zone>)> = {
-        let guard = state.config.lock().unwrap();
+        let guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
         match (&*guard, &foreground) {
             (Some(Ok(config)), Some(fg)) => Profile::resolve(&config.profiles, &fg.exe)
                 .map(|profile| (profile.id.clone(), fg.rect, profile.capture_zones(fg.rect))),
@@ -2001,7 +2029,7 @@ fn profile_watch_tick(app: &AppHandle) -> Result<(), String> {
     let new_id = matched.as_ref().map(|(id, _, _)| id.clone());
 
     let changed = {
-        let mut active = state.active_profile.lock().unwrap();
+        let mut active = state.active_profile.lock().unwrap_or_else(|p| p.into_inner());
         let changed = *active != new_id;
         if changed {
             *active = new_id;
@@ -2023,7 +2051,7 @@ fn profile_watch_tick(app: &AppHandle) -> Result<(), String> {
     // window when it moves or resizes — its window-relative zones re-resolve
     // against the new rect, and pills at the old position must not linger.
     if let Some((_, rect, zones)) = matched {
-        let mut window = state.active_window.lock().unwrap();
+        let mut window = state.active_window.lock().unwrap_or_else(|p| p.into_inner());
         if *window != Some(rect) {
             *window = Some(rect);
             drop(window);
@@ -2045,8 +2073,9 @@ fn push_active_target(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let config = current_config(app)?;
     let target = effective_target(app, &config);
-    *state.active_profile.lock().unwrap() = target.profile_id.clone();
-    *state.active_window.lock().unwrap() = target.window;
+    *state.active_profile.lock().unwrap_or_else(|p| p.into_inner()) = target.profile_id.clone();
+    *state.active_window.lock().unwrap_or_else(|p| p.into_inner()) = target.window;
+    apply_watching_nothing(&state, target.zones.is_empty());
     let old = state.zones_tx.borrow().clone();
     for zone in &old {
         if !target
@@ -2068,7 +2097,7 @@ fn push_active_target(app: &AppHandle) -> Result<(), String> {
 /// way. Shared by every profile-editing command.
 pub(crate) fn profile_edited(app: &AppHandle, profile_id: &str) {
     let state = app.state::<AppState>();
-    let is_active = *state.active_profile.lock().unwrap() == Some(profile_id.to_string());
+    let is_active = *state.active_profile.lock().unwrap_or_else(|p| p.into_inner()) == Some(profile_id.to_string());
     if is_active {
         restart_loop_if_running(app);
     }
@@ -2149,7 +2178,7 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
     // Pre-check against the current zones so a rejected edit never lands in
     // the in-memory config.
     {
-        let guard = state.config.lock().unwrap();
+        let guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(Ok(config)) = &*guard {
             if config
                 .zones
@@ -2211,7 +2240,7 @@ async fn open_zone_picker(app: AppHandle, mode: String) -> Result<(), String> {
 /// The picker overlay asks once it has loaded what session it is serving.
 #[tauri::command]
 fn get_picker_mode(app: AppHandle) -> String {
-    match &*app.state::<AppState>().picker_mode.lock().unwrap() {
+    match &*app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(PickerMode::Zone) => "zone",
         Some(PickerMode::OneShot) => "oneshot",
         Some(PickerMode::ProfileZone { .. }) => "profile",
@@ -2248,7 +2277,7 @@ fn commit_zone_drag_inner(
     height: i32,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let Some(mode) = state.picker_mode.lock().unwrap().take() else {
+    let Some(mode) = state.picker_mode.lock().unwrap_or_else(|p| p.into_inner()).take() else {
         return Err("no capture session is open".into());
     };
 
@@ -2260,7 +2289,7 @@ fn commit_zone_drag_inner(
 
     let result = commit_picked_region(app, &mode, x, y, width, height);
     if result.is_err() {
-        *state.picker_mode.lock().unwrap() = Some(mode);
+        *state.picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
     }
     result
 }
@@ -2305,9 +2334,9 @@ fn commit_picked_region(
             close_picker(app);
             // Zones are what the loop watches: creating the first one starts
             // translation (matches the tray's Start).
-            if state.running.lock().unwrap().is_none() {
+            if state.running.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
                 if let Err(e) = start_loop(app) {
-                    state.warnings.lock().unwrap().push(format!(
+                    state.warnings.lock().unwrap_or_else(|p| p.into_inner()).push(format!(
                         "failed to start translation after creating a zone: {e}"
                     ));
                 }
@@ -2320,7 +2349,7 @@ fn commit_picked_region(
             // closes, so failures stay visible in it. The pass follows the
             // effective target: an active Profile's language and Glossary
             // layer, its exclusions (none) — the global settings otherwise.
-            let config = match &*state.config.lock().unwrap() {
+            let config = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
                 Some(Ok(config)) => config.clone(),
                 Some(Err(message)) => return Err(message.clone()),
                 None => return Err("config not loaded yet".into()),
@@ -2336,7 +2365,7 @@ fn commit_picked_region(
             // Fallible parts resolve before the picker closes, so failures
             // stay visible in it (it stays open for another drag).
             let profile_exe = {
-                let guard = state.config.lock().unwrap();
+                let guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
                 match &*guard {
                     Some(Ok(config)) => config
                         .profiles
@@ -2428,7 +2457,7 @@ async fn cancel_zone_drag(app: AppHandle) {
 /// the overlay must never go blank because of config trouble.
 #[tauri::command]
 fn get_text_style(app: AppHandle) -> TextStyleDto {
-    match &*app.state::<AppState>().config.lock().unwrap() {
+    match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => TextStyleDto::from(&config.text_style),
         _ => TextStyleDto::default(),
     }
@@ -2458,7 +2487,7 @@ async fn toggle_adjust_mode(app: AppHandle) {
     // set_adjust_mode creates/moves/hides overlay windows — off the main
     // thread, see run_off_main.
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        let active = *app.state::<AppState>().adjust_mode.lock().unwrap();
+        let active = *app.state::<AppState>().adjust_mode.lock().unwrap_or_else(|p| p.into_inner());
         set_adjust_mode(&app, !active);
     })
     .await;
@@ -2645,7 +2674,7 @@ fn run_one_shot(
 
     // A one-shot also sends screen data to the engine: the privacy badge
     // covers it too (cleared once the pass completes).
-    *app.state::<AppState>().cloud_engine.lock().unwrap() = cloud_badge(&pipeline);
+    *app.state::<AppState>().cloud_engine.lock().unwrap_or_else(|p| p.into_inner()) = cloud_badge(&pipeline);
     apply_state(app);
 
     let orchestrator = Orchestrator::new(
@@ -2669,8 +2698,8 @@ fn run_one_shot(
         // Clear the privacy badge only if the loop is not running — a loop
         // started during the pass owns the badge now (stop_loop clears it).
         let state = task_app.state::<AppState>();
-        if state.running.lock().unwrap().is_none() {
-            *state.cloud_engine.lock().unwrap() = None;
+        if state.running.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
+            *state.cloud_engine.lock().unwrap_or_else(|p| p.into_inner()) = None;
             apply_state(&task_app);
         }
     });

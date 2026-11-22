@@ -176,7 +176,7 @@ pub struct GeminiEngineDto {
 
 #[tauri::command]
 pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
-    match &*app.state::<AppState>().config.lock().unwrap() {
+    match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => Ok(EnginesDto {
             default_engine: config.engine.clone(),
             reading: config.reading.code().to_string(),
@@ -549,7 +549,7 @@ pub struct GlossaryEntryDto {
 
 #[tauri::command]
 pub(crate) fn list_glossary(app: AppHandle) -> Result<Vec<GlossaryEntryDto>, String> {
-    match &*app.state::<AppState>().config.lock().unwrap() {
+    match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => Ok(config
             .glossary
             .0
@@ -888,7 +888,7 @@ pub(crate) fn list_profile_glossary(
     app: AppHandle,
     profile_id: String,
 ) -> Result<Vec<GlossaryEntryDto>, String> {
-    match &*app.state::<AppState>().config.lock().unwrap() {
+    match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => config
             .profiles
             .iter()

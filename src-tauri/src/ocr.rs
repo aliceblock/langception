@@ -132,6 +132,28 @@ pub(crate) fn primary_subtag(tag: &str) -> String {
     tag.split(['-', '_']).next().unwrap_or(tag).to_ascii_lowercase()
 }
 
+/// The language tags of every installed OCR pack ("en-US", "ja-JP", …),
+/// for diagnostics and the first-run wizard. Empty when the query fails or
+/// COM is not initialized on the calling thread.
+pub fn available_recognizer_languages() -> Vec<String> {
+    init_com();
+    let Ok(languages) = WinOcrEngine::AvailableRecognizerLanguages() else {
+        return Vec::new();
+    };
+    let mut tags = Vec::new();
+    if let Ok(count) = languages.Size() {
+        for i in 0..count {
+            if let Ok(lang) = languages.GetAt(i) {
+                if let Ok(tag) = lang.LanguageTag() {
+                    tags.push(tag.to_string());
+                }
+            }
+        }
+    }
+    tags.sort();
+    tags
+}
+
 /// Lower ranks first: Simplified Chinese packs before Traditional, then the rest.
 pub(crate) fn pack_preference(tag: &str) -> u8 {
     let lower = tag.to_ascii_lowercase();
