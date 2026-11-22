@@ -129,7 +129,16 @@ function renderStatus(status) {
     warningsLine.classList.add("hidden");
   }
 
-  emptyHint.textContent = `Draw a Capture Zone with ${hotkeys.newZone}, or run a One-shot Capture with ${hotkeys.oneShot}. Translation toggles with ${hotkeys.toggle}, pauses with ${hotkeys.pause}, Adjust Mode with ${hotkeys.adjust}.`;
+  // Ticket 21: one action per line — a run-on sentence doesn't scan. The
+  // hotkeys stay dynamic (live-rebindable from Settings), same as everywhere
+  // else in this file.
+  emptyHint.textContent = [
+    `Draw a Capture Zone with ${hotkeys.newZone}`,
+    `Run a One-shot Capture with ${hotkeys.oneShot}`,
+    `Toggle translation with ${hotkeys.toggle}`,
+    `Pause with ${hotkeys.pause}`,
+    `Toggle Adjust Mode with ${hotkeys.adjust}`,
+  ].join("\n");
 
   renderModeControls();
   renderZones();

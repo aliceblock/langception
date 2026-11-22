@@ -336,7 +336,14 @@ main { flex: 1; overflow-y: auto; padding: 10px 16px 20px; }
   color: var(--muted);
   font-size: 14px;
 }
-.empty-state .hint { margin-top: 6px; font-size: 12px; }
+/* The hint is one guideline per line (ticket 21): pre-line honors the \n
+   joins from main.js but still wraps when a line outgrows a narrow window. */
+.empty-state .hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-line;
+}
 
 .toast {
   position: fixed;
