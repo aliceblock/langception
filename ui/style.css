@@ -16,15 +16,35 @@ body {
 }
 
 /* The first header row is the title bar (chrome in theme.css); the
-   config/warnings lines below stay ordinary header content. */
+   warnings line below owns its own spacing so the bar sits tight, like the
+   Settings window's. */
 header {
-  padding: 0 12px 8px 16px;
+  padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   user-select: none;
 }
 
 h1 { font-size: 15px; font-weight: 600; }
+
+/* Active-Profile chip (ticket 19): the yellow sibling of .chip — yellow
+   marks the special state (PRODUCT.md principle 2). Inline-flex + gap keeps
+   the label and name spaced without relying on text spaces; long profile
+   names ellipsize instead of squeezing the row. */
+.chip.profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 201, 31, 0.16);
+  color: var(--accent);
+  border: 1px solid rgba(255, 201, 31, 0.45);
+  max-width: 180px;
+}
+.chip.profile .profile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* The functional buttons (Pause/Adjust/Start/Settings) cluster right of the
    brand, then the window controls; the divider separates app UI from
@@ -59,7 +79,7 @@ h1 { font-size: 15px; font-weight: 600; }
 .btn:disabled:not(.primary):hover { border-color: var(--border); color: var(--text); }
 
 .warnings-line {
-  margin-top: 6px;
+  margin: 8px 0;
   padding: 7px 10px;
   border-radius: 8px;
   background: rgba(242, 182, 60, 0.1);
@@ -240,6 +260,7 @@ h1 { font-size: 15px; font-weight: 600; }
   padding: 2px 8px;
   border-radius: 999px;
   font-weight: 600;
+  white-space: nowrap;
   background: rgba(108, 199, 255, 0.16);
   color: var(--info);
   border: 1px solid rgba(108, 199, 255, 0.4);

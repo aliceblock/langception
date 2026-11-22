@@ -12,9 +12,9 @@
       {
         "label": "results",
         "title": "Langception — Results",
-        "width": 640,
+        "width": 800,
         "height": 720,
-        "minWidth": 640,
+        "minWidth": 800,
         "minHeight": 400,
         "alwaysOnTop": true,
         "resizable": true,

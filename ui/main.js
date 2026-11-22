@@ -17,6 +17,9 @@ const pauseBtn = document.getElementById("pause-btn");
 const adjustBtn = document.getElementById("adjust-btn");
 const settingsBtn = document.getElementById("settings-btn");
 const warningsLine = document.getElementById("warnings-line");
+const langChip = document.getElementById("lang-chip");
+const profileChip = document.getElementById("profile-chip");
+const profileName = document.getElementById("profile-name");
 const errorBanner = document.getElementById("error-banner");
 const resultsList = document.getElementById("results");
 const emptyState = document.getElementById("empty-state");
@@ -93,6 +96,22 @@ function renderStatus(status) {
   toggleBtn.classList.toggle("primary", !running);
   pauseBtn.disabled = !running;
   pauseBtn.textContent = paused ? "Resume" : "Pause";
+
+  // Ticket 19: the title bar tells you at a glance what the loop is
+  // running with — the language pair, and the Profile while one is matched
+  // to the foreground app (ticket 07: its settings are what the loop uses).
+  langChip.textContent = `${(status.language || "en").toUpperCase()} → ${(
+    status.targetLanguage || "th"
+  ).toUpperCase()}`;
+  const activeProfile = (status.profiles || []).find(
+    (p) => p.id && p.id === status.activeProfileId,
+  );
+  if (activeProfile) {
+    profileName.textContent = activeProfile.name;
+    profileChip.classList.remove("hidden");
+  } else {
+    profileChip.classList.add("hidden");
+  }
 
   // Ticket 18: the dense config line is gone — engine, cadence, hold,
   // glossary count and the config path live in the Settings tabs and the
