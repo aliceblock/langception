@@ -6,9 +6,9 @@
 
 :root {
   /* Black/yellow brand: near-black surfaces, yellow accent. --accent-ink is
-     the text color ON yellow (11:1 contrast); --accent-deep ends the logo
-     gradient; --info keeps the cyan identity for interactive geometry
-     (Adjust Mode, zone rectangles). color-scheme: dark keeps native
+     the text color ON yellow (11:1 contrast); --accent-deep is the dark end
+     of the accent ramp; --info keeps the cyan identity for interactive
+     geometry (Adjust Mode, zone rectangles). color-scheme: dark keeps native
      select/datalist/scrollbars dark even when Windows itself runs light —
      the app is dark-only by design. */
   color-scheme: dark;
@@ -65,13 +65,15 @@
   min-width: 0;
 }
 
+/* The real brand artwork (ticket 32): ui/logo.png is the bundled 128px icon
+   verbatim — same file the exe/taskbar use — downscaled by the browser to
+   titlebar size. The border just separates the artwork's black ground from
+   the panel behind it; the attribute work (drag region) stays in the HTML. */
 .logo {
   width: 26px; height: 26px;
+  flex: none;
   border-radius: 7px;
-  background: linear-gradient(135deg, var(--accent-2), var(--accent-deep));
-  color: var(--accent-ink);
-  font-weight: 700;
-  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border);
 }
 
 .titlebar-buttons {
