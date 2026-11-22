@@ -163,6 +163,9 @@ const enginesGeminiKey = document.getElementById("engines-gemini-key");
 const enginesGeminiModel = document.getElementById("engines-gemini-model");
 const enginesGeminiTemperature = document.getElementById("engines-gemini-temperature");
 const enginesNote = document.getElementById("engines-note");
+// The custom LLM prompt fields (ticket 37): empty = the built-in default.
+const enginesPromptTranslation = document.getElementById("engines-prompt-translation");
+const enginesPromptScreenReading = document.getElementById("engines-prompt-screen-reading");
 const wizardAzureKey = document.getElementById("wizard-azure-key");
 const wizardAzureRegion = document.getElementById("wizard-azure-region");
 const wizardAzureNote = document.getElementById("wizard-azure-note");
@@ -219,6 +222,8 @@ async function loadEngines() {
     enginesGeminiKey.value = savedEngines.gemini.apiKey;
     enginesGeminiModel.value = savedEngines.gemini.model;
     enginesGeminiTemperature.value = savedEngines.gemini.temperature;
+    enginesPromptTranslation.value = savedEngines.translationPrompt || "";
+    enginesPromptScreenReading.value = savedEngines.screenReadingPrompt || "";
     // The wizard's fields prefill too, so a half-finished setup survives
     // re-running the wizard.
     wizardAzureKey.value = savedEngines.azure.key;
@@ -255,6 +260,10 @@ function collectEngines(defaultEngine) {
       model: enginesGeminiModel.value.trim(),
       temperature: Number(enginesGeminiTemperature.value) || 0,
     },
+    // The prompt fields pass through un-trimmed: the Rust side trims and
+    // treats a whitespace-only text as empty (the built-in default).
+    translationPrompt: enginesPromptTranslation.value,
+    screenReadingPrompt: enginesPromptScreenReading.value,
   };
 }
 
@@ -266,6 +275,35 @@ document.getElementById("engines-save").addEventListener("click", async () => {
     toast(String(e), "error");
   }
 });
+
+// "Reset to default" (ticket 37): clear the field AND save right away —
+// empty means the built-in prompt applies again, so the reset is complete
+// in one step (same save path and validation as Save engines). A rejected
+// save (validation) puts the typed prompt back, so the field never lies
+// about what is stored.
+async function resetPromptToDefault(field, button) {
+  const hadContent = field.value.trim() !== "";
+  const previous = field.value;
+  button.disabled = true;
+  try {
+    field.value = "";
+    await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
+    toast(hadContent ? "Prompt reset — the built-in default applies again" : "Already using the built-in default");
+  } catch (e) {
+    field.value = previous;
+    toast(String(e), "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+for (const [field, buttonId] of [
+  [enginesPromptTranslation, "engines-prompt-translation-reset"],
+  [enginesPromptScreenReading, "engines-prompt-screen-reading-reset"],
+]) {
+  document.getElementById(buttonId).addEventListener("click", (e) => {
+    resetPromptToDefault(field, e.currentTarget);
+  });
+}
 
 // The vision-reading latency/cost warning (ticket 12) follows the select
 // live — the user sees what "fused" implies before saving it.
@@ -342,6 +380,10 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
         openai: savedEngines?.openai || { baseUrl: "", apiKey: "", model: "", temperature: 0.2 },
         lmstudio: savedEngines?.lmstudio || { baseUrl: "", model: "", temperature: 0.2 },
         gemini: savedEngines?.gemini || { apiKey: "", model: "", temperature: 0.2 },
+        // The custom prompts pass through untouched — the wizard's upgrade
+        // must never clear them.
+        translationPrompt: savedEngines?.translationPrompt || "",
+        screenReadingPrompt: savedEngines?.screenReadingPrompt || "",
       },
     });
     await loadEngines();

@@ -315,6 +315,39 @@
             <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
           </div>
         </div>
+        <h3>Prompts (advanced)</h3>
+        <p class="hint">
+          The system prompts Langception sends to the LLM engines (Gemini,
+          OpenAI-compatible, LM Studio) with every translation. Leave a field
+          empty to use the built-in instruction; <code>{source}</code> and
+          <code>{target}</code> in a custom text are replaced with the
+          language names. The app always appends by itself — the Glossary
+          entries relevant to the text, the Genderless Mode instruction when
+          enabled, the screen-reading reply contract (a fixed JSON shape, so
+          a custom prompt cannot break parsing), and the prompt's version tag
+          (marked "custom" so a recorded request shows what produced it).
+          Google, Azure and DeepL never see prompts. Applies with
+          <em>Save engines</em>.
+        </p>
+        <div class="prompt-field">
+          <div class="row prompt-head">
+            <span class="prompt-label">Translation prompt</span>
+            <button id="engines-prompt-translation-reset" class="btn small" title="Clear the field — the built-in translation instruction applies again">
+              Reset to default
+            </button>
+          </div>
+          <textarea id="engines-prompt-translation" rows="5" spellcheck="false" placeholder="Leave empty to use the built-in translation instruction (translate only, keep formatting)."></textarea>
+        </div>
+        <div class="prompt-field">
+          <div class="row prompt-head">
+            <span class="prompt-label">Screen-reading prompt</span>
+            <button id="engines-prompt-screen-reading-reset" class="btn small" title="Clear the field — the built-in screen-reading instruction applies again">
+              Reset to default
+            </button>
+          </div>
+          <textarea id="engines-prompt-screen-reading" rows="5" spellcheck="false" placeholder="Leave empty to use the built-in screen-reading instruction."></textarea>
+          <span class="hint">Used only when Screen reading above is “Vision model” (one fused call reads and translates every block).</span>
+        </div>
         <div class="row">
           <button id="engines-save" class="btn primary">Save engines</button>
           <button id="engines-test" class="btn small">Test default engine</button>

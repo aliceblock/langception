@@ -187,6 +187,15 @@ pub struct TranslationGuidance {
     /// Genderless Mode (CONTEXT.md) is on: the prompt must ask for Thai
     /// that carries no speaker gender.
     pub genderless: bool,
+    /// A user-supplied replacement for the prompt's base instruction
+    /// (ticket 37, Settings → Engines → Prompts). Only the base is
+    /// replaced: the Glossary injection, the Genderless instruction, the
+    /// fused reply contract, and the version tag still attach. `None` or
+    /// whitespace-only means the built-in default (the prompt module
+    /// normalizes, so callers may pass the raw field). The orchestrator
+    /// fills it with the translation-prompt override on the classic path
+    /// and the screen-reading one on the fused path.
+    pub custom_base: Option<String>,
 }
 
 impl TranslationGuidance {
@@ -294,6 +303,51 @@ mod tests {
             },
             label: "Start".into(),
         }
+    }
+
+    /// A keyed/MT engine (Google, Azure, DeepL) as the port models it: it
+    /// implements only `translate` and keeps the default `translate_guided`.
+    struct BareEngine {
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl TranslateEngine for BareEngine {
+        async fn translate(
+            &self,
+            text: &str,
+            _source: SourceLanguage,
+            _target: &str,
+        ) -> Result<String, TranslateError> {
+            self.seen.lock().unwrap().push(text.to_string());
+            Ok("คำแปล".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_non_llm_engine_never_sees_the_prompt_guidance() {
+        // Ticket 37's "keyed/MT engines are unchanged regardless of the
+        // override text": the port's default translate_guided discards the
+        // guidance wholesale — a custom base included — so such an engine
+        // is called with the bare text exactly as before.
+        let engine = BareEngine {
+            seen: std::sync::Mutex::new(Vec::new()),
+        };
+        let guidance = TranslationGuidance {
+            glossary: vec![("Vertin".into(), "เวอร์ติน".into())],
+            genderless: true,
+            custom_base: Some("Translate like a pirate.".into()),
+        };
+        let thai = engine
+            .translate_guided("Vertin picks up the case", SourceLanguage::En, "th", &guidance)
+            .await
+            .unwrap();
+        assert_eq!(thai, "คำแปล");
+        assert_eq!(
+            *engine.seen.lock().unwrap(),
+            vec!["Vertin picks up the case".to_string()],
+            "the bare text, nothing else — no override can reach a keyed engine"
+        );
     }
 
     fn block_at(x: i32, y: i32, width: u32, height: u32) -> TextBlock {

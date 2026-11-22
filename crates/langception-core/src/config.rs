@@ -377,6 +377,30 @@ impl Default for WindowSettings {
     }
 }
 
+/// Custom base instructions for the two LLM system prompts (ticket 37,
+/// Settings → Engines → Prompts). Empty (the default) means the built-in
+/// templates, byte-for-byte. A custom text replaces only that prompt's
+/// base instruction — `{source}`/`{target}` substitute to the language
+/// names exactly as the defaults do, and the automatic appendices (the
+/// Glossary entries, the Genderless instruction, the fused reply
+/// contract, the version tag) still attach. The LLM engines (Gemini,
+/// OpenAI-compatible, LM Studio) are the only consumers: keyed/MT engines
+/// (Google, Azure, DeepL) never see prompts, so these fields are inert
+/// for them. Global, not per-Profile.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptSettings {
+    /// Replaces the per-block translation prompt's base instruction.
+    /// Whitespace-only is treated as empty (the built-in default) by the
+    /// prompt module.
+    pub translation: String,
+    /// Replaces the fused screen-reading prompt's base instruction (for
+    /// Reading Mode "fused"). The pinned JSON reply contract is
+    /// re-appended automatically — a custom text cannot break the loop's
+    /// mechanical parsing.
+    pub screen_reading: String,
+}
+
 /// The Translate Engines this build offers, by config name — the accepted
 /// values for the global engine setting and a Profile's `engine` choice.
 /// An unknown name in a hand-edited config must be a visible validation
@@ -576,6 +600,11 @@ pub struct AppConfig {
     /// → General). The overlay and picker are not configurable here.
     #[serde(default)]
     pub windows: WindowSettings,
+    /// Custom base instructions for the two LLM system prompts (ticket
+    /// 37, Settings → Engines → Prompts); empty fields keep the built-in
+    /// templates. Applies to the LLM engines only.
+    #[serde(default)]
+    pub prompts: PromptSettings,
     #[serde(default)]
     pub text_style: TextStyle,
     #[serde(default)]
@@ -951,6 +980,23 @@ one_shot_capture = "Alt+Q"
 # unconditionally: that is how they work, not a preference.
 results_on_top = true
 settings_on_top = false
+
+[prompts]
+# Custom base instructions for the two LLM system prompts (Settings →
+# Engines → Prompts). Empty = the built-in defaults. A custom text
+# replaces ONLY that prompt's base instruction: {source} and {target}
+# are replaced with the language names, and the app still appends the
+# Glossary entries, the Genderless instruction, and the prompt's version
+# tag (marked "custom", so a recorded request shows what produced it).
+# Only LLM engines (Gemini, OpenAI-compatible, LM Studio) receive prompts;
+# Google, Azure and DeepL ignore these fields entirely. Whitespace-only
+# counts as empty.
+# The per-block translation instruction (classic OCR reading).
+translation = ""
+# The fused screen-reading instruction (Screen reading = "Vision model").
+# The pinned JSON reply contract is re-appended automatically — a custom
+# text cannot break the loop's mechanical parsing of the reply.
+screen_reading = ""
 
 [glossary]
 # Terms that pin a fixed Thai translation. A block whose ENTIRE text
@@ -2254,6 +2300,73 @@ language = "en"
         assert!(config.windows.settings_on_top);
 
         let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    // ---- Custom LLM system prompts (ticket 37) ----
+
+    #[test]
+    fn default_template_prompts_are_empty() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.prompts, PromptSettings::default());
+        assert_eq!(config.prompts.translation, "");
+        assert_eq!(config.prompts.screen_reading, "");
+    }
+
+    #[test]
+    fn ticket37_config_without_prompts_gets_the_default() {
+        // A config from before ticket 37 has no [prompts] table — strip it
+        // line-wise (the ticket-34 windows-strip trick above) and parse:
+        // serde fills the empty defaults, never rejects the file.
+        let mut in_prompts = false;
+        let legacy: String = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("[prompts]") {
+                    in_prompts = true;
+                    return false;
+                }
+                if in_prompts {
+                    if trimmed.starts_with('[') {
+                        in_prompts = false; // the next section ([glossary])
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert_eq!(config.prompts, PromptSettings::default());
+    }
+
+    #[test]
+    fn multiline_prompt_overrides_roundtrip_through_toml() {
+        // Newlines are the point of a custom prompt — they must survive
+        // the file round trip untouched.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace(
+                "translation = \"\"",
+                "translation = \"\"\"Translate politely.\nKeep names as written.\"\"\"",
+            )
+            .replace(
+                "screen_reading = \"\"",
+                "screen_reading = \"\"\"Read the {source} screen.\nAnswer in {target}.\"\"\"",
+            );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(
+            config.prompts.translation,
+            "Translate politely.\nKeep names as written."
+        );
+        assert_eq!(
+            config.prompts.screen_reading,
+            "Read the {source} screen.\nAnswer in {target}."
+        );
+
+        let reparsed =
+            AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
     }
 }

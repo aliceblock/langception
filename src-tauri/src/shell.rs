@@ -1193,6 +1193,12 @@ fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeli
             // when it flips so fired blocks start (or stop) carrying
             // sampled colors.
             auto_colors: config.text_style.auto_colors,
+            // The custom LLM prompt base instructions (ticket 37): the
+            // raw strings ride in — the prompt module normalizes
+            // (whitespace-only = built-in default) — and the loop restart
+            // in set_engines re-reads them when saved.
+            translation_prompt_override: Some(config.prompts.translation.clone()),
+            fused_prompt_override: Some(config.prompts.screen_reading.clone()),
         },
         glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),

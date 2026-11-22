@@ -159,6 +159,16 @@ pub struct LoopConfig {
     /// event. Read at loop start like `genderless` — the shell restarts
     /// the loop when the Text Style toggle changes.
     pub auto_colors: bool,
+    /// Custom base instruction for the per-block translation prompt
+    /// (ticket 37, Settings → Engines → Prompts); `None` or blank = the
+    /// built-in default. Read at loop start like the language — the shell
+    /// restarts the loop when the field changes. The raw config string is
+    /// fine here: the prompt module normalizes (trims, whitespace-only =
+    /// default).
+    pub translation_prompt_override: Option<String>,
+    /// The same override for the fused screen-reading prompt (ticket 37),
+    /// handed to the fused engine's guidance.
+    pub fused_prompt_override: Option<String>,
 }
 
 /// A Text Block is identified by its on-screen position, quantized so
@@ -753,11 +763,13 @@ impl Orchestrator {
 
     /// The prompt guidance for a fused call (ticket 12): ALL Glossary
     /// entries — a fused call sees the image, not one block's text, so
-    /// there is nothing to filter entries by — plus the Genderless flag.
+    /// there is nothing to filter entries by — plus the Genderless flag
+    /// and the screen-reading prompt override (ticket 37).
     fn fused_guidance(&self) -> crate::ports::TranslationGuidance {
         crate::ports::TranslationGuidance {
             glossary: self.glossary.entries(),
             genderless: self.config.genderless,
+            custom_base: self.config.fused_prompt_override.clone(),
         }
     }
 
@@ -899,10 +911,13 @@ impl Orchestrator {
                 // names translate per the Glossary, and Genderless Mode
                 // rides as a prompt instruction for LLM engines. Non-LLM
                 // engines discard the guidance (the port's default) and
-                // keep relying on the output scrub below.
+                // keep relying on the output scrub below. The custom
+                // translation-prompt override (ticket 37) rides the same
+                // way — non-LLM engines never see prompts at all.
                 let guidance = crate::ports::TranslationGuidance {
                     glossary: self.glossary.relevant_entries(text),
                     genderless: self.config.genderless,
+                    custom_base: self.config.translation_prompt_override.clone(),
                 };
                 self.translate
                     .translate_guided(

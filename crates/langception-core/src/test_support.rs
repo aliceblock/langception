@@ -12,5 +12,6 @@ pub(crate) fn guided(entries: &[(&str, &str)], genderless: bool) -> TranslationG
             .map(|(term, thai)| (term.to_string(), thai.to_string()))
             .collect(),
         genderless,
+        custom_base: None,
     }
 }

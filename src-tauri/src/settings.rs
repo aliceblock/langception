@@ -135,7 +135,9 @@ pub(crate) fn get_about(app: AppHandle) -> About {
 /// The Engines tab's editing surface: the global default engine, every
 /// configurable engine's settings, and the reading mode (ticket 12: classic
 /// OCR vs the fused vision call). Keys and URLs round-trip to the page so
-/// edits prefill; the window is local-only.
+/// edits prefill; the window is local-only. The custom LLM prompt base
+/// instructions (ticket 37) ride here too — they live on the same tab and
+/// apply with the same save.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnginesDto {
@@ -150,6 +152,12 @@ pub struct EnginesDto {
     pub lmstudio: LmStudioEngineDto,
     /// Google Gemini (ticket 11; the endpoint is Google's fixed API root).
     pub gemini: GeminiEngineDto,
+    /// Custom base instruction for the per-block translation prompt
+    /// (ticket 37; empty = the built-in default).
+    pub translation_prompt: String,
+    /// Custom base instruction for the fused screen-reading prompt
+    /// (ticket 37; empty = the built-in default).
+    pub screen_reading_prompt: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +227,8 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
                 model: config.engines.gemini.model.clone(),
                 temperature: config.engines.gemini.temperature,
             },
+            translation_prompt: config.prompts.translation.clone(),
+            screen_reading_prompt: config.prompts.screen_reading.clone(),
         }),
         Some(Err(message)) => Err(message.clone()),
         None => Err("config not loaded yet".into()),
@@ -272,6 +282,12 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
     let gemini_key = engines.gemini.api_key.trim().to_string();
     let gemini_model = engines.gemini.model.trim().to_string();
     let gemini_temperature = engines.gemini.temperature;
+    // The custom LLM prompt base instructions (ticket 37): free text, no
+    // shape to validate — empty is the built-in default, and the prompt
+    // module treats a whitespace-only text as empty too. Trimmed so a
+    // stray paste of blank lines does not persist.
+    let translation_prompt = engines.translation_prompt.trim().to_string();
+    let screen_reading_prompt = engines.screen_reading_prompt.trim().to_string();
     for (label, temperature) in [
         ("OpenAI-compatible", openai_temperature),
         ("LM Studio", lmstudio_temperature),
@@ -327,10 +343,12 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
             config.engines.gemini.api_key = gemini_key.clone();
             config.engines.gemini.model = gemini_model.clone();
             config.engines.gemini.temperature = gemini_temperature;
+            config.prompts.translation = translation_prompt.clone();
+            config.prompts.screen_reading = screen_reading_prompt.clone();
             Ok(())
         })?;
-        // The engine and its endpoint settings are read when the loop
-        // starts: restart so the change visibly applies.
+        // The engine, its endpoint settings, and the prompt overrides are
+        // read when the loop starts: restart so the change visibly applies.
         restart_loop_if_running(app);
         apply_state(app);
         Ok(())

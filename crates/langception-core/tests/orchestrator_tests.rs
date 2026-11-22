@@ -43,6 +43,8 @@ fn config() -> LoopConfig {
         stability: Duration::ZERO,
         genderless: false,
         auto_colors: false,
+        translation_prompt_override: None,
+        fused_prompt_override: None,
     }
 }
 
@@ -233,6 +235,7 @@ struct GuidedCall {
     text: String,
     glossary: Vec<(String, String)>,
     genderless: bool,
+    custom_base: Option<String>,
 }
 
 impl FakeTranslate {
@@ -292,6 +295,7 @@ impl TranslateEngine for FakeTranslate {
             text: text.to_string(),
             glossary: guidance.glossary.clone(),
             genderless: guidance.genderless,
+            custom_base: guidance.custom_base.clone(),
         });
         self.answer(text).await
     }
@@ -349,6 +353,7 @@ struct FusedCallRecord {
     height: u32,
     glossary: Vec<(String, String)>,
     genderless: bool,
+    custom_base: Option<String>,
     target: String,
 }
 
@@ -383,6 +388,7 @@ impl FusedEngine for FakeFused {
             height: image.height,
             glossary: guidance.glossary.clone(),
             genderless: guidance.genderless,
+            custom_base: guidance.custom_base.clone(),
             target: target.to_string(),
         });
         let mut rx = self.responses.lock().await;
@@ -424,6 +430,8 @@ async fn harness_inner(
     genderless: bool,
     fused: bool,
     auto_colors: bool,
+    translation_prompt_override: Option<String>,
+    fused_prompt_override: Option<String>,
 ) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
@@ -443,6 +451,8 @@ async fn harness_inner(
         stability,
         genderless,
         auto_colors,
+        translation_prompt_override,
+        fused_prompt_override,
         ..config()
     };
     let orchestrator = Orchestrator::new(
@@ -484,7 +494,7 @@ async fn harness_with(
     stability: Duration,
     genderless: bool,
 ) -> (Harness, Orchestrator) {
-    harness_inner(glossary, stability, genderless, false, false).await
+    harness_inner(glossary, stability, genderless, false, false, None, None).await
 }
 
 /// The fused pipeline (ticket 12): reads are one vision-model call.
@@ -493,12 +503,30 @@ async fn harness_with_fused(
     stability: Duration,
     genderless: bool,
 ) -> (Harness, Orchestrator) {
-    harness_inner(glossary, stability, genderless, true, false).await
+    harness_inner(glossary, stability, genderless, true, false, None, None).await
 }
 
 /// Auto Colors (ticket 14): fired blocks carry sampled per-block colors.
 async fn harness_auto_colors() -> (Harness, Orchestrator) {
-    harness_inner(Glossary::default(), Duration::ZERO, false, false, true).await
+    harness_inner(Glossary::default(), Duration::ZERO, false, false, true, None, None).await
+}
+
+/// Custom LLM prompt bases configured (ticket 37): the overrides ride at
+/// loop start, exactly as the shell wires them from `[prompts]`.
+async fn harness_with_prompt_overrides(
+    translation_prompt_override: Option<String>,
+    fused_prompt_override: Option<String>,
+) -> (Harness, Orchestrator) {
+    harness_inner(
+        Glossary::default(),
+        Duration::ZERO,
+        false,
+        false,
+        false,
+        translation_prompt_override,
+        fused_prompt_override,
+    )
+    .await
 }
 
 async fn harness() -> (Harness, Orchestrator) {
@@ -2012,6 +2040,7 @@ async fn glossary_entries_appearing_in_the_block_ride_in_the_engine_guidance() {
             text: "Vertin picks up the case".into(),
             glossary: vec![("Vertin".into(), "เวอร์ติน".into())],
             genderless: false,
+            custom_base: None,
         }],
         "exactly the in-sentence glossary entry must reach the engine"
     );
@@ -2042,6 +2071,7 @@ async fn blocks_without_glossary_terms_carry_empty_guidance() {
             text: "Pay 500 gold".into(),
             glossary: Vec::new(),
             genderless: false,
+            custom_base: None,
         }],
         "no relevant term → an empty glossary injection"
     );
@@ -2061,6 +2091,7 @@ async fn genderless_mode_rides_in_the_engine_guidance() {
             text: "Hello".into(),
             glossary: Vec::new(),
             genderless: true,
+            custom_base: None,
         }],
         "the mode-on flag must reach the LLM prompt path"
     );
@@ -2126,6 +2157,77 @@ async fn glossary_and_genderless_guidance_compose_for_llm_engines() {
     );
     assert!(call.genderless);
     let _ = next_event(&mut h.events).await;
+}
+
+// ---- Custom LLM prompt overrides (ticket 37) ----
+//
+// The overrides are configured once (Settings → Engines → Prompts) and ride
+// in LoopConfig like the language: the classic path hands the translation
+// override to every per-block guidance, the fused path hands the
+// screen-reading override to the fused engine's guidance. Non-LLM engines
+// discard the guidance wholesale (the port's default), so Google, Azure and
+// DeepL never see a custom prompt.
+
+#[tokio::test]
+async fn the_translation_prompt_override_rides_in_the_engine_guidance() {
+    let (mut h, mut orch) = harness_with_prompt_overrides(
+        Some("Translate {source} speech casually.".into()),
+        None,
+    )
+    .await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+
+    assert_eq!(
+        h.translate.guided_calls(),
+        vec![GuidedCall {
+            text: "Hello".into(),
+            glossary: Vec::new(),
+            genderless: false,
+            custom_base: Some("Translate {source} speech casually.".into()),
+        }],
+        "the custom translation base must reach the LLM prompt path"
+    );
+    let _ = next_event(&mut h.events).await;
+}
+
+#[tokio::test]
+async fn the_screen_reading_override_rides_in_the_fused_guidance_not_the_translate_one() {
+    // The fused pipeline with the screen-reading override: the classic
+    // wrapper builds no fused engine, so the fused harness is built
+    // directly (fused = true).
+    let (h, mut orch) = harness_inner(
+        Glossary::default(),
+        Duration::ZERO,
+        false,
+        true,
+        false,
+        None,
+        Some("Read the screen like {source} manga.".into()),
+    )
+    .await;
+
+    // The fused fake answers from its scripted queue: one empty answer (no
+    // text on screen) is enough for this guidance-level check.
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Start")]),
+        Ok(vec![]),
+    )
+    .await;
+    orch.tick().await;
+
+    let calls = h.fused.calls();
+    assert_eq!(calls.len(), 1, "the read must be one fused call");
+    assert_eq!(
+        calls[0].custom_base.as_deref(),
+        Some("Read the screen like {source} manga."),
+        "the screen-reading override must reach the fused engine"
+    );
+    // The classic path never ran: no OCR, no translate engine call.
+    assert!(h.translate.calls().is_empty());
+    assert_eq!(*h.ocr_calls.lock().unwrap(), 0);
 }
 
 // ---- Prompt construction through the pipeline seam, fake HTTP engine (ticket 11) ----
@@ -2280,6 +2382,93 @@ async fn pipeline_tick_sends_the_guided_prompt_to_the_http_engine() {
             assert_eq!(translation, "สวัสดีชาวโลก");
             assert_eq!(via, Via::Engine);
         }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn pipeline_tick_sends_a_custom_prompt_to_the_http_engine() {
+    // Ticket 37 rendered end to end: a custom base replaces the built-in
+    // instruction in the real adapter's request, with the placeholders
+    // substituted and the appendices (Glossary, Genderless, custom-marked
+    // version tag) still attached.
+    let (url, bodies) =
+        fake_http_engine(include_str!("../fixtures/openai/success.json")).await;
+    let engine = langception_core::openai::OpenAiCompatibleEngine::new(
+        &url,
+        "test-key",
+        "test-model",
+        0.2,
+        langception_core::openai::GENERIC_LABEL,
+    )
+    .unwrap();
+
+    let (images_tx, capture) = FakeCapture::new();
+    let (ocr_tx, ocr) = FakeOcr::new();
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (_zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
+    let (_paused_tx, paused_rx) = watch::channel(false);
+    let (_excluded_tx, excluded_rx) = watch::channel(Vec::new());
+
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("Vertin".to_string(), "เวอร์ติน".to_string());
+
+    let mut orchestrator = Orchestrator::new(
+        Arc::new(capture),
+        Arc::new(ocr),
+        Arc::new(engine),
+        Arc::new(langception_core::orchestrator::SystemClock),
+        LoopConfig {
+            genderless: true,
+            translation_prompt_override: Some(
+                "Translate the user's {source} dialogue into {target} for a novel.".into(),
+            ),
+            ..config()
+        },
+        glossary,
+        zones_rx,
+        paused_rx,
+        excluded_rx,
+        events_tx,
+    );
+
+    let blocks = vec![block(0, 0, "Vertin picks up the case")];
+    images_tx.send(frame_for(&blocks)).await.unwrap();
+    ocr_tx.send(Ok(blocks)).await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), orchestrator.tick())
+        .await
+        .expect("the pipeline tick (with its HTTP call) should finish within 5s");
+    let (call_count, captured) = {
+        let recorded = bodies.lock().unwrap();
+        (recorded.len(), recorded.first().cloned().unwrap_or_default())
+    };
+    assert_eq!(call_count, 1);
+    let body: serde_json::Value = serde_json::from_str(&captured).unwrap();
+    let system = body["messages"][0]["content"].as_str().unwrap();
+    // The custom base with substituted placeholders...
+    assert!(
+        system.contains("Translate the user's English dialogue into Thai for a novel."),
+        "was: {system}"
+    );
+    assert!(
+        !system.contains("translation engine"),
+        "the built-in base must be gone, was: {system}"
+    );
+    // ...and the appendices still attached.
+    assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
+    assert!(system.contains("Genderless Mode"), "was: {system}");
+    assert!(
+        system.contains("(translation-prompt v1 custom)"),
+        "was: {system}"
+    );
+    assert_eq!(body["messages"][1]["content"], "Vertin picks up the case");
+
+    // The loop completed with the engine's answer from the golden body.
+    match next_event(&mut events).await {
+        LoopEvent::Translated { via, .. } => assert_eq!(via, Via::Engine),
         other => panic!("expected Translated, got {other:?}"),
     }
 }
@@ -2825,8 +3014,16 @@ async fn auto_colors_sampling_failure_falls_back_to_none() {
 
 #[tokio::test]
 async fn auto_colors_ride_fused_reads_too() {
-    let (mut h, mut orch) =
-        harness_inner(Glossary::default(), Duration::ZERO, false, true, true).await;
+    let (mut h, mut orch) = harness_inner(
+        Glossary::default(),
+        Duration::ZERO,
+        false,
+        true,
+        true,
+        None,
+        None,
+    )
+    .await;
     let hello = block(100, 200, "Hello");
     let frame = white_bars_frame(&hello);
     h.images.send(frame).await.unwrap();
