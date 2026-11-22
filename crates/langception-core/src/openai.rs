@@ -160,7 +160,14 @@ pub fn classify_error(status: u16, body: &str) -> TranslateError {
 /// error (`is_connect`: TCP refused, DNS failure) — says what that usually
 /// means ("is the server running?"). Pure so the wording is testable
 /// offline; reqwest's own Display buries the cause in its source chain.
-fn unreachable_message(label: &str, url: &str, error: impl std::fmt::Display, connect: bool) -> String {
+/// Shared with the fused vision adapter (ticket 12), whose LM Studio users
+/// hit the exact same refused-server case.
+pub fn unreachable_message(
+    label: &str,
+    url: &str,
+    error: impl std::fmt::Display,
+    connect: bool,
+) -> String {
     let mut message = format!("{label} server unreachable at {url}: {error}");
     if connect {
         message.push_str(" — connection refused (is the server running?)");

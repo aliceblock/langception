@@ -116,13 +116,16 @@ pub(crate) fn get_about(app: AppHandle) -> About {
 
 // ---- Engines tab (tickets 09 + 10 + 11) ----
 
-/// The Engines tab's editing surface: the global default engine plus every
-/// configurable engine's settings. Keys and URLs round-trip to the page so
+/// The Engines tab's editing surface: the global default engine, every
+/// configurable engine's settings, and the reading mode (ticket 12: classic
+/// OCR vs the fused vision call). Keys and URLs round-trip to the page so
 /// edits prefill; the window is local-only.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnginesDto {
     pub default_engine: String,
+    /// "ocr" | "fused" (ticket 12).
+    pub reading: String,
     pub azure: AzureEngineDto,
     pub deepl: DeepLEngineDto,
     /// The generic OpenAI-compatible endpoint (ticket 10).
@@ -176,6 +179,7 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
     match &*app.state::<AppState>().config.lock().unwrap() {
         Some(Ok(config)) => Ok(EnginesDto {
             default_engine: config.engine.clone(),
+            reading: config.reading.code().to_string(),
             azure: AzureEngineDto {
                 key: config.engines.azure.key.clone(),
                 region: config.engines.azure.region.clone(),
@@ -217,6 +221,19 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
     let azure_key = engines.azure.key.trim().to_string();
     let azure_region = engines.azure.region.trim().to_string();
     let deepl_key = engines.deepl.key.trim().to_string();
+    // The reading mode (ticket 12): classic OCR or the fused vision call.
+    // Whether the chosen engine can actually serve fused reads is the
+    // loop start's check (a Profile's override can change the engine);
+    // here only the config spelling is enforced.
+    let reading = match engines.reading.as_str() {
+        "ocr" => langception_core::config::ReadingMode::Ocr,
+        "fused" => langception_core::config::ReadingMode::Fused,
+        other => {
+            return Err(format!(
+                "unknown reading mode \"{other}\" — modes: ocr, fused"
+            ))
+        }
+    };
     // A keyed default without its key would fail the loop at start; catch
     // it here, where the user is looking. Keys can still be saved for a
     // later switch (or a Profile's override) while the default stays keyless.
@@ -280,6 +297,7 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
     run_off_main(app, move |app| {
         with_config_mut(app, |config| {
             config.engine = default_engine.clone();
+            config.reading = reading;
             config.engines.azure.key = azure_key.clone();
             config.engines.azure.region = azure_region.clone();
             config.engines.deepl.key = deepl_key.clone();

@@ -6,6 +6,11 @@ description = "Langception core: translation-loop orchestrator, ports, glossary,
 
 [dependencies]
 async-trait = "0.1"
+# The fused vision engines (ticket 12) attach the captured frame to the
+# model call: encoded as PNG, transported base64 (Gemini inlineData and
+# the OpenAI-compatible image_url data URL).
+base64 = "0.22"
+png = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.9"

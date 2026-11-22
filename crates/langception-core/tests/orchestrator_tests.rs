@@ -15,8 +15,9 @@ use langception_core::orchestrator::{
     EventOrigin, LoopConfig, LoopEvent, Orchestrator, Stage, Via,
 };
 use langception_core::ports::{
-    CaptureError, CaptureSource, CapturedImage, Clock, ExcludedBlock, OcrEngine, OcrError, Region,
-    SourceLanguage, TextBlock, TranslateEngine, TranslateError, Zone,
+    CaptureError, CaptureSource, CapturedImage, Clock, ExcludedBlock, FusedBlock, FusedEngine,
+    FusedError, OcrEngine, OcrError, Region, SourceLanguage, TextBlock, TranslateEngine,
+    TranslateError, Zone,
 };
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -331,14 +332,81 @@ impl Clock for FakeClock {
     }
 }
 
+/// The fused vision engine fake (ticket 12): records every call — the frame
+/// it was handed plus the guidance the orchestrator computed (the WHOLE
+/// glossary, since a fused call sees the image rather than one block's
+/// text) — and answers from a scripted queue (default: no blocks found).
+struct FakeFused {
+    calls: Mutex<Vec<FusedCallRecord>>,
+    responses: AsyncMutex<mpsc::Receiver<Result<Vec<FusedBlock>, FusedError>>>,
+}
+
+/// One `recognize_and_translate` call.
+#[derive(Debug, Clone)]
+struct FusedCallRecord {
+    width: u32,
+    height: u32,
+    glossary: Vec<(String, String)>,
+    genderless: bool,
+    target: String,
+}
+
+impl FakeFused {
+    fn new() -> (mpsc::Sender<Result<Vec<FusedBlock>, FusedError>>, Self) {
+        let (tx, rx) = mpsc::channel(16);
+        (
+            tx,
+            Self {
+                calls: Mutex::new(Vec::new()),
+                responses: AsyncMutex::new(rx),
+            },
+        )
+    }
+
+    fn calls(&self) -> Vec<FusedCallRecord> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl FusedEngine for FakeFused {
+    async fn recognize_and_translate(
+        &self,
+        image: &CapturedImage,
+        _source: SourceLanguage,
+        target: &str,
+        guidance: &langception_core::ports::TranslationGuidance,
+    ) -> Result<Vec<FusedBlock>, FusedError> {
+        self.calls.lock().unwrap().push(FusedCallRecord {
+            width: image.width,
+            height: image.height,
+            glossary: guidance.glossary.clone(),
+            genderless: guidance.genderless,
+            target: target.to_string(),
+        });
+        let mut rx = self.responses.lock().await;
+        rx.recv().await.unwrap_or(Ok(Vec::new()))
+    }
+
+    fn name(&self) -> &str {
+        "FakeFused"
+    }
+
+    fn is_cloud(&self) -> bool {
+        true
+    }
+}
+
 struct Harness {
     events: mpsc::UnboundedReceiver<LoopEvent>,
     images: mpsc::Sender<CapturedImage>,
     ocr_results: mpsc::Sender<Result<Vec<TextBlock>, OcrError>>,
     responses: mpsc::Sender<Result<String, TranslateError>>,
+    fused_responses: mpsc::Sender<Result<Vec<FusedBlock>, FusedError>>,
     capture_calls: Arc<Mutex<u32>>,
     ocr_calls: Arc<Mutex<u32>>,
     translate: Arc<FakeTranslate>,
+    fused: Arc<FakeFused>,
     clock: Arc<FakeClock>,
     zones_tx: watch::Sender<Vec<Zone>>,
     paused_tx: watch::Sender<bool>,
@@ -346,11 +414,14 @@ struct Harness {
 }
 
 /// The harness starts watching one zone (z1 = REGION), like the app does
-/// after a first zone was drawn, with no Excluded Blocks in force.
-async fn harness_with(
+/// after a first zone was drawn, with no Excluded Blocks in force. With
+/// `fused` set the orchestrator runs the ticket-12 fused pipeline: every
+/// read is ONE vision-model call and the OCR + translate fakes stay idle.
+async fn harness_inner(
     glossary: Glossary,
     stability: Duration,
     genderless: bool,
+    fused: bool,
 ) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
@@ -358,6 +429,8 @@ async fn harness_with(
     let ocr_calls = Arc::clone(&ocr.calls);
     let (responses_tx, translate) = FakeTranslate::new();
     let translate = Arc::new(translate);
+    let (fused_responses_tx, fused_fake) = FakeFused::new();
+    let fused_fake = Arc::new(fused_fake);
     let clock = Arc::new(FakeClock::new());
     let (events_tx, events_rx) = mpsc::unbounded_channel();
     let (zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
@@ -380,7 +453,8 @@ async fn harness_with(
         paused_rx,
         excluded_rx,
         events_tx,
-    );
+    )
+    .with_fused(fused.then(|| Arc::clone(&fused_fake) as Arc<dyn FusedEngine>));
 
     (
         Harness {
@@ -388,9 +462,11 @@ async fn harness_with(
             images: images_tx,
             ocr_results: ocr_tx,
             responses: responses_tx,
+            fused_responses: fused_responses_tx,
             capture_calls,
             ocr_calls,
             translate,
+            fused: fused_fake,
             clock,
             zones_tx,
             paused_tx,
@@ -398,6 +474,23 @@ async fn harness_with(
         },
         orchestrator,
     )
+}
+
+async fn harness_with(
+    glossary: Glossary,
+    stability: Duration,
+    genderless: bool,
+) -> (Harness, Orchestrator) {
+    harness_inner(glossary, stability, genderless, false).await
+}
+
+/// The fused pipeline (ticket 12): reads are one vision-model call.
+async fn harness_with_fused(
+    glossary: Glossary,
+    stability: Duration,
+    genderless: bool,
+) -> (Harness, Orchestrator) {
+    harness_inner(glossary, stability, genderless, true).await
 }
 
 async fn harness() -> (Harness, Orchestrator) {
@@ -1911,3 +2004,456 @@ async fn pipeline_tick_sends_the_guided_prompt_to_the_http_engine() {
         other => panic!("expected Translated, got {other:?}"),
     }
 }
+
+// ---- Fused pipeline (ticket 12) ----
+//
+// The fused engine collapses the OCR and Translate stages into ONE
+// vision-model call per changed frame. Everything downstream — Excluded
+// Blocks, per-block dHash dedup, the stability window, removals, the
+// genderless scrub — is shared with the classic pipeline and asserted here
+// through the same seam. The harness's fused variant wires a FakeFused in
+// place of both the OCR fake and the translate fake.
+
+/// A fused answer for one block: region-relative box + the Thai the model
+/// answered with it.
+fn fused_block(x: i32, y: i32, text: &str, thai: &str) -> FusedBlock {
+    FusedBlock {
+        block: block(x, y, text),
+        translation: thai.to_string(),
+    }
+}
+
+/// Feeds one changed frame and one fused answer (never queues an OCR
+/// result: in fused mode the OCR fake must stay idle).
+async fn feed_fused(
+    h: &Harness,
+    frame: &CapturedImage,
+    answer: Result<Vec<FusedBlock>, FusedError>,
+) {
+    h.images.send(frame.clone()).await.unwrap();
+    h.fused_responses.send(answer).await.unwrap();
+}
+
+#[tokio::test]
+async fn fused_call_answers_blocks_with_translations_in_one_call() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Hello")]),
+        Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")]),
+    )
+    .await;
+    orch.tick().await;
+
+    // The fused call replaced both stages: neither fake ever ran.
+    assert_eq!(*h.ocr_calls.lock().unwrap(), 0);
+    assert!(h.translate.calls().is_empty());
+    assert_eq!(h.fused.calls().len(), 1);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated {
+            key,
+            block,
+            translation,
+            via,
+            origin,
+            ..
+        } => {
+            assert_eq!(translation, "สวัสดี");
+            assert_eq!(via, Via::Engine);
+            // The model's box is region-relative; the event carries screen
+            // coordinates (REGION sits at 100,100), like any OCR box.
+            assert_eq!((block.x, block.y), (100, 100));
+            assert_eq!(key, "0,0");
+            assert_eq!(
+                origin,
+                EventOrigin::Zone {
+                    id: "z1".into(),
+                    name: "Zone 1".into()
+                }
+            );
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn unchanged_frame_never_reinvokes_the_fused_engine() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+    let frame = frame_for(&[block(0, 0, "Hello")]);
+
+    feed_fused(&h, &frame, Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")])).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+
+    // The pixel-identical frame takes the fast path: capture + hashing
+    // only — the vision model is not called, nothing is re-emitted.
+    h.images.send(frame.clone()).await.unwrap();
+    orch.tick().await;
+    assert_eq!(h.fused.calls().len(), 1);
+    assert_no_event(&mut h.events, "an unchanged frame must not re-translate").await;
+}
+
+#[tokio::test]
+async fn unchanged_blocks_in_a_changed_frame_are_not_resent() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+    let alpha = block(0, 0, "Alpha");
+    let beta = block(300, 0, "Beta");
+
+    // Tick 1: both blocks read and translated.
+    feed_fused(
+        &h,
+        &frame_for(&[alpha.clone(), beta.clone()]),
+        Ok(vec![
+            fused_block(0, 0, "Alpha", "อัลฟา"),
+            fused_block(300, 0, "Beta", "เบตา"),
+        ]),
+    )
+    .await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    let _ = next_event(&mut h.events).await;
+
+    // Tick 2: only Alpha's pixels change; the frame checksum flips so the
+    // fused call runs, and the model still reports BOTH blocks. Beta's
+    // pixels hash to what its current translation was shown for — its
+    // answer is dropped and its pill stays untouched.
+    let mut changed = black_image();
+    paint_marker(&mut changed, &alpha, text_mark("Alpha 2"));
+    paint_marker(&mut changed, &beta, text_mark("Beta"));
+    feed_fused(
+        &h,
+        &changed,
+        Ok(vec![
+            fused_block(0, 0, "Alpha 2", "อัลฟาสอง"),
+            fused_block(300, 0, "Beta", "เบตา"),
+        ]),
+    )
+    .await;
+    orch.tick().await;
+
+    // Exactly one new event — Alpha's, with the new answer.
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => {
+            assert_eq!(translation, "อัลฟาสอง");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+    assert_no_event(&mut h.events, "Beta must not be re-emitted").await;
+}
+
+#[tokio::test]
+async fn fused_call_receives_the_whole_glossary_and_genderless_flag() {
+    // A fused call sees the image, not a block's text: there is nothing to
+    // filter Glossary entries by, so ALL of them ride in the prompt, along
+    // with the Genderless flag — the same guidance seam as ticket 11,
+    // computed frame-wide instead of per block.
+    let mut glossary = Glossary::default();
+    glossary.0.insert("Vertin".to_string(), "เวอร์ติน".to_string());
+    glossary.0.insert("勇者".to_string(), "ผู้กล้า".to_string());
+    let (h, mut orch) = harness_with_fused(glossary, Duration::ZERO, true).await;
+
+    feed_fused(&h, &frame_for(&[block(0, 0, "Hello")]), Ok(vec![])).await;
+    orch.tick().await;
+
+    let call = &h.fused.calls()[0];
+    assert_eq!(
+        call.glossary.len(),
+        2,
+        "every entry rides: {:?}",
+        call.glossary
+    );
+    assert!(call.genderless);
+    assert_eq!(call.target, "th");
+    assert_eq!(
+        (call.width, call.height),
+        (REGION.width, REGION.height),
+        "the whole captured frame goes to the model"
+    );
+}
+
+#[tokio::test]
+async fn whole_block_glossary_pin_overrides_the_fused_answer() {
+    let mut glossary = Glossary::default();
+    glossary.0.insert("Start".to_string(), "เริ่ม".to_string());
+    let (mut h, mut orch) = harness_with_fused(glossary, Duration::ZERO, false).await;
+
+    // The model answers something else for the pinned block; the user's
+    // own Thai wins, marked as coming from the Glossary.
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Start")]),
+        Ok(vec![fused_block(0, 0, "Start", "โมเดลตอบ")]),
+    )
+    .await;
+    orch.tick().await;
+
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, via, .. } => {
+            assert_eq!(translation, "เริ่ม");
+            assert_eq!(via, Via::Glossary);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn genderless_scrub_applies_to_fused_output() {
+    // The prompt asks the model for genderless Thai; the rule-based scrub
+    // stays belt-and-braces over its answer, exactly like the engine path.
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, true).await;
+
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Hello")]),
+        Ok(vec![fused_block(0, 0, "Hello", "สวัสดีครับ")]),
+    )
+    .await;
+    orch.tick().await;
+
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, via, .. } => {
+            assert_eq!(translation, "สวัสดี");
+            assert_eq!(via, Via::Engine);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn fused_error_surfaces_and_retries_on_the_next_pass() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+    let frame = frame_for(&[block(0, 0, "Hello")]);
+
+    feed_fused(&h, &frame, Err(FusedError::new("endpoint unreachable"))).await;
+    orch.tick().await;
+
+    match next_event(&mut h.events).await {
+        LoopEvent::Error { stage, message, .. } => {
+            assert_eq!(stage, Stage::Fused);
+            assert!(message.contains("endpoint unreachable"), "was: {message}");
+        }
+        other => panic!("expected Error, got {other:?}"),
+    }
+
+    // last_frame stayed behind: re-feeding the SAME frame retries the
+    // fused call — a failure must not arm the unchanged-screen fast path.
+    feed_fused(&h, &frame, Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")])).await;
+    orch.tick().await;
+    assert_eq!(h.fused.calls().len(), 2);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => {
+            assert_eq!(translation, "สวัสดี");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn stability_window_gates_fused_reads() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::from_millis(400), false).await;
+    let frame = frame_for(&[block(0, 0, "Hello")]);
+
+    // Tick 1 (clock 0): the change is detected and the model answered, but
+    // the block must hold stable — nothing fires yet, the answer is held
+    // in the pending change.
+    feed_fused(&h, &frame, Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")])).await;
+    orch.tick().await;
+    assert_no_event(&mut h.events, "the stability window has not elapsed").await;
+
+    // Tick 2 (clock 500): the SAME frame takes the fast path — no second
+    // fused call — and the matured pending fires with the cached read.
+    h.clock.set_now_ms(500);
+    h.images.send(frame.clone()).await.unwrap();
+    orch.tick().await;
+    assert_eq!(h.fused.calls().len(), 1, "the fast path must not re-call");
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => {
+            assert_eq!(translation, "สวัสดี");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+
+    // Tick 3: the translation was shown for these pixels — no re-fire.
+    h.clock.set_now_ms(1000);
+    h.images.send(frame.clone()).await.unwrap();
+    orch.tick().await;
+    assert_no_event(&mut h.events, "fired pixels must not re-fire").await;
+}
+
+#[tokio::test]
+async fn fused_blocks_are_removed_after_two_misses() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+
+    // Tick 1: the block reads and translates.
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Hello")]),
+        Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")]),
+    )
+    .await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+
+    // Tick 2: the text is gone (the frame changed elsewhere); the model
+    // reports no blocks — miss 1 of 2.
+    let mut gone = black_image();
+    paint(&mut gone, 599, 599, 1);
+    feed_fused(&h, &gone, Ok(vec![])).await;
+    orch.tick().await;
+    assert_no_event(&mut h.events, "one miss must not remove the block").await;
+
+    // Tick 3: the same frame takes the fast path and advances the miss —
+    // the block is removed and the overlay is told to clear it.
+    h.images.send(gone.clone()).await.unwrap();
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::BlocksRemoved { keys, .. } => {
+            assert_eq!(keys, vec!["0,0".to_string()]);
+        }
+        other => panic!("expected BlocksRemoved, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn one_shot_capture_uses_the_fused_engine() {
+    let (mut h, orch) = harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+
+    h.images
+        .send(frame_for(&[block(0, 0, "Hello")]))
+        .await
+        .unwrap();
+    h.fused_responses
+        .send(Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")]))
+        .await
+        .unwrap();
+    orch.capture_once(REGION).await;
+
+    // One fused call, no OCR, no translate; the event carries OneShot and
+    // the screen-converted box, like any one-shot result.
+    assert_eq!(*h.ocr_calls.lock().unwrap(), 0);
+    assert!(h.translate.calls().is_empty());
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated {
+            block,
+            translation,
+            origin,
+            ..
+        } => {
+            assert_eq!(translation, "สวัสดี");
+            assert_eq!((block.x, block.y), (100, 100));
+            assert_eq!(origin, EventOrigin::OneShot);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+// ---- The real OpenAI-compatible vision adapter through the seam (ticket 12) ----
+//
+// As in ticket 11's HTTP test: a REAL adapter driven by a pipeline tick,
+// POSTing to a localhost server that captures the request body (the image
+// data URL and the fused prompt verifiable), with the golden chat answer —
+// whose content IS the JSON blocks array — flowing back through the loop.
+
+#[tokio::test]
+async fn pipeline_tick_sends_the_image_to_the_http_fused_engine() {
+    let mut glossary = Glossary::default();
+    glossary.0.insert("Start".to_string(), "เริ่ม".to_string());
+
+    let (url, bodies) =
+        fake_http_engine(include_str!("../fixtures/fused/chat_completion_success.json")).await;
+    let engine = langception_core::fused::OpenAiFusedEngine::new(
+        &url,
+        "test-key",
+        "vision-model",
+        0.2,
+        langception_core::openai::GENERIC_LABEL,
+    )
+    .unwrap();
+
+    let (images_tx, capture) = FakeCapture::new();
+    let (_ocr_tx, ocr) = FakeOcr::new();
+    let (events_tx, mut events) = mpsc::unbounded_channel();
+    let (_zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
+    let (_paused_tx, paused_rx) = watch::channel(false);
+    let (_excluded_tx, excluded_rx) = watch::channel(Vec::new());
+
+    let mut orchestrator = Orchestrator::new(
+        Arc::new(capture),
+        Arc::new(ocr),
+        Arc::new(FakeTranslate::new().1),
+        Arc::new(langception_core::orchestrator::SystemClock),
+        LoopConfig {
+            genderless: true,
+            ..config()
+        },
+        glossary,
+        zones_rx,
+        paused_rx,
+        excluded_rx,
+        events_tx,
+    )
+    .with_fused(Some(Arc::new(engine)));
+
+    images_tx
+        .send(frame_for(&[block(100, 200, "Start")]))
+        .await
+        .unwrap();
+
+    // The tick awaits the full HTTP round trip — when it returns, the
+    // request has been captured and the answer parsed into blocks.
+    tokio::time::timeout(Duration::from_secs(5), orchestrator.tick())
+        .await
+        .expect("the fused tick (with its HTTP call) should finish within 5s");
+
+    let (call_count, captured) = {
+        let recorded = bodies.lock().unwrap();
+        (recorded.len(), recorded.first().cloned().unwrap_or_default())
+    };
+    assert_eq!(call_count, 1, "one tick = one fused call, body: {captured:?}");
+    let body: serde_json::Value = serde_json::from_str(&captured).unwrap();
+    assert_eq!(body["model"], "vision-model");
+    assert_eq!(body["stream"], false);
+    // The system message is the fused contract, with the glossary riding.
+    let system = body["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("JSON array"), "was: {system}");
+    assert!(system.contains("(fused-prompt v1)"), "was: {system}");
+    assert!(system.contains("- Start → เริ่ม"), "was: {system}");
+    assert!(system.contains("Genderless Mode"), "was: {system}");
+    // The image rides as the OpenAI vision content part.
+    let parts = body["messages"][1]["content"].as_array().unwrap();
+    let url = parts[1]["image_url"]["url"].as_str().unwrap();
+    assert!(
+        url.starts_with("data:image/png;base64,"),
+        "was: {}…",
+        &url[..60.min(url.len())]
+    );
+
+    // The answer's blocks flow through the loop like any translation:
+    // model box (100,200) + REGION origin (100,100) = screen (200,300).
+    // The block's whole text ("Start") has a pinned Glossary entry, so the
+    // displayed Thai is the pin — deterministic even when it coincides
+    // with the model's answer here.
+    match next_event(&mut events).await {
+        LoopEvent::Translated {
+            block,
+            translation,
+            via,
+            ..
+        } => {
+            assert_eq!((block.x, block.y), (200, 300));
+            assert_eq!(block.text, "Start");
+            assert_eq!(translation, "เริ่ม");
+            assert_eq!(via, Via::Glossary);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+

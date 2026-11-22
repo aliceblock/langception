@@ -58,6 +58,10 @@ _Avoid_: reader, recognizer
 A pluggable component that translates text from a Source Language to Thai.
 _Avoid_: translator, backend
 
+**Reading Mode**:
+How on-screen text is read: classic (an OCR Engine feeding per-block translation) or fused (one vision-LLM call reads every Text Block and translates it, bypassing both stages).
+_Avoid_: pipeline mode, OCR mode, vision mode
+
 **Text Block**:
 One contiguous run of text found by an OCR Engine, with its bounding box on screen. The unit of tracking, display, and re-translation.
 _Avoid_: line, segment, chunk

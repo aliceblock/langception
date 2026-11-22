@@ -157,6 +157,33 @@ pub enum CaptureMode {
     FullScreen,
 }
 
+/// How on-screen text is read (ticket 12): the classic pipeline — Windows
+/// OCR feeds per-block translation — or fused, where ONE vision-LLM call
+/// reads every Text Block AND translates it (the OcrEngine and
+/// TranslateEngine stages are bypassed; the active engine, a Profile's
+/// override included, must be an LLM: "gemini", "openai" or "lmstudio").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadingMode {
+    #[default]
+    Ocr,
+    Fused,
+}
+
+impl ReadingMode {
+    /// The config-file spelling.
+    pub fn code(self) -> &'static str {
+        match self {
+            ReadingMode::Ocr => "ocr",
+            ReadingMode::Fused => "fused",
+        }
+    }
+}
+
+/// The engines fused reading can run on (ticket 12): the LLM engines, whose
+/// adapters gain a vision call over the same key/endpoint/model settings.
+pub const FUSED_CAPABLE_ENGINES: [&str; 3] = ["gemini", "openai", "lmstudio"];
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ModeSettings {
@@ -366,6 +393,13 @@ pub struct AppConfig {
     /// `engine` choice inherits this when omitted.
     #[serde(default = "default_engine")]
     pub engine: String,
+    /// How text is read (ticket 12): [`ReadingMode::Ocr`] = Windows OCR
+    /// feeds per-block translation; [`ReadingMode::Fused`] = ONE
+    /// vision-LLM call reads AND translates, bypassing both stages (the
+    /// effective engine must be an LLM — see [`FUSED_CAPABLE_ENGINES`]).
+    /// A Profile's engine override drives the fused call in its app.
+    #[serde(default)]
+    pub reading: ReadingMode,
     /// API keys for the keyed engines; see [`EnginesSettings`].
     #[serde(default)]
     pub engines: EnginesSettings,
@@ -630,6 +664,15 @@ genderless = false
 # Profile's "engine" value below can override this per app; omitted there
 # means "inherit this one".
 engine = "google"
+
+# How on-screen text is read: "ocr" (Windows OCR reads, the engine above
+# translates) or "fused" (ONE vision-LLM call reads every Text Block AND
+# translates it — for stylized game fonts that defeat Windows OCR; requires
+# the effective engine to be an LLM: "gemini", "openai", or "lmstudio").
+# Slower per pass than OCR and — on a cloud engine — billed per image, but
+# change detection still gates the calls: an unchanged screen costs
+# nothing. A Profile's engine choice drives the fused call in its app.
+reading = "ocr"
 
 [engines.azure]
 # Azure AI Translator, F0 free tier (2M chars/month). Paste the resource's
@@ -1694,6 +1737,51 @@ language = "en"
         );
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.profiles[0].engine.as_deref(), Some("gemini"));
+    }
+
+    // ---- Reading mode: classic OCR vs fused vision (ticket 12) ----
+
+    #[test]
+    fn default_template_reads_with_windows_ocr() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.reading, ReadingMode::Ocr);
+    }
+
+    #[test]
+    fn ticket11_config_without_reading_gets_the_default() {
+        // A config from before ticket 12 has no `reading` key — serde
+        // fills the classic pipeline, never silently switching to fused.
+        let legacy = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("reading ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert_eq!(config.reading, ReadingMode::Ocr);
+    }
+
+    #[test]
+    fn fused_reading_roundtrips_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("engine = \"google\"", "engine = \"gemini\"")
+            .replace("reading = \"ocr\"", "reading = \"fused\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.reading, ReadingMode::Fused);
+        assert_eq!(config.engine, "gemini");
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+        assert!(
+            config.to_toml_string().unwrap().contains("reading = \"fused\""),
+            "the mode stays a bare top-level key, hand-editable"
+        );
+    }
+
+    #[test]
+    fn unknown_reading_mode_is_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("reading = \"ocr\"", "reading = \"magic\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("reading"), "was: {err}");
     }
 
     #[test]

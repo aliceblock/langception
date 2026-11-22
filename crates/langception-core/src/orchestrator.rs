@@ -1,8 +1,19 @@
-//! The translation loop: capture → change detection → OCR → Excluded Block
+//! The translation loop: capture → change detection → read → Excluded Block
 //! filter → per-block stability window → glossary short-circuit → translate
 //! (LLM engines get per-block prompt guidance: relevant Glossary entries +
 //! the Genderless instruction, ticket 11) → genderless scrub (ticket 08) →
 //! events, across every active Capture Zone.
+//!
+//! The read stage has two forms (ticket 12): the classic OCR pass feeding
+//! per-block translation, or — when a fused engine is attached — ONE
+//! vision-LLM call that reads every Text Block and translates it in the
+//! same answer, bypassing both the OcrEngine and TranslateEngine stages.
+//! Everything downstream of the read is shared: the frame checksum still
+//! decides whether the read runs at all, and each block's dHash still gates
+//! when its result fires, so an unchanged screen costs capture + hashing
+//! only and an unchanged block is never re-emitted — in fused mode the
+//! block's translation rides in its pending change instead of being
+//! requested from a Translate Engine on fire.
 //!
 //! All collaborators are ports (`capture`, `ocr`, `translate`, `clock`) plus
 //! the watched zone list, the paused flag, and the active Excluded Blocks,
@@ -23,7 +34,7 @@
 use crate::glossary::Glossary;
 use crate::hash::{block_dhash, frame_checksum};
 use crate::ports::{
-    CaptureSource, Clock, ExcludedBlock, OcrEngine, Region, SourceLanguage, TextBlock,
+    CaptureSource, Clock, ExcludedBlock, FusedEngine, OcrEngine, Region, SourceLanguage, TextBlock,
     TranslateEngine, Zone,
 };
 use async_trait::async_trait;
@@ -50,6 +61,9 @@ pub enum Stage {
     Capture,
     Ocr,
     Translate,
+    /// The fused vision call (ticket 12) — it replaces the OCR and
+    /// Translate stages, so its failures carry their own stage name.
+    Fused,
 }
 
 /// Where a pipeline pass came from: one of the active Capture Zones, or a
@@ -176,6 +190,11 @@ struct PendingChange {
     since_ms: u64,
     rect: TextBlock,
     text: String,
+    /// The translation that fires with this change when the read came from
+    /// a fused call (ticket 12): the vision model answered it together with
+    /// the block, so firing displays it directly. `None` = classic OCR
+    /// read: firing calls the Translate Engine with `text` as usual.
+    translation: Option<String>,
 }
 
 /// A zone's tracking state. `last_frame` is the checksum of the last OCR'd
@@ -204,6 +223,10 @@ pub struct Orchestrator {
     capture: Arc<dyn CaptureSource>,
     ocr: Arc<dyn OcrEngine>,
     translate: Arc<dyn TranslateEngine>,
+    /// The fused vision engine (ticket 12). `Some` = every read is ONE
+    /// model call over the whole frame; `ocr` and `translate` then sit
+    /// unused (they are always built so the pipeline shape stays uniform).
+    fused: Option<Arc<dyn FusedEngine>>,
     clock: Arc<dyn Clock>,
     config: LoopConfig,
     glossary: Glossary,
@@ -240,6 +263,7 @@ impl Orchestrator {
             capture,
             ocr,
             translate,
+            fused: None,
             clock,
             config,
             glossary,
@@ -250,6 +274,15 @@ impl Orchestrator {
             zones: HashMap::new(),
             exclusions_seen: Vec::new(),
         }
+    }
+
+    /// Attaches the fused vision engine (ticket 12): from then on every
+    /// zone read is ONE model call over the whole frame instead of an OCR
+    /// pass feeding per-block translation. `None` (the default) keeps the
+    /// classic pipeline.
+    pub fn with_fused(mut self, fused: Option<Arc<dyn FusedEngine>>) -> Self {
+        self.fused = fused;
+        self
     }
 
     /// One pipeline pass over every active zone: capture, change detection,
@@ -293,7 +326,8 @@ impl Orchestrator {
     /// carry [`EventOrigin::OneShot`], everything found is translated
     /// immediately (no tracking state, no stability window — the user asked
     /// for what is on screen right now), and the running loop's state is
-    /// untouched.
+    /// untouched. With a fused engine attached the pass is one model call
+    /// (ticket 12).
     pub async fn capture_once(&self, region: Region) {
         let origin = EventOrigin::OneShot;
         let label = "One-shot capture";
@@ -304,6 +338,39 @@ impl Orchestrator {
                 return;
             }
         };
+        let exclusions = self.excluded_rx.borrow().clone();
+        if let Some(fused) = &self.fused {
+            let fused_blocks = match fused
+                .recognize_and_translate(
+                    &image,
+                    self.config.source_language,
+                    crate::ports::TARGET_LANGUAGE,
+                    &self.fused_guidance(),
+                )
+                .await
+            {
+                Ok(blocks) => blocks,
+                Err(e) => {
+                    self.emit(Stage::Fused, format!("{label}: {e}"));
+                    return;
+                }
+            };
+            for fused in fused_blocks {
+                let text = fused.block.text.trim().to_string();
+                if text.is_empty() {
+                    continue;
+                }
+                if exclusions
+                    .iter()
+                    .any(|e| e.covers(&screen_block(&fused.block, region)))
+                {
+                    continue;
+                }
+                self.emit_fused_block(region, &fused.block, &fused.translation, &origin)
+                    .await;
+            }
+            return;
+        }
         let blocks = match self
             .ocr
             .recognize(&image, self.config.source_language)
@@ -315,7 +382,6 @@ impl Orchestrator {
                 return;
             }
         };
-        let exclusions = self.excluded_rx.borrow().clone();
         for block in blocks {
             let text = block.text.trim().to_string();
             if text.is_empty() {
@@ -362,24 +428,53 @@ impl Orchestrator {
             return state;
         }
 
-        let blocks = match self
-            .ocr
-            .recognize(&image, self.config.source_language)
-            .await
-        {
-            Ok(blocks) => blocks,
-            Err(e) => {
-                self.emit(Stage::Ocr, format!("{label}: {e}"));
-                // last_frame stays behind: the next pass retries OCR even
-                // if the screen has not changed since.
-                return state;
+        // The read stage, in one of its two forms (ticket 12): a fused
+        // call answers blocks WITH translations, a classic OCR pass yields
+        // blocks whose translation is requested per fire. Either way each
+        // read is `(block, translation)` — `None` marks the OCR form.
+        let reads: Vec<(TextBlock, Option<String>)> = match &self.fused {
+            Some(fused) => match fused
+                .recognize_and_translate(
+                    &image,
+                    self.config.source_language,
+                    crate::ports::TARGET_LANGUAGE,
+                    &self.fused_guidance(),
+                )
+                .await
+            {
+                Ok(blocks) => blocks
+                    .into_iter()
+                    .map(|fused| (fused.block, Some(fused.translation)))
+                    .collect(),
+                Err(e) => {
+                    self.emit(Stage::Fused, format!("{label}: {e}"));
+                    // last_frame stays behind: the next pass retries
+                    // even if the screen has not changed since.
+                    return state;
+                }
+            },
+            None => {
+                let blocks = match self
+                    .ocr
+                    .recognize(&image, self.config.source_language)
+                    .await
+                {
+                    Ok(blocks) => blocks,
+                    Err(e) => {
+                        self.emit(Stage::Ocr, format!("{label}: {e}"));
+                        // last_frame stays behind: the next pass retries OCR
+                        // even if the screen has not changed since.
+                        return state;
+                    }
+                };
+                blocks.into_iter().map(|block| (block, None)).collect()
             }
         };
 
         let now = self.clock.now_ms();
         let stable_ms = self.config.stability.as_millis() as u64;
         let mut seen: HashSet<(i32, i32)> = HashSet::new();
-        for block in blocks {
+        for (block, fused_translation) in reads {
             let text = block.text.trim().to_string();
             if text.is_empty() {
                 continue;
@@ -393,7 +488,7 @@ impl Orchestrator {
             {
                 // Excluded Block (ticket 04): never translated, never shown.
                 // Dropping its tracking state right away means clearing the
-                // exclusion translates it again on the next OCR pass.
+                // exclusion translates it again on the next read pass.
                 state.blocks.remove(&key);
                 continue;
             }
@@ -404,9 +499,9 @@ impl Orchestrator {
 
             if entry.fired_hash == Some(hash) {
                 // Pixels identical to what the current translation was shown
-                // for: skip, even when this pass's OCR text jitters. A
-                // pending change that reverted to the shown pixels is
-                // cancelled too.
+                // for: skip — a fused answer for an unchanged block is
+                // dropped unread, and a pending change that reverted to the
+                // shown pixels is cancelled too.
                 entry.pending = None;
             } else if entry.pending.as_ref().is_some_and(|p| p.hash == hash) {
                 // The same change as the previous pass: the block is holding
@@ -418,8 +513,15 @@ impl Orchestrator {
                     .since_ms;
                 if now.saturating_sub(since) >= stable_ms {
                     entry.pending = None;
-                    self.translate_and_emit(zone.region, &block, &text, &origin, &label)
-                        .await;
+                    self.fire_read(
+                        zone.region,
+                        &block,
+                        &text,
+                        fused_translation.as_deref(),
+                        &origin,
+                        &label,
+                    )
+                    .await;
                     entry.fired_hash = Some(hash);
                 } else {
                     // ...otherwise keep waiting, refreshing the cached read
@@ -428,6 +530,7 @@ impl Orchestrator {
                     let pending = entry.pending.as_mut().expect("pending hash matched above");
                     pending.rect = block.clone();
                     pending.text = text;
+                    pending.translation = fused_translation;
                 }
             } else {
                 // New or changed pixels: (re)start the stability window. A
@@ -437,11 +540,19 @@ impl Orchestrator {
                     since_ms: now,
                     rect: block.clone(),
                     text: text.clone(),
+                    translation: fused_translation.clone(),
                 });
                 if stable_ms == 0 {
                     entry.pending = None;
-                    self.translate_and_emit(zone.region, &block, &text, &origin, &label)
-                        .await;
+                    self.fire_read(
+                        zone.region,
+                        &block,
+                        &text,
+                        fused_translation.as_deref(),
+                        &origin,
+                        &label,
+                    )
+                    .await;
                     entry.fired_hash = Some(hash);
                 }
             }
@@ -504,8 +615,15 @@ impl Orchestrator {
             let Some(pending) = entry.pending.take() else {
                 continue; // unreachable: maturity was checked above
             };
-            self.translate_and_emit(region, &pending.rect, &pending.text, origin, label)
-                .await;
+            self.fire_read(
+                region,
+                &pending.rect,
+                &pending.text,
+                pending.translation.as_deref(),
+                origin,
+                label,
+            )
+            .await;
             entry.fired_hash = Some(pending.hash);
         }
     }
@@ -548,6 +666,87 @@ impl Orchestrator {
             .ok();
     }
 
+    /// The prompt guidance for a fused call (ticket 12): ALL Glossary
+    /// entries — a fused call sees the image, not one block's text, so
+    /// there is nothing to filter entries by — plus the Genderless flag.
+    fn fused_guidance(&self) -> crate::ports::TranslationGuidance {
+        crate::ports::TranslationGuidance {
+            glossary: self.glossary.entries(),
+            genderless: self.config.genderless,
+        }
+    }
+
+    /// Sends one resolved translation event — the shared tail of every
+    /// display path (glossary short-circuit, engine translate, fused
+    /// read). `rect` is region-relative; the event carries screen
+    /// coordinates.
+    fn emit_translated(
+        &self,
+        region: Region,
+        rect: &TextBlock,
+        translation: String,
+        via: Via,
+        origin: &EventOrigin,
+    ) {
+        self.events
+            .send(LoopEvent::Translated {
+                // The region-relative key, exactly what the dedup state and
+                // BlocksRemoved use — the overlay's element identity must
+                // match both.
+                key: block_key_string(rect),
+                block: screen_block(rect, region),
+                translation,
+                via,
+                at_ms: self.clock.now_ms(),
+                origin: origin.clone(),
+            })
+            .ok();
+    }
+
+    /// Fires one read: a fused read displays the translation the model
+    /// already answered (ticket 12); a classic OCR read asks the Translate
+    /// Engine ([`Self::translate_and_emit`]).
+    async fn fire_read(
+        &self,
+        region: Region,
+        rect: &TextBlock,
+        text: &str,
+        fused_translation: Option<&str>,
+        origin: &EventOrigin,
+        label: &str,
+    ) {
+        match fused_translation {
+            Some(thai) => self.emit_fused_block(region, rect, thai, origin).await,
+            None => self.translate_and_emit(region, rect, text, origin, label).await,
+        }
+    }
+
+    /// Emits one fused read: the model's translation with the same output
+    /// rules as the engine path — a whole-block Glossary match pins the
+    /// displayed Thai (the model got every entry injected, but the pinned
+    /// value is the deterministic answer), and the Genderless scrub runs
+    /// belt-and-braces over the model's own text.
+    async fn emit_fused_block(
+        &self,
+        region: Region,
+        rect: &TextBlock,
+        thai: &str,
+        origin: &EventOrigin,
+    ) {
+        let (translation, via) = match self.glossary.lookup(&rect.text) {
+            Some(pinned) => (pinned, Via::Glossary),
+            None => {
+                let thai = if self.config.genderless {
+                    crate::genderless::scrub(thai)
+                } else {
+                    thai.to_string()
+                };
+                (thai, Via::Engine)
+            }
+        };
+        self.emit_translated(region, rect, translation, via, origin);
+    }
+
     /// Glossary short-circuit, engine translate, and the resulting event
     /// for one block read. `rect` is region-relative; the emitted block
     /// carries screen coordinates. A failed translation still counts as
@@ -561,7 +760,6 @@ impl Orchestrator {
         origin: &EventOrigin,
         label: &str,
     ) {
-        let screen_block = screen_block(rect, region);
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
             None => {
@@ -604,19 +802,7 @@ impl Orchestrator {
         };
         match translated {
             Ok((translation, via)) => {
-                self.events
-                    .send(LoopEvent::Translated {
-                        // The region-relative key, exactly what the dedup
-                        // state and BlocksRemoved use — the overlay's
-                        // element identity must match both.
-                        key: block_key_string(rect),
-                        block: screen_block,
-                        translation,
-                        via,
-                        at_ms: self.clock.now_ms(),
-                        origin: origin.clone(),
-                    })
-                    .ok();
+                self.emit_translated(region, rect, translation, via, origin);
             }
             Err(message) => self.emit(Stage::Translate, format!("{label}: {message}")),
         }

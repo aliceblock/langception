@@ -143,6 +143,8 @@ const DEEPL_API_URL = "https://www.deepl.com/en/pro-api";
 const GEMINI_CREATE_KEY_URL = "https://aistudio.google.com/apikey";
 
 const enginesDefault = document.getElementById("engines-default");
+const enginesReading = document.getElementById("engines-reading");
+const enginesReadingWarning = document.getElementById("engines-reading-warning");
 const enginesAzureKey = document.getElementById("engines-azure-key");
 const enginesAzureRegion = document.getElementById("engines-azure-region");
 const enginesDeeplKey = document.getElementById("engines-deepl-key");
@@ -199,6 +201,8 @@ async function loadEngines() {
     savedEngines = await invoke("get_engines");
     enginesLoaded = true;
     enginesDefault.value = savedEngines.defaultEngine;
+    enginesReading.value = savedEngines.reading || "ocr";
+    enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
     enginesAzureKey.value = savedEngines.azure.key;
     enginesAzureRegion.value = savedEngines.azure.region;
     enginesDeeplKey.value = savedEngines.deepl.key;
@@ -224,6 +228,7 @@ async function loadEngines() {
 function collectEngines(defaultEngine) {
   return {
     defaultEngine,
+    reading: enginesReading.value,
     azure: {
       key: enginesAzureKey.value.trim(),
       region: enginesAzureRegion.value.trim(),
@@ -257,6 +262,12 @@ document.getElementById("engines-save").addEventListener("click", async () => {
   } catch (e) {
     toast(String(e), "error");
   }
+});
+
+// The vision-reading latency/cost warning (ticket 12) follows the select
+// live — the user sees what "fused" implies before saving it.
+enginesReading.addEventListener("change", () => {
+  enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
 });
 
 // LM Studio server check (ticket 10): one round-trip answers reachability
@@ -322,6 +333,7 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
     await invoke("set_engines", {
       engines: {
         defaultEngine: "azure",
+        reading: savedEngines?.reading || "ocr",
         azure: { key, region: wizardAzureRegion.value.trim() },
         deepl: { key: savedEngines?.deepl?.key || "" },
         openai: savedEngines?.openai || { baseUrl: "", apiKey: "", model: "", temperature: 0.2 },

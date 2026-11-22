@@ -166,7 +166,24 @@
               <option value="gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
             </select>
           </label>
+          <label class="form-row">
+            <span>Screen reading</span>
+            <select id="engines-reading">
+              <option value="ocr">Windows OCR + engine translation (default)</option>
+              <option value="fused">Vision model — read & translate in one call</option>
+            </select>
+          </label>
         </div>
+        <p id="engines-reading-warning" class="hint hidden">
+          <strong>Vision reading</strong> sends every captured frame to the engine as an
+          image and asks it to read AND translate — noticeably slower per pass than
+          Windows OCR, and on a cloud engine (Gemini, OpenAI-compatible) billed per
+          image. Use it for stylized game fonts that defeat the OCR. The engine must
+          be an LLM with vision (Gemini, OpenAI-compatible, or LM Studio's local
+          vision models); change detection still gates the calls, so an unchanged
+          screen costs nothing. Choose a vision-capable model in the engine's card
+          below (e.g. <code>gemini-2.0-flash</code>).
+        </p>
         <div class="engine-card">
           <div class="engine-title">
             <strong>Google Translate (unofficial)</strong>

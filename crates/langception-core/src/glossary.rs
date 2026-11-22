@@ -97,6 +97,18 @@ impl Glossary {
             .collect()
     }
 
+    /// Every entry as `(term, thai)` pairs, ordered by term (the map's own
+    /// order, so prompts are deterministic) — the fused vision call's
+    /// injection set (ticket 12): a fused engine sees the whole image, so
+    /// there is no OCR text to filter by and ALL entries ride in the prompt.
+    pub fn entries(&self) -> Vec<(String, String)> {
+        self.0
+            .iter()
+            .filter(|(term, _)| !term.trim().is_empty())
+            .map(|(term, thai)| (term.trim().to_string(), thai.clone()))
+            .collect()
+    }
+
     /// Inserts or updates one entry (both sides trimmed). Returns whether
     /// the map changed (a value update also counts as changed; re-inserting
     /// the identical pair does not).

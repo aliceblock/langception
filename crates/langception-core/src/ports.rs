@@ -132,6 +132,12 @@ pub struct TranslateError {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Error)]
+#[error("{message}")]
+pub struct FusedError {
+    pub message: String,
+}
+
 macro_rules! error_new {
     ($($name:ident),*) => {
         $(impl $name {
@@ -141,7 +147,7 @@ macro_rules! error_new {
         })*
     };
 }
-error_new!(CaptureError, OcrError, TranslateError);
+error_new!(CaptureError, OcrError, TranslateError, FusedError);
 
 /// What the app watches: here, a fixed configured region.
 #[async_trait]
@@ -157,6 +163,15 @@ pub trait OcrEngine: Send + Sync {
         image: &CapturedImage,
         source: SourceLanguage,
     ) -> Result<Vec<TextBlock>, OcrError>;
+}
+
+/// A Text Block read AND translated by one fused vision-LLM call (ticket
+/// 12): the block's box and source text exactly as [`OcrEngine`] would
+/// report them (region-relative), plus the translation that goes with it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FusedBlock {
+    pub block: TextBlock,
+    pub translation: String,
 }
 
 /// Extra instructions an LLM-backed engine folds into its prompt (ticket
@@ -216,6 +231,41 @@ pub trait TranslateEngine: Send + Sync {
     /// it whenever a pipeline becomes active: a cloud engine must surface the
     /// privacy badge (spec: "the user always knows what leaves their
     /// computer"). Engines that never call out keep the default `false`.
+    fn is_cloud(&self) -> bool {
+        false
+    }
+}
+
+/// A vision-LLM engine that reads AND translates in one call (ticket 12):
+/// the whole captured image goes in, Text Blocks with positions and their
+/// Thai translation come out — the separate [`OcrEngine`] and
+/// [`TranslateEngine`] stages are bypassed. For stylized game fonts that
+/// defeat traditional OCR. The loop still gates the call with change
+/// detection: an unchanged frame never reaches the engine.
+#[async_trait]
+pub trait FusedEngine: Send + Sync {
+    /// Reads every Text Block in `image` (region-relative boxes, like an
+    /// OCR engine's) and returns each with its translation. `guidance`
+    /// carries the prompt-level Glossary injection (the fused call sees the
+    /// whole image, so it gets ALL entries — there is no OCR text to filter
+    /// by) and the Genderless flag ([`crate::prompt::fused_system_prompt`]
+    /// is the shared template).
+    async fn recognize_and_translate(
+        &self,
+        image: &CapturedImage,
+        source: SourceLanguage,
+        target: &str,
+        guidance: &TranslationGuidance,
+    ) -> Result<Vec<FusedBlock>, FusedError>;
+
+    /// Display name of the engine (privacy badge, Engines tab).
+    fn name(&self) -> &str {
+        "fused engine"
+    }
+
+    /// Whether this engine sends screen images off-machine — same contract
+    /// as [`TranslateEngine::is_cloud`], and the fused engine is the one
+    /// receiving screen data when it is active, so the shell badges from it.
     fn is_cloud(&self) -> bool {
         false
     }

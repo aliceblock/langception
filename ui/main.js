@@ -102,9 +102,12 @@ function renderStatus(status) {
     (p) => p.id && p.id === status.activeProfileId,
   );
   const profileNote = activeProfile ? ` · profile "${activeProfile.name}"` : "";
+  // Ticket 12: fused reading replaces Windows OCR with one vision-model
+  // call — name it on the line so the loop's slowness is explainable.
+  const readingNote = status.reading === "fused" ? " · fused vision reading" : "";
   configLine.textContent = status.configError
     ? `Config: ${status.configPath}`
-    : `${status.language} → ${status.targetLanguage}${profileNote} · ${watched} · every ${status.cadenceMs}ms · hold ${status.stabilityMs}ms · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
+    : `${status.language} → ${status.targetLanguage}${profileNote} · ${watched} · every ${status.cadenceMs}ms · hold ${status.stabilityMs}ms${readingNote} · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
 
   if (status.warnings && status.warnings.length > 0) {
     warningsLine.textContent = status.warnings.join("\n");

@@ -8,14 +8,17 @@
 //! checklist.
 
 use langception_core::azure::AzureTranslateEngine;
-use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, TextStyle};
+use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, ReadingMode, TextStyle};
 use langception_core::deepl::DeepLTranslateEngine;
+use langception_core::fused::{GeminiFusedEngine, OpenAiFusedEngine};
 use langception_core::gemini::GeminiEngine;
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
 use langception_core::openai::{GENERIC_LABEL, LM_STUDIO_LABEL, OpenAiCompatibleEngine};
 use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, Stage, SystemClock};
-use langception_core::ports::{ExcludedBlock, Region, SourceLanguage, TranslateEngine, Zone, TARGET_LANGUAGE};
+use langception_core::ports::{
+    ExcludedBlock, FusedEngine, Region, SourceLanguage, TranslateEngine, Zone, TARGET_LANGUAGE,
+};
 use langception_core::profile::{GenderlessOverride, Profile, ProfileZone};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -86,6 +89,9 @@ pub struct Status {
     /// The Genderless Mode global toggle (ticket 08); a Profile's override
     /// (Settings → Profiles) layers on top of this per app.
     pub genderless: bool,
+    /// How text is read (ticket 12): "ocr" (Windows OCR + the translate
+    /// engine) or "fused" (one vision-LLM call reads AND translates).
+    pub reading: String,
     pub glossary_terms: usize,
     pub hotkeys: HotkeyStatus,
     pub text_style: TextStyleDto,
@@ -836,6 +842,7 @@ fn status_for(app: &AppHandle) -> Status {
         cadence_ms,
         stability_ms,
         genderless,
+        reading,
         glossary_terms,
         hotkeys,
         text_style,
@@ -879,6 +886,7 @@ fn status_for(app: &AppHandle) -> Status {
             config.capture.cadence_ms,
             config.capture.stability_ms,
             config.genderless,
+            config.reading.code().to_string(),
             config.glossary.0.len(),
             HotkeyStatus {
                 toggle: config.hotkeys.toggle_translation.clone(),
@@ -899,6 +907,7 @@ fn status_for(app: &AppHandle) -> Status {
             0,
             0,
             false,
+            "ocr".into(),
             0,
             default_hotkeys,
             TextStyleDto::default(),
@@ -913,6 +922,7 @@ fn status_for(app: &AppHandle) -> Status {
             0,
             0,
             false,
+            "ocr".into(),
             0,
             default_hotkeys,
             TextStyleDto::default(),
@@ -973,6 +983,7 @@ fn status_for(app: &AppHandle) -> Status {
         cadence_ms,
         stability_ms,
         genderless,
+        reading,
         glossary_terms,
         hotkeys,
         text_style,
@@ -1051,16 +1062,23 @@ fn effective_target(app: &AppHandle, config: &AppConfig) -> EffectiveTarget {
 
 /// The real Windows pipeline for translation passes: adapters wired to the
 /// effective Source Language and the global cadence, plus the effective
-/// Glossary layer.
+/// Glossary layer. In fused reading mode (ticket 12) `fused` is `Some` and
+/// the vision engine replaces the OCR + translate stages (the translate
+/// engine is still built — the fused path simply never calls it).
 struct Pipeline {
     config: LoopConfig,
     glossary: Glossary,
     capture: Arc<dyn langception_core::ports::CaptureSource>,
     ocr: Arc<dyn langception_core::ports::OcrEngine>,
     translate: Arc<dyn langception_core::ports::TranslateEngine>,
+    fused: Option<Arc<dyn FusedEngine>>,
 }
 
 fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeline, String> {
+    let fused = match config.reading {
+        ReadingMode::Fused => Some(build_fused_engine(config, target.engine.as_deref())?),
+        ReadingMode::Ocr => None,
+    };
     Ok(Pipeline {
         config: LoopConfig {
             source_language: target.language,
@@ -1072,7 +1090,73 @@ fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeli
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
         ocr: Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)),
         translate: build_translate_engine(config, target.engine.as_deref())?,
+        fused,
     })
+}
+
+/// Builds the fused vision engine (ticket 12) for the effective target's
+/// engine choice (a Profile's override wins, like the translate engine's).
+/// Only the LLM engines can read images — a classic MT engine (Google,
+/// Azure, DeepL) with fused reading selected is a start-time error naming
+/// the fix, never a silent OCR fallback. The LLM engines reuse their
+/// translate settings (key, endpoint, model, temperature): the model must
+/// actually have vision capability, which is the user's pick to make.
+fn build_fused_engine(
+    config: &AppConfig,
+    engine: Option<&str>,
+) -> Result<Arc<dyn FusedEngine>, String> {
+    let chosen = engine
+        .map(str::trim)
+        .filter(|engine| !engine.is_empty())
+        .unwrap_or(config.engine.trim());
+    if !langception_core::config::FUSED_CAPABLE_ENGINES.contains(&chosen) {
+        return Err(format!(
+            "Fused reading needs an engine that can read images — set the engine to \
+             Gemini, OpenAI-compatible, or LM Studio (now: \"{chosen}\"); Settings → Engines"
+        ));
+    }
+    // The same completeness checks as a plain engine switch (key, model,
+    // endpoint): a fused pipeline with half-filled settings fails at start
+    // with the settings-surface error, before any capture happens.
+    build_translate_engine(config, Some(chosen))?;
+    match chosen {
+        "gemini" => {
+            let gemini = &config.engines.gemini;
+            Ok(Arc::new(
+                GeminiFusedEngine::new(gemini.api_key.trim(), gemini.model.trim(), gemini.temperature)
+                    .map_err(|e| format!("failed to initialize the Gemini vision engine: {e}"))?,
+            ))
+        }
+        "openai" => {
+            let openai = &config.engines.openai;
+            Ok(Arc::new(
+                OpenAiFusedEngine::new(
+                    openai.base_url.trim(),
+                    openai.api_key.trim(),
+                    openai.model.trim(),
+                    openai.temperature,
+                    GENERIC_LABEL,
+                )
+                .map_err(|e| format!("failed to initialize the OpenAI-compatible vision engine: {e}"))?,
+            ))
+        }
+        "lmstudio" => {
+            let lmstudio = &config.engines.lmstudio;
+            Ok(Arc::new(
+                OpenAiFusedEngine::new(
+                    lmstudio.base_url.trim(),
+                    "",
+                    lmstudio.model.trim(),
+                    lmstudio.temperature,
+                    LM_STUDIO_LABEL,
+                )
+                .map_err(|e| format!("failed to initialize the LM Studio vision engine: {e}"))?,
+            ))
+        }
+        // The capability check above makes the LLM arms the only reachable
+        // ones; build_translate_engine already validated completeness.
+        other => Err(format!("unknown fused engine \"{other}\"")),
+    }
 }
 
 /// Builds the Translate Engine for the effective target's choice: a
@@ -1284,6 +1368,20 @@ fn notify_engine_error(app: &AppHandle, message: &str) {
     }
 }
 
+/// The engine whose data the privacy badge names while a pipeline is in
+/// flight: in fused reading mode the vision engine is the one receiving
+/// the screen (images, not just text), so it badges first (ticket 12);
+/// otherwise the Translate Engine — and only when it is cloud.
+fn cloud_badge(pipeline: &Pipeline) -> Option<String> {
+    if let Some(fused) = &pipeline.fused {
+        return fused.is_cloud().then(|| fused.name().to_string());
+    }
+    pipeline
+        .translate
+        .is_cloud()
+        .then(|| pipeline.translate.name().to_string())
+}
+
 /// Starts the translation loop: wires real Windows adapters to the
 /// orchestrator and bridges its events to the Results Window. Idempotent.
 fn start_loop(app: &AppHandle) -> Result<(), String> {
@@ -1318,13 +1416,9 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     let pipeline = build_pipeline(&config, &target)?;
     let _ = state.zones_tx.send(target.zones);
     let _ = state.exclusions_tx.send(target.exclusions);
-    // Privacy badge (ticket 06): record whether the active engine sends
-    // screen text off-machine while the loop runs.
-    *state.cloud_engine.lock().unwrap() = if pipeline.translate.is_cloud() {
-        Some(pipeline.translate.name().to_string())
-    } else {
-        None
-    };
+    // Privacy badge (ticket 06): the engine sending screen data off-machine
+    // while the loop runs.
+    *state.cloud_engine.lock().unwrap() = cloud_badge(&pipeline);
     let (events_tx, events_rx) = mpsc::unbounded_channel();
 
     // Per-monitor overlays show the translations in place. Creation failure
@@ -1349,7 +1443,8 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         paused_rx,
         excluded_rx,
         events_tx,
-    );
+    )
+    .with_fused(pipeline.fused);
     let orchestrator_task = tauri::async_runtime::spawn(orchestrator.run());
     let forwarder_task = spawn_forwarder(app, events_rx, overlays);
 
@@ -2548,13 +2643,9 @@ fn run_one_shot(
     let (_excluded_tx, excluded_rx) = watch::channel(exclusions);
     let (events_tx, events_rx) = mpsc::unbounded_channel();
 
-    // A one-shot also sends screen text to the engine: the privacy badge
+    // A one-shot also sends screen data to the engine: the privacy badge
     // covers it too (cleared once the pass completes).
-    *app.state::<AppState>().cloud_engine.lock().unwrap() = if pipeline.translate.is_cloud() {
-        Some(pipeline.translate.name().to_string())
-    } else {
-        None
-    };
+    *app.state::<AppState>().cloud_engine.lock().unwrap() = cloud_badge(&pipeline);
     apply_state(app);
 
     let orchestrator = Orchestrator::new(
@@ -2568,7 +2659,8 @@ fn run_one_shot(
         paused_rx,
         excluded_rx,
         events_tx,
-    );
+    )
+    .with_fused(pipeline.fused);
 
     let task_app = app.clone();
     tauri::async_runtime::spawn(async move {
