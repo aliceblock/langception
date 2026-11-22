@@ -31,6 +31,8 @@ function showWizard() {
   tabs.classList.add("hidden");
   pages.classList.add("hidden");
   loadPacks("wizard");
+  // The Azure upgrade step prefills from the saved engine settings.
+  loadEngines();
 }
 
 function finishWizard() {
@@ -57,6 +59,12 @@ for (const tab of document.querySelectorAll(".tab")) {
     // (its app picker only offers apps that actually have a window).
     if (tab.dataset.tab === "profiles" && !runningAppsLoaded) {
       loadRunningApps(false);
+    }
+    // The Engines tab loads the engine settings the first time it is opened
+    // (the wizard loads them at show time — its upgrade action merges with
+    // the saved keys).
+    if (tab.dataset.tab === "engines" && !enginesLoaded) {
+      loadEngines();
     }
   });
 }
@@ -123,6 +131,116 @@ wirePacks("engines");
 
 document.getElementById("wizard-finish").addEventListener("click", finishWizard);
 document.getElementById("wizard-skip").addEventListener("click", finishWizard);
+
+// Engines (ticket 09) ----------------------------------------------------------
+// The global default engine + the keyed engines' settings (keys live in
+// config.toml like every other setting). The wizard's Azure upgrade shares
+// this loader so its action can merge with the already-saved keys.
+
+const AZURE_CREATE_KEY_URL =
+  "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation";
+const DEEPL_API_URL = "https://www.deepl.com/en/pro-api";
+
+const enginesDefault = document.getElementById("engines-default");
+const enginesAzureKey = document.getElementById("engines-azure-key");
+const enginesAzureRegion = document.getElementById("engines-azure-region");
+const enginesDeeplKey = document.getElementById("engines-deepl-key");
+const enginesNote = document.getElementById("engines-note");
+const wizardAzureKey = document.getElementById("wizard-azure-key");
+const wizardAzureRegion = document.getElementById("wizard-azure-region");
+const wizardAzureNote = document.getElementById("wizard-azure-note");
+
+let enginesLoaded = false;
+let savedEngines = null; // the last values confirmed by get_engines
+
+async function loadEngines() {
+  try {
+    savedEngines = await invoke("get_engines");
+    enginesLoaded = true;
+    enginesDefault.value = savedEngines.defaultEngine;
+    enginesAzureKey.value = savedEngines.azure.key;
+    enginesAzureRegion.value = savedEngines.azure.region;
+    enginesDeeplKey.value = savedEngines.deepl.key;
+    // The wizard's fields prefill too, so a half-finished setup survives
+    // re-running the wizard.
+    wizardAzureKey.value = savedEngines.azure.key;
+    wizardAzureRegion.value = savedEngines.azure.region;
+  } catch (e) {
+    toast(String(e), "error");
+  }
+}
+
+function collectEngines(defaultEngine) {
+  return {
+    defaultEngine,
+    azure: {
+      key: enginesAzureKey.value.trim(),
+      region: enginesAzureRegion.value.trim(),
+    },
+    deepl: {
+      key: enginesDeeplKey.value.trim(),
+    },
+  };
+}
+
+document.getElementById("engines-save").addEventListener("click", async () => {
+  try {
+    await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
+    toast("Engines saved");
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
+document.getElementById("engines-test").addEventListener("click", async () => {
+  const btn = document.getElementById("engines-test");
+  btn.disabled = true;
+  enginesNote.textContent = "testing…";
+  try {
+    const thai = await invoke("test_engine", { engine: enginesDefault.value });
+    enginesNote.textContent = `works — "Hello" → ${thai}`;
+  } catch (e) {
+    enginesNote.textContent = "";
+    toast(String(e), "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+for (const [buttonId, url] of [
+  ["engines-azure-link", AZURE_CREATE_KEY_URL],
+  ["wizard-azure-link", AZURE_CREATE_KEY_URL],
+  ["engines-deepl-link", DEEPL_API_URL],
+]) {
+  document.getElementById(buttonId).addEventListener("click", () => {
+    invoke("open_engine_link", { url }).catch((e) => toast(String(e), "error"));
+  });
+}
+
+// The wizard's "Use Azure F0": saves the Azure key from the wizard fields
+// and switches the default engine in one go. The other engines' saved
+// values are passed through untouched.
+document.getElementById("wizard-azure-use").addEventListener("click", async () => {
+  const key = wizardAzureKey.value.trim();
+  if (!key) {
+    toast("Paste an Azure API key first — create one with the link", "error");
+    return;
+  }
+  try {
+    await invoke("set_engines", {
+      engines: {
+        defaultEngine: "azure",
+        azure: { key, region: wizardAzureRegion.value.trim() },
+        deepl: { key: savedEngines?.deepl?.key || "" },
+      },
+    });
+    await loadEngines();
+    wizardAzureNote.textContent = "Azure F0 is now the default engine";
+    toast("Azure F0 is now the default engine");
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
 
 // General -------------------------------------------------------------------
 

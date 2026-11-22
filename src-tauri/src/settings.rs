@@ -114,6 +114,126 @@ pub(crate) fn get_about(app: AppHandle) -> About {
     }
 }
 
+// ---- Engines tab (ticket 09) ----
+
+/// The Engines tab's editing surface: the global default engine plus each
+/// keyed engine's settings. Keys round-trip to the page so edits prefill;
+/// the window is local-only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnginesDto {
+    pub default_engine: String,
+    pub azure: AzureEngineDto,
+    pub deepl: DeepLEngineDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AzureEngineDto {
+    pub key: String,
+    pub region: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepLEngineDto {
+    pub key: String,
+}
+
+#[tauri::command]
+pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
+    match &*app.state::<AppState>().config.lock().unwrap() {
+        Some(Ok(config)) => Ok(EnginesDto {
+            default_engine: config.engine.clone(),
+            azure: AzureEngineDto {
+                key: config.engines.azure.key.clone(),
+                region: config.engines.azure.region.clone(),
+            },
+            deepl: DeepLEngineDto {
+                key: config.engines.deepl.key.clone(),
+            },
+        }),
+        Some(Err(message)) => Err(message.clone()),
+        None => Err("config not loaded yet".into()),
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(), String> {
+    let default_engine = engines.default_engine.trim().to_lowercase();
+    if !langception_core::config::TRANSLATE_ENGINES.contains(&default_engine.as_str()) {
+        return Err(format!(
+            "unknown engine \"{default_engine}\" — engines: {}",
+            langception_core::config::TRANSLATE_ENGINES.join(", ")
+        ));
+    }
+    let azure_key = engines.azure.key.trim().to_string();
+    let azure_region = engines.azure.region.trim().to_string();
+    let deepl_key = engines.deepl.key.trim().to_string();
+    // A keyed default without its key would fail the loop at start; catch
+    // it here, where the user is looking. Keys can still be saved for a
+    // later switch (or a Profile's override) while the default stays keyless.
+    if default_engine == "azure" && azure_key.is_empty() {
+        return Err("Azure needs an API key — create one with the link above, then paste it".into());
+    }
+    if default_engine == "deepl" && deepl_key.is_empty() {
+        return Err("DeepL needs an API key — create one with the link above, then paste it".into());
+    }
+    run_off_main(app, move |app| {
+        with_config_mut(app, |config| {
+            config.engine = default_engine.clone();
+            config.engines.azure.key = azure_key.clone();
+            config.engines.azure.region = azure_region.clone();
+            config.engines.deepl.key = deepl_key.clone();
+            Ok(())
+        })?;
+        // The engine and its key are read when the loop starts: restart so
+        // the change visibly applies.
+        restart_loop_if_running(app);
+        apply_state(app);
+        Ok(())
+    })
+    .await
+}
+
+/// Live check for the Engines tab: translates one phrase through the named
+/// engine (empty = the current default) with the keys as-saved. The Thai
+/// result comes back on success; quota/key/network failures come back as
+/// the engine's classified error, shown in the page's toast.
+#[tauri::command]
+pub(crate) async fn test_engine(app: AppHandle, engine: String) -> Result<String, String> {
+    let config = current_config(&app)?;
+    let requested = engine.trim().to_lowercase();
+    let chosen = if requested.is_empty() {
+        config.engine.clone()
+    } else {
+        requested
+    };
+    let translate = crate::shell::build_translate_engine(&config, Some(&chosen))?;
+    translate
+        .translate("Hello", SourceLanguage::En, TARGET_LANGUAGE)
+        .await
+        .map_err(|e| e.message)
+}
+
+/// The Engines tab's and wizard's key-creation links. Whitelisted — a
+/// webview window must never become a general URL opener.
+#[tauri::command]
+pub(crate) fn open_engine_link(url: String) -> Result<(), String> {
+    const ALLOWED: [&str; 2] = [
+        "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
+        "https://www.deepl.com/en/pro-api",
+    ];
+    if !ALLOWED.contains(&url.as_str()) {
+        return Err(format!("link \"{url}\" is not one of the engine signup pages"));
+    }
+    std::process::Command::new("explorer")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("cannot open the link: {e}"))?;
+    Ok(())
+}
+
 // ---- General tab ----
 
 #[derive(Debug, Deserialize)]

@@ -56,13 +56,30 @@
           <p class="hint">
             Free, no key, no setup (ADR-0002). It is a cloud engine: whenever
             translation runs, screen text is sent to Google's endpoint — a ☁
-            badge shows this in the tray tooltip and the Results Window.
+            badge shows this in the tray tooltip and the Results Window. It
+            can rate-limit or break; every failure surfaces visibly.
           </p>
+        </div>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>Recommended upgrade: Azure AI Translator</strong>
+            <span class="chip privacy">☁ cloud</span>
+          </div>
           <p class="hint">
-            More engines (Azure, DeepL, Gemini, local models) arrive in later
-            versions — see Settings → Engines. You can skip the rest for now:
-            translation works with zero configuration.
+            A keyed, reliable engine on a permanent free tier (F0, 2M
+            chars/month). Click the link to create a Translator resource in
+            the Azure portal (pricing tier "Free F0", region "Global"), then
+            paste its key here — or skip: Google works with zero setup.
           </p>
+          <div class="row glossary-add">
+            <input id="wizard-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
+            <input id="wizard-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
+          </div>
+          <div class="row">
+            <button id="wizard-azure-link" class="btn small">Create a free key…</button>
+            <button id="wizard-azure-use" class="btn primary small">Use Azure F0</button>
+            <span id="wizard-azure-note" class="hint"></span>
+          </div>
         </div>
       </section>
 
@@ -126,6 +143,23 @@
       <section id="tab-engines" class="page">
         <h2>Engines</h2>
         <h3>Translate Engine</h3>
+        <p class="hint">
+          The default engine translates every Text Block; per-app Profiles can
+          override it (Settings → Profiles). All three are cloud engines:
+          whenever translation runs, screen text leaves the machine — the ☁
+          badge shows this in the tray tooltip and the Results Window. Quota,
+          key, and network failures surface there and as tray notifications.
+        </p>
+        <div class="form-grid">
+          <label class="form-row">
+            <span>Default engine</span>
+            <select id="engines-default">
+              <option value="google">Google Translate (unofficial) — free, no key</option>
+              <option value="azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
+              <option value="deepl">DeepL — free tier, 500k chars/month</option>
+            </select>
+          </label>
+        </div>
         <div class="engine-card">
           <div class="engine-title">
             <strong>Google Translate (unofficial)</strong>
@@ -133,11 +167,50 @@
           </div>
           <p class="hint">
             The keyless default (ADR-0002). Free, but unofficial — it can
-            rate-limit or break, and every failure surfaces visibly. More
-            engines (Azure F0, DeepL, Gemini, OpenAI-compatible, local models)
-            arrive in later versions; a cloud engine always shows the ☁
-            privacy badge in the tray tooltip and the Results Window.
+            rate-limit or break, and every failure surfaces visibly. No key,
+            no setup.
           </p>
+        </div>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>Azure AI Translator</strong>
+            <span class="chip privacy" title="Screen text is sent to Azure's translation service">☁ cloud</span>
+          </div>
+          <p class="hint">
+            The reliable keyed option. The F0 tier is permanently free
+            (2M chars/month): create a Translator resource with the link
+            (pricing tier "Free F0", region "Global"), then paste its key.
+            The region must match the resource; empty means global.
+          </p>
+          <div class="row glossary-add">
+            <input id="engines-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
+            <input id="engines-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
+          </div>
+          <div class="row">
+            <button id="engines-azure-link" class="btn small">Create a free key…</button>
+          </div>
+        </div>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>DeepL</strong>
+            <span class="chip privacy" title="Screen text is sent to DeepL's translation service">☁ cloud</span>
+          </div>
+          <p class="hint">
+            The DeepL API free plan (500k chars/month, Thai supported). Sign
+            up with the link and paste the key — free keys end with ":fx",
+            which picks the right API host.
+          </p>
+          <div class="row glossary-add">
+            <input id="engines-deepl-key" type="password" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
+          </div>
+          <div class="row">
+            <button id="engines-deepl-link" class="btn small">Sign up for a free key…</button>
+          </div>
+        </div>
+        <div class="row">
+          <button id="engines-save" class="btn primary">Save engines</button>
+          <button id="engines-test" class="btn small">Test default engine</button>
+          <span id="engines-note" class="hint"></span>
         </div>
         <h3>OCR Engine — Windows OCR language packs</h3>
         <p class="hint">
@@ -228,6 +301,8 @@
               <select id="profile-engine">
                 <option value="">Inherit global engine</option>
                 <option value="google">Google Translate (unofficial)</option>
+                <option value="azure">Azure AI Translator</option>
+                <option value="deepl">DeepL</option>
               </select>
             </label>
             <label class="form-row">

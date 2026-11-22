@@ -194,10 +194,42 @@ pub const DEFAULT_ADJUST_HOTKEY: &str = "Alt+A";
 pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Q";
 
 /// The Translate Engines this build offers, by config name — the accepted
-/// values for a Profile's `engine` choice (and, from ticket 09 on, for the
-/// global engine setting). An unknown name in a hand-edited config must be
-/// a visible validation error, never a silent fallback.
-pub const TRANSLATE_ENGINES: [&str; 1] = ["google"];
+/// values for the global engine setting and a Profile's `engine` choice.
+/// An unknown name in a hand-edited config must be a visible validation
+/// error, never a silent fallback.
+pub const TRANSLATE_ENGINES: [&str; 3] = ["google", "azure", "deepl"];
+
+fn default_engine() -> String {
+    "google".to_string()
+}
+
+/// API keys for the keyed Translate Engines (ticket 09). Config.toml is the
+/// app's only persistence surface and lives in the user's profile directory
+/// — outside any repo — so keys are kept there like everything else. Azure's
+/// `region` is the resource's region; empty means a global resource, which
+/// takes no region header.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EnginesSettings {
+    pub azure: AzureEngineSettings,
+    pub deepl: DeepLEngineSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct AzureEngineSettings {
+    pub key: String,
+    /// The F0 resource's region ("global" or a region like "westus2");
+    /// empty = a global resource, which must send no region header.
+    pub region: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct DeepLEngineSettings {
+    /// Free-tier keys end with ":fx"; the suffix picks the API host.
+    pub key: String,
+}
 
 /// Everything the app reads from the config file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -210,6 +242,15 @@ pub struct AppConfig {
     /// any table section.
     #[serde(default)]
     pub genderless: bool,
+    /// The global default Translate Engine (ticket 09): one of
+    /// [`TRANSLATE_ENGINES`] — "google" (the keyless default, ADR-0002),
+    /// "azure" or "deepl" (keyed; keys under `[engines.*]`). A Profile's
+    /// `engine` choice inherits this when omitted.
+    #[serde(default = "default_engine")]
+    pub engine: String,
+    /// API keys for the keyed engines; see [`EnginesSettings`].
+    #[serde(default)]
+    pub engines: EnginesSettings,
     pub source: SourceSettings,
     /// Slice 1 watched a single `[region]`. Capture Zones (ticket 02)
     /// replaced it; a config that still carries one is migrated into a zone
@@ -277,6 +318,13 @@ impl AppConfig {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
+        if !TRANSLATE_ENGINES.contains(&self.engine.as_str()) {
+            return Err(ConfigError::Validation(format!(
+                "engine \"{engine}\" is unknown — engines: {list}",
+                engine = self.engine,
+                list = TRANSLATE_ENGINES.join(", ")
+            )));
+        }
         if let Some(region) = &self.region {
             if region.width == 0 || region.height == 0 {
                 return Err(ConfigError::Validation(
@@ -440,6 +488,24 @@ impl AppConfig {
 # "genderless" override below can force it on or off per app.
 genderless = false
 
+# The default Translate Engine (Settings → Engines): "google" (the keyless
+# default, ADR-0002), "azure" or "deepl" (keyed — set the key under
+# [engines.*] below). A Profile's "engine" value below can override this
+# per app; omitted there means "inherit this one".
+engine = "google"
+
+[engines.azure]
+# Azure AI Translator, F0 free tier (2M chars/month). Paste the resource's
+# key; "region" must match the resource's region ("global" for the global
+# tier, e.g. "westus2" for a regional one — empty means a global resource).
+key = ""
+region = ""
+
+[engines.deepl]
+# DeepL free tier (500k chars/month, Thai supported). Free keys end with
+# ":fx"; the suffix picks the right API host, so paste the whole key.
+key = ""
+
 [source]
 # Language Langception expects to read: "en" | "ja" | "zh" | "ko"
 language = "en"
@@ -528,8 +594,8 @@ one_shot_capture = "Alt+Q"
 # window's top-left corner, physical px) and move with it; with no zones
 # the whole window is watched. Its glossary is merged over the global one
 # above (the profile wins on conflict); genderless: "inherit" (follows
-# the genderless key above) | "on" | "off"; engine: "google" or omit to
-# inherit the global engine.
+# the genderless key above) | "on" | "off"; engine: "google" | "azure" |
+# "deepl", or omit to inherit the global engine.
 # [[profiles]]
 # id = "p1700000000000000000"
 # name = "Reverse: 1999"
@@ -1146,10 +1212,120 @@ language = "en"
     fn unknown_profile_engine_is_rejected() {
         let text = template_with_profile().replace(
             "genderless = \"inherit\"",
-            "genderless = \"inherit\"\nengine = \"azure\"",
+            "genderless = \"inherit\"\nengine = \"gemini\"",
         );
         let err = AppConfig::from_toml_str(&text).unwrap_err();
-        assert!(err.to_string().contains("engine \"azure\""), "was: {err}");
+        assert!(err.to_string().contains("engine \"gemini\""), "was: {err}");
+    }
+
+    #[test]
+    fn profile_engine_accepts_every_offered_engine() {
+        for engine in TRANSLATE_ENGINES {
+            let text = template_with_profile().replace(
+                "genderless = \"inherit\"",
+                &format!("genderless = \"inherit\"\nengine = \"{engine}\""),
+            );
+            let config = AppConfig::from_toml_str(&text)
+                .unwrap_or_else(|e| panic!("{engine} should be accepted: {e}"));
+            assert_eq!(config.profiles[0].engine.as_deref(), Some(engine));
+        }
+    }
+
+    // ---- Global engine choice + engine keys (ticket 09) ----
+
+    #[test]
+    fn default_template_has_google_and_empty_keys() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.engine, "google");
+        assert_eq!(config.engines.azure.key, "");
+        assert_eq!(config.engines.azure.region, "");
+        assert_eq!(config.engines.deepl.key, "");
+    }
+
+    #[test]
+    fn ticket08_config_without_engine_keys_gets_the_defaults() {
+        // A ticket-08 config predates the engine key and the [engines]
+        // tables: strip the whole engines block (headers, comments, keys),
+        // line-wise so the surrounding sections survive.
+        let mut in_engines = false;
+        let legacy: String = AppConfig::DEFAULT_TEMPLATE
+            .replace("engine = \"google\"", "")
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("[engines.") {
+                    in_engines = true;
+                    return false;
+                }
+                if in_engines {
+                    if trimmed.starts_with('[') {
+                        in_engines = false; // the next section ([source])
+                    } else {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert_eq!(config.engine, "google");
+        assert_eq!(config.engines.azure.key, "");
+        assert_eq!(config.engines.deepl.key, "");
+    }
+
+    #[test]
+    fn azure_engine_selection_and_keys_roundtrip_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("engine = \"google\"", "engine = \"azure\"")
+            .replace(
+                "key = \"\"\nregion = \"\"",
+                "key = \"a1b2c3d4e5f60718293a4b5c6d7e8f90\"\nregion = \"global\"",
+            )
+            .replace("key = \"\"", "key = \"9f8e7d6c5b4a39281706f5e4d3c2b1a9:fx\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.engine, "azure");
+        assert_eq!(config.engines.azure.key, "a1b2c3d4e5f60718293a4b5c6d7e8f90");
+        assert_eq!(config.engines.azure.region, "global");
+        assert_eq!(
+            config.engines.deepl.key,
+            "9f8e7d6c5b4a39281706f5e4d3c2b1a9:fx"
+        );
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn deepl_engine_selection_roundtrips() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"google\"", "engine = \"deepl\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.engine, "deepl");
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn unknown_global_engine_is_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"google\"", "engine = \"gemini\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(
+            err.to_string().contains("engine \"gemini\""),
+            "was: {err}"
+        );
+    }
+
+    #[test]
+    fn profile_can_pick_azure_independent_of_the_global_choice() {
+        let text = template_with_profile()
+            .replace("engine = \"google\"", "engine = \"deepl\"")
+            .replace(
+                "genderless = \"inherit\"",
+                "genderless = \"inherit\"\nengine = \"azure\"",
+            );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.engine, "deepl");
+        assert_eq!(config.profiles[0].engine.as_deref(), Some("azure"));
     }
 
     #[test]

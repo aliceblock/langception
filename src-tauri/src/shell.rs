@@ -7,11 +7,13 @@
 //! privacy badge (ticket 06). Thin adapter — exercised by the manual smoke
 //! checklist.
 
+use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, TextStyle};
+use langception_core::deepl::DeepLTranslateEngine;
 use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
-use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, SystemClock};
-use langception_core::ports::{ExcludedBlock, Region, SourceLanguage, Zone, TARGET_LANGUAGE};
+use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, Stage, SystemClock};
+use langception_core::ports::{ExcludedBlock, Region, SourceLanguage, TranslateEngine, Zone, TARGET_LANGUAGE};
 use langception_core::profile::{GenderlessOverride, Profile, ProfileZone};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -25,11 +27,18 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
+use tauri_plugin_notification::NotificationExt as _;
 use tokio::sync::{mpsc, watch};
 
 const PICKER_LABEL: &str = "zone-picker";
 /// Drags smaller than this (CSS px) count as a click: the session cancels.
 const MIN_DRAG_CSS_PX: i32 = 8;
+
+/// Engine errors (quota exhaustion, invalid key, network) re-notify from
+/// the tray at most once per this interval: a dead engine plus changing
+/// pixels can emit an error every tick, and toasts must not stack (ADR-0002:
+/// the user must never wonder why translation stopped — but not be spammed).
+const ENGINE_NOTIFY_REPEAT_MS: u64 = 60_000;
 
 /// Full-screen mode watches one synthetic "zone" spanning the selected
 /// monitor; its id keys overlay routing and the Results Window badge.
@@ -288,6 +297,9 @@ pub(crate) struct AppState {
     /// target computation — the watcher compares against it to follow
     /// window moves and resizes.
     active_window: Mutex<Option<Region>>,
+    /// The last engine-error tray notification (message + unix ms), for the
+    /// throttle that keeps a dead engine from spamming toasts every tick.
+    engine_notify: Mutex<Option<(String, u64)>>,
 }
 
 pub fn run() {
@@ -320,6 +332,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        // Engine errors (ticket 09) surface as tray notifications.
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -345,6 +359,7 @@ pub fn run() {
             first_run,
             active_profile: Mutex::new(None),
             active_window: Mutex::new(None),
+            engine_notify: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
@@ -368,6 +383,10 @@ pub fn run() {
             crate::settings::get_ocr_pack_status,
             crate::settings::open_language_pack_settings,
             crate::settings::get_about,
+            crate::settings::get_engines,
+            crate::settings::set_engines,
+            crate::settings::test_engine,
+            crate::settings::open_engine_link,
             crate::settings::set_general,
             crate::settings::set_start_with_windows,
             crate::settings::set_hotkeys,
@@ -1049,18 +1068,60 @@ fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeli
         glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
         ocr: Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)),
-        // The Profile's engine choice (None = inherit global). This build
-        // offers only the keyless Google engine (ADR-0002); tickets 09-11
-        // extend the match. Config validation rejects unknown names, so
-        // they cannot reach here from a valid config.
-        translate: match target.engine.as_deref().map(str::trim) {
-            None | Some("google") => Arc::new(
-                GoogleTranslateEngine::new()
-                    .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
-            ),
-            Some(other) => return Err(format!("unknown engine \"{other}\"")),
-        },
+        translate: build_translate_engine(config, target.engine.as_deref())?,
     })
+}
+
+/// Builds the Translate Engine for the effective target's choice: a
+/// Profile's explicit `engine` wins; `None` inherits the global default
+/// (`config.engine`, ticket 09). Config validation rejects unknown names,
+/// so they cannot reach here from a valid config — the match still fails
+/// loudly rather than falling back. Keyed engines need their key: an empty
+/// one is a start-time error naming the settings surface, never a silent
+/// no-op.
+pub(crate) fn build_translate_engine(
+    config: &AppConfig,
+    engine: Option<&str>,
+) -> Result<Arc<dyn TranslateEngine>, String> {
+    let chosen = engine
+        .map(str::trim)
+        .filter(|engine| !engine.is_empty())
+        .unwrap_or(config.engine.trim());
+    match chosen {
+        "google" => Ok(Arc::new(
+            GoogleTranslateEngine::new()
+                .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
+        )),
+        "azure" => {
+            let azure = &config.engines.azure;
+            let key = azure.key.trim();
+            if key.is_empty() {
+                return Err(
+                    "Azure engine selected, but no API key is set — add one in Settings → Engines"
+                        .into(),
+                );
+            }
+            Ok(Arc::new(
+                AzureTranslateEngine::new(key, azure.region.trim())
+                    .map_err(|e| format!("failed to initialize Azure engine: {e}"))?,
+            ))
+        }
+        "deepl" => {
+            let deepl = &config.engines.deepl;
+            let key = deepl.key.trim();
+            if key.is_empty() {
+                return Err(
+                    "DeepL engine selected, but no API key is set — add one in Settings → Engines"
+                        .into(),
+                );
+            }
+            Ok(Arc::new(
+                DeepLTranslateEngine::new(key)
+                    .map_err(|e| format!("failed to initialize DeepL engine: {e}"))?,
+            ))
+        }
+        other => Err(format!("unknown engine \"{other}\"")),
+    }
 }
 
 /// Bridges orchestrator events to the display layer: the Results Window
@@ -1089,7 +1150,16 @@ fn spawn_forwarder(
                 LoopEvent::BlocksRemoved { origin, keys, .. } => {
                     router.hide_blocks(&bridge_app, origin, keys);
                 }
-                LoopEvent::Error { .. } => {}
+                LoopEvent::Error { stage, message, .. } => {
+                    // Engine failures (quota exhaustion, invalid key,
+                    // network) notify from the tray in addition to the
+                    // Results Window banner (ticket 09 / ADR-0002): the
+                    // window may be hidden, and the user must never wonder
+                    // why translation stopped. Other stages stay in-window.
+                    if matches!(stage, Stage::Translate) {
+                        notify_engine_error(&bridge_app, message);
+                    }
+                }
             }
             // The overlay handles its own events; the Results Window is a
             // history log and does not care about removals.
@@ -1104,6 +1174,36 @@ fn spawn_forwarder(
             }
         }
     })
+}
+
+/// Shows one tray notification for an engine error, throttled: the same
+/// message re-notifies at most once per [`ENGINE_NOTIFY_REPEAT_MS`], a
+/// different message notifies immediately (a quota error followed by a key
+/// error are both worth their own toast).
+fn notify_engine_error(app: &AppHandle, message: &str) {
+    let state = app.state::<AppState>();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    {
+        let last = state.engine_notify.lock().unwrap();
+        if let Some((seen_message, at_ms)) = last.as_ref() {
+            if seen_message == message && now.saturating_sub(*at_ms) < ENGINE_NOTIFY_REPEAT_MS {
+                return;
+            }
+        }
+    }
+    *state.engine_notify.lock().unwrap() = Some((message.to_string(), now));
+    if let Err(e) = app
+        .notification()
+        .builder()
+        .title("Langception — translate error")
+        .body(message)
+        .show()
+    {
+        push_warning(&state, format!("could not show the tray notification: {e}"));
+    }
 }
 
 /// Starts the translation loop: wires real Windows adapters to the
