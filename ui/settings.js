@@ -1092,6 +1092,7 @@ const styleOpacity = document.getElementById("style-opacity");
 const styleCoverSource = document.getElementById("style-cover-source");
 const styleAlignmentRow = document.getElementById("style-alignment-row");
 const styleTextAlignment = document.getElementById("style-text-alignment");
+const styleTextVAlignment = document.getElementById("style-text-v-alignment");
 const stylePlacement = document.getElementById("style-placement");
 let styleLoaded = false;
 let styleSaveTimer = null;
@@ -1120,6 +1121,7 @@ function loadStyleInputs(style) {
   styleOpacity.value = style.backgroundOpacity;
   styleCoverSource.checked = style.coverSource;
   styleTextAlignment.value = style.textAlignment || "left";
+  styleTextVAlignment.value = style.textVAlignment || "center";
   updateAlignmentRowVisibility();
   stylePlacement.value = style.placement || "over";
 }
@@ -1144,6 +1146,7 @@ function collectStyle() {
     backgroundOpacity: Number(styleOpacity.value) || 0,
     coverSource: styleCoverSource.checked,
     textAlignment: styleTextAlignment.value,
+    textVAlignment: styleTextVAlignment.value,
     placement: stylePlacement.value,
   };
 }
@@ -1153,10 +1156,14 @@ function collectStyle() {
 // overlay's shared pill renderer (pill-style.js), so the preview cannot
 // drift from what the In-place Overlay draws. Block geometry (Placement)
 // is out of scope: it depends on each block's source rect, which settings
-// does not have. With Cover Source on (ticket 36) the preview box stands
-// in for the Text Block: the pill stretches across it so the Text
-// Alignment inside shows exactly as the overlay draws it — the size is
-// preview geometry, the inside layout is the shared technique. Auto
+// does not have. With Cover Source on (tickets 36/38) the preview box
+// stands in for the Text Block: the pill stretches across it — width for
+// the horizontal axis (ticket 36), a fixed min-height for the vertical
+// one (ticket 38; the overlay's stand-in is the block rect's height, which
+// a preview does not have) — so the alignment inside shows exactly as the
+// overlay draws it. The size is preview geometry, the inside layout is
+// the shared technique. minHeight (not height) mirrors the overlay: text
+// taller than the stand-in grows the pill, same as a wrapped block. Auto
 // Colors sampling needs capture data, so the manual colors — the
 // documented fallback — always show; the note under the pill says so
 // while Auto Colors is on.
@@ -1170,9 +1177,13 @@ function updateStylePreview() {
   if (style.background && style.coverSource) {
     stylePreviewPill.style.width = "100%";
     stylePreviewPill.style.maxWidth = "none";
+    // Ticket 38: a stand-in block height, so top/center/bottom are all
+    // visible — without it the pill hugs the text and only center shows.
+    stylePreviewPill.style.minHeight = "96px";
   } else {
     stylePreviewPill.style.width = "";
     stylePreviewPill.style.maxWidth = "";
+    stylePreviewPill.style.minHeight = "";
   }
   // The overlay's fitText always sets the size explicitly on the text
   // element; the preview does the same, at the configured size — which
@@ -1203,7 +1214,7 @@ function scheduleStyleSave() {
   }, 250);
 }
 
-for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity, styleCoverSource, styleTextAlignment, stylePlacement]) {
+for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity, styleCoverSource, styleTextAlignment, styleTextVAlignment, stylePlacement]) {
   // The preview repaints instantly from the in-form values; the save to
   // config.toml stays debounced behind it.
   control.addEventListener("input", updateStylePreview);
@@ -1349,6 +1360,7 @@ const TRACKED_STYLE = [
   styleOpacity,
   styleCoverSource,
   styleTextAlignment,
+  styleTextVAlignment,
   stylePlacement,
 ];
 

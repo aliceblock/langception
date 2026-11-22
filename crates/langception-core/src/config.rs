@@ -88,8 +88,16 @@ pub struct TextStyle {
     /// sits horizontally inside a Cover Source pill — [`TextAlignment::Left`]
     /// (the default), [`TextAlignment::Center`], or [`TextAlignment::Right`].
     /// Only means anything while `cover_source` is on (a hug-the-text pill
-    /// has nothing to align within); display-only like Placement.
+    /// has nothing to align within); display-only like Placement. The
+    /// vertical half of the pair is `text_v_alignment` below.
     pub text_alignment: TextAlignment,
+    /// Vertical text alignment (ticket 38, CONTEXT.md "Text Alignment"):
+    /// where the translated text sits vertically inside a Cover Source pill
+    /// — [`TextVAlignment::Top`], [`TextVAlignment::Center`] (the default:
+    /// today's rendering), or [`TextVAlignment::Bottom`]. Only means
+    /// anything while `cover_source` is on, like the horizontal
+    /// `text_alignment` above; display-only like Placement.
+    pub text_v_alignment: TextVAlignment,
 }
 
 impl Default for TextStyle {
@@ -106,6 +114,9 @@ impl Default for TextStyle {
             cover_source: false,
             placement: Placement::Over,
             text_alignment: TextAlignment::Left,
+            // Center preserves today's rendering: the stretched pill has
+            // always drawn its text vertically centered (ticket 38).
+            text_v_alignment: TextVAlignment::Center,
         }
     }
 }
@@ -212,6 +223,55 @@ impl std::fmt::Display for TextAlignment {
             TextAlignment::Left => "Left",
             TextAlignment::Center => "Center",
             TextAlignment::Right => "Right",
+        })
+    }
+}
+
+/// Where the translated text sits vertically inside a Cover Source pill
+/// (ticket 38, CONTEXT.md "Text Alignment"): [`TextVAlignment::Top`],
+/// [`TextVAlignment::Center`] (the default — the stretched pill has always
+/// drawn its text vertically centered), or [`TextVAlignment::Bottom`]. Only
+/// means anything while Cover Source is on, like the horizontal
+/// [`TextAlignment`] axis. Display-only like Placement: the restyle
+/// broadcast applies it live, no loop restart.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TextVAlignment {
+    Top,
+    #[default]
+    Center,
+    Bottom,
+}
+
+impl TextVAlignment {
+    /// The config-file / settings-surface spelling.
+    pub fn code(self) -> &'static str {
+        match self {
+            TextVAlignment::Top => "top",
+            TextVAlignment::Center => "center",
+            TextVAlignment::Bottom => "bottom",
+        }
+    }
+
+    /// Parses [`TextVAlignment::code`] output; `None` for anything else, so
+    /// an unknown hand-edited name can be rejected with a visible error.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "top" => Some(TextVAlignment::Top),
+            "center" => Some(TextVAlignment::Center),
+            "bottom" => Some(TextVAlignment::Bottom),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TextVAlignment {
+    /// The UI label.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            TextVAlignment::Top => "Top",
+            TextVAlignment::Center => "Center",
+            TextVAlignment::Bottom => "Bottom",
         })
     }
 }
@@ -958,6 +1018,11 @@ placement = "over"
 # inside a Cover Source pill — "left" (the default), "center", or "right".
 # Only means anything while cover_source above is on. Applies live.
 text_alignment = "left"
+# The vertical half of Text Alignment (CONTEXT.md): where the translated
+# text sits vertically inside a Cover Source pill — "top", "center" (the
+# default), or "bottom". Only means anything while cover_source above is
+# on. Applies live.
+text_v_alignment = "center"
 
 [hotkeys]
 # Global hotkeys, rebindable. Format: modifiers + key, e.g. "Alt+T",
@@ -1122,7 +1187,8 @@ language = "en"
             .replace("cover_source = false", "cover_source = true")
             .replace("auto_colors = false", "auto_colors = true")
             .replace("placement = \"over\"", "placement = \"beside\"")
-            .replace("text_alignment = \"left\"", "text_alignment = \"right\"");
+            .replace("text_alignment = \"left\"", "text_alignment = \"right\"")
+            .replace("text_v_alignment = \"center\"", "text_v_alignment = \"bottom\"");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(
             config.text_style,
@@ -1138,6 +1204,7 @@ language = "en"
                 cover_source: true,
                 placement: Placement::Beside,
                 text_alignment: TextAlignment::Right,
+                text_v_alignment: TextVAlignment::Bottom,
             }
         );
 
@@ -1299,6 +1366,69 @@ language = "en"
         }
         assert_eq!(TextAlignment::from_code("middle"), None);
         assert_eq!(TextAlignment::from_code("justify"), None);
+    }
+
+    #[test]
+    fn text_v_alignment_defaults_to_center_for_configs_written_before_it() {
+        // A pre-ticket-38 config has no `text_v_alignment` key; serde's
+        // container default must fill it in (Center) rather than reject the
+        // file — Center is the old rendering, so nothing moves.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("text_v_alignment"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.text_style.text_v_alignment, TextVAlignment::Center);
+        assert_eq!(config.text_style, TextStyle::default());
+    }
+
+    #[test]
+    fn text_v_alignment_roundtrips_through_toml() {
+        for (code, expected) in [
+            ("top", TextVAlignment::Top),
+            ("center", TextVAlignment::Center),
+            ("bottom", TextVAlignment::Bottom),
+        ] {
+            let text = AppConfig::DEFAULT_TEMPLATE.replace(
+                "text_v_alignment = \"center\"",
+                &format!("text_v_alignment = \"{code}\""),
+            );
+            let config = AppConfig::from_toml_str(&text).unwrap();
+            assert_eq!(config.text_style.text_v_alignment, expected, "{code} parses");
+
+            let serialized = config.to_toml_string().unwrap();
+            assert!(
+                serialized.contains(&format!("text_v_alignment = \"{code}\"")),
+                "the alignment stays a hand-editable TOML string: {serialized}"
+            );
+            assert_eq!(config, AppConfig::from_toml_str(&serialized).unwrap());
+        }
+    }
+
+    #[test]
+    fn unknown_text_v_alignment_is_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("text_v_alignment = \"center\"", "text_v_alignment = \"middle\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("text_v_alignment"), "was: {err}");
+    }
+
+    #[test]
+    fn text_v_alignment_codes_and_display_labels_roundtrip() {
+        // `code` is the config-file spelling, `Display` the UI label; each
+        // variant's code parses back to itself.
+        for (alignment, code, label) in [
+            (TextVAlignment::Top, "top", "Top"),
+            (TextVAlignment::Center, "center", "Center"),
+            (TextVAlignment::Bottom, "bottom", "Bottom"),
+        ] {
+            assert_eq!(alignment.code(), code);
+            assert_eq!(TextVAlignment::from_code(code), Some(alignment));
+            assert_eq!(alignment.to_string(), label);
+        }
+        assert_eq!(TextVAlignment::from_code("middle"), None);
+        assert_eq!(TextVAlignment::from_code("sideways"), None);
     }
 
     #[test]

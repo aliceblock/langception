@@ -9,7 +9,8 @@
 
 use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{
-    AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextAlignment, TextStyle,
+    AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextAlignment,
+    TextVAlignment, TextStyle,
     WindowSettings,
 };
 use langception_core::deepl::DeepLTranslateEngine;
@@ -212,6 +213,10 @@ pub struct TextStyleDto {
     /// Text Alignment (ticket 36): "left" | "center" | "right" — where the
     /// translated text sits inside a Cover Source pill.
     pub text_alignment: String,
+    /// Vertical text alignment (ticket 38): "top" | "center" | "bottom" —
+    /// the vertical half of Text Alignment, inside the same Cover Source
+    /// pill.
+    pub text_v_alignment: String,
 }
 
 impl From<&TextStyle> for TextStyleDto {
@@ -228,6 +233,7 @@ impl From<&TextStyle> for TextStyleDto {
             cover_source: style.cover_source,
             placement: style.placement.code().to_string(),
             text_alignment: style.text_alignment.code().to_string(),
+            text_v_alignment: style.text_v_alignment.code().to_string(),
         }
     }
 }
@@ -248,6 +254,8 @@ impl From<TextStyleDto> for TextStyle {
             // runs; the fallback only keeps the conversion total.
             placement: Placement::from_code(dto.placement.trim()).unwrap_or_default(),
             text_alignment: TextAlignment::from_code(dto.text_alignment.trim()).unwrap_or_default(),
+            text_v_alignment: TextVAlignment::from_code(dto.text_v_alignment.trim())
+                .unwrap_or_default(),
         }
     }
 }
@@ -2693,6 +2701,13 @@ fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
         return Err(format!(
             "text_alignment \"{}\" is unknown — alignments: left, center, right",
             style.text_alignment.trim()
+        ));
+    }
+    // Same for an unknown vertical alignment (ticket 38).
+    if TextVAlignment::from_code(style.text_v_alignment.trim()).is_none() {
+        return Err(format!(
+            "text_v_alignment \"{}\" is unknown — alignments: top, center, bottom",
+            style.text_v_alignment.trim()
         ));
     }
     let text_style = TextStyle::from(style);

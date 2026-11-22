@@ -268,6 +268,10 @@ struct StylePayload<'a> {
     /// translated text sits inside a Cover Source pill. Display-only like
     /// `placement`.
     text_alignment: &'a str,
+    /// Vertical text alignment (ticket 38): "top" | "center" | "bottom" —
+    /// the vertical half of Text Alignment, inside the same Cover Source
+    /// pill. Display-only like `placement`.
+    text_v_alignment: &'a str,
 }
 
 impl<'a> From<&'a TextStyle> for StylePayload<'a> {
@@ -284,6 +288,7 @@ impl<'a> From<&'a TextStyle> for StylePayload<'a> {
             cover_source: style.cover_source,
             placement: style.placement.code(),
             text_alignment: style.text_alignment.code(),
+            text_v_alignment: style.text_v_alignment.code(),
         }
     }
 }

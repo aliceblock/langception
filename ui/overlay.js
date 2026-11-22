@@ -41,6 +41,9 @@ const DEFAULT_STYLE = {
   coverSource: false,
   placement: "over",
   textAlignment: "left",
+  // Vertical half of Text Alignment (ticket 38): center is what the
+  // stretched pill drew before the option existed, so it is the default.
+  textVAlignment: "center",
 };
 
 let style = { ...DEFAULT_STYLE };

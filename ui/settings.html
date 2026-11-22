@@ -560,18 +560,24 @@
               <span class="hint">stretch the pill over the whole original block instead of hugging the translation (needs Background pill)</span>
             </span>
           </label>
-          <!-- Text Alignment (ticket 36) only means anything inside a
-               Cover Source pill, so the row appears only while Cover
-               Source is checked (settings.js toggles it). -->
+          <!-- Text Alignment (tickets 36/38) only means anything inside a
+               Cover Source pill — horizontal and vertical — so the row
+               appears only while Cover Source is checked (settings.js
+               toggles it). -->
           <label id="style-alignment-row" class="form-row hidden">
             <span>Text alignment</span>
             <span class="style-pair">
-              <select id="style-text-alignment" title="Where the translated text sits inside the stretched pill">
+              <select id="style-text-alignment" title="Where the translated text sits horizontally inside the stretched pill">
                 <option value="left">Left</option>
                 <option value="center">Center</option>
                 <option value="right">Right</option>
               </select>
-              <span class="hint">where the translated text sits inside the stretched pill</span>
+              <select id="style-text-v-alignment" title="Where the translated text sits vertically inside the stretched pill">
+                <option value="top">Top</option>
+                <option value="center">Center</option>
+                <option value="bottom">Bottom</option>
+              </select>
+              <span class="hint">where the translated text sits inside the stretched pill (horizontal, vertical)</span>
             </span>
           </label>
           <label class="form-row">

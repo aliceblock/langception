@@ -1,4 +1,4 @@
-// Langception pill style (tickets 14/24/26/36) — THE rendering technique
+// Langception pill style (tickets 14/24/26/36/38) — THE rendering technique
 // for translation pills, shared by the In-place Overlay (overlay.js) and
 // the Settings Text Style preview (settings.js). Both pages call
 // applyPillStyle with a TextStyle object, so what the preview shows is
@@ -27,6 +27,12 @@ function hexToRgb(hex) {
 // back to it harmlessly).
 const ALIGNMENT_VALUES = { left: "flex-start", center: "center", right: "flex-end" };
 
+// The vertical half of Text Alignment (ticket 38, CONTEXT.md) → the
+// flexbox value for the other axis. Center is the default — and what the
+// stretched pill drew before the option existed — so an unknown code
+// falls back to it harmlessly.
+const V_ALIGNMENT_VALUES = { top: "flex-start", center: "center", bottom: "flex-end" };
+
 // Applies font, text outline and the background pill to one element (the
 // overlay's block div, or the preview's pill span). `sampled` is the
 // block's Auto Colors sample ({ textColor, pillColor } as "#rrggbb") or
@@ -35,9 +41,9 @@ const ALIGNMENT_VALUES = { left: "flex-start", center: "center", right: "flex-en
 // and manual is the documented fallback. Geometry (position, the Cover
 // Source stretch size, shrink-to-fit) stays with the caller: it depends
 // on each block's source rect, which a preview does not have. The inner
-// layout of a stretched pill, though — flex row, vertical centering and
-// the Text Alignment (ticket 36) — IS shared, so both consumers align
-// the text identically.
+// layout of a stretched pill, though — flex row, Text Alignment on both
+// axes (tickets 36/38) — IS shared, so both consumers align the text
+// identically.
 function applyPillStyle(el, style, sampled) {
   el.style.fontFamily = `"${style.fontFamily}", "Noto Sans Thai", "Segoe UI", sans-serif`;
   el.style.webkitTextStrokeWidth = style.outlineWidth + "px";
@@ -65,15 +71,20 @@ function applyPillStyle(el, style, sampled) {
     el.style.borderRadius = "4px";
     if (style.coverSource) {
       // The stretch itself (min width/height from the block rect) belongs
-      // to the caller; this is the inside of it: the text vertically
-      // centered, horizontally per Text Alignment. The code doubles as a
-      // CSS text-align value, covering the wrapped case where the text
-      // span fills the pill and the lines align within it. Own-property
-      // check, so an inherited name like "constructor" falls back to left.
-      const known = Object.hasOwn(ALIGNMENT_VALUES, style.textAlignment);
-      const alignment = known ? style.textAlignment : "left";
+      // to the caller; this is the inside of it. The pill is a plain flex
+      // row, so justify-content is the horizontal axis (Text Alignment,
+      // ticket 36) and align-items the vertical one (ticket 38) for the
+      // text span. textAlign stays horizontal-only: it covers the wrapped
+      // case where the span fills the pill and the lines align within it.
+      // Own-property checks, so an inherited name like "constructor" falls
+      // back to the defaults (left / center — what the pill drew before
+      // each axis existed).
+      const hKnown = Object.hasOwn(ALIGNMENT_VALUES, style.textAlignment);
+      const alignment = hKnown ? style.textAlignment : "left";
+      const vKnown = Object.hasOwn(V_ALIGNMENT_VALUES, style.textVAlignment);
+      const vAlignment = vKnown ? style.textVAlignment : "center";
       el.style.display = "flex";
-      el.style.alignItems = "center";
+      el.style.alignItems = V_ALIGNMENT_VALUES[vAlignment];
       el.style.justifyContent = ALIGNMENT_VALUES[alignment];
       el.style.textAlign = alignment;
     }
