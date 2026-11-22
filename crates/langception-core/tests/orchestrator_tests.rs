@@ -795,6 +795,277 @@ async fn a_change_that_reverts_within_the_window_never_fires() {
     assert_no_event(&mut h.events, "no events for the reverted change").await;
 }
 
+// ---- Text-level dedup (ticket 22) ----
+//
+// Pixel-level change detection cannot see that a re-read found the SAME
+// text: jitter around unchanged glyphs (animation, antialiasing) changes a
+// block's dHash, the stability window matures, and the engine would be
+// called again with identical text. These tests pin the text-level
+// suppression on the shared fire path: a read whose trimmed text equals
+// the block's last SHOWN translation is dropped — no engine call, no
+// event, for both reading modes.
+
+#[tokio::test]
+async fn identical_text_on_jittering_pixels_translates_once() {
+    let (mut h, mut orch) = harness().await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Tick 1: "Hello" appears → translated once.
+    feed(&h, 1, &frame_animated(&blocks, 0, 7), Some(blocks.clone())).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+    let _ = next_event(&mut h.events).await;
+
+    // Ticks 2–3: the pixels keep changing (animation) but every read says
+    // "Hello" — no engine call, no event: the overlay already shows that
+    // translation.
+    for anim in [8u8, 9] {
+        let frame = frame_animated(&blocks, anim, anim);
+        feed(&h, 1, &frame, Some(blocks.clone())).await;
+        orch.tick().await;
+    }
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello"],
+        "identical text on changed pixels must not re-translate"
+    );
+    assert_no_event(&mut h.events, "suppressed re-reads must not emit").await;
+
+    // A genuine text change still translates normally. ("Farewell" rather
+    // than "Goodbye": text_mark("Goodbye") paints the same marker cells as
+    // anim 9 above, which would leave the block's pixels — and dHash —
+    // unchanged on this tick.)
+    let changed = frame_animated(&blocks, 10, text_mark("Farewell"));
+    feed(&h, 1, &changed, Some(vec![block(0, 0, "Farewell")])).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello", "Farewell"]);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => assert_eq!(translation, "[TH] Farewell"),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn suppression_also_gates_matured_fast_path_fires() {
+    let (mut h, mut orch) = harness_with_stability(400).await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Tick 1 (t=0): change detected, window starts.
+    h.clock.set_now_ms(0);
+    let frame_a = frame_animated(&blocks, 0, 7);
+    feed(&h, 1, &frame_a, Some(blocks.clone())).await;
+    orch.tick().await;
+    assert!(h.translate.calls().is_empty());
+
+    // Tick 2 (t=500): the same frame → fast path → the matured pending
+    // fires; "Hello" is translated and shown.
+    h.clock.set_now_ms(500);
+    feed(&h, 1, &frame_a, None).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+    let _ = next_event(&mut h.events).await;
+
+    // Ticks 3–6: the pixels change twice more, each change holds stable
+    // and matures on a fast-path tick, but every read still says "Hello" —
+    // each matured fire is suppressed: no engine call, no event.
+    for (corner, anim) in [(232u8, 8u8), (208, 9)] {
+        h.clock.set_now_ms(corner as u64 * 10);
+        let frame = frame_animated(&blocks, corner, anim);
+        feed(&h, 1, &frame, Some(blocks.clone())).await;
+        orch.tick().await;
+        assert_eq!(
+            h.translate.calls(),
+            ["Hello"],
+            "no re-fire while the text is unchanged"
+        );
+
+        h.clock.set_now_ms(corner as u64 * 10 + 500);
+        feed(&h, 1, &frame, None).await;
+        orch.tick().await;
+        assert_eq!(
+            h.translate.calls(),
+            ["Hello"],
+            "the matured fast-path fire must be suppressed for identical text"
+        );
+    }
+    assert_no_event(&mut h.events, "suppressed matured fires must not emit").await;
+}
+
+#[tokio::test]
+async fn suppression_gates_the_in_pass_matured_fire_too() {
+    let (mut h, mut orch) = harness_with_stability(400).await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Establish the shown translation: detected at t=0, fired on the
+    // fast path at t=500.
+    h.clock.set_now_ms(0);
+    let base = frame_animated(&blocks, 0, 7);
+    feed(&h, 1, &base, Some(blocks.clone())).await;
+    orch.tick().await;
+    h.clock.set_now_ms(500);
+    feed(&h, 1, &base, None).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+    let _ = next_event(&mut h.events).await;
+
+    // The block's pixels change (anim 8, window restarts at t=1000), then
+    // hold while something ELSE in the zone changes: the window matures
+    // during a later OCR pass, not on the fast path — and the identical
+    // text is suppressed at that branch too.
+    h.clock.set_now_ms(1000);
+    feed(&h, 1, &frame_animated(&blocks, 1, 8), Some(blocks.clone())).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"]);
+
+    h.clock.set_now_ms(1500);
+    feed(&h, 1, &frame_animated(&blocks, 2, 8), Some(blocks.clone())).await;
+    orch.tick().await;
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello"],
+        "the in-pass matured fire must be suppressed for identical text"
+    );
+    assert_no_event(&mut h.events, "suppressed in-pass fires must not emit").await;
+}
+
+#[tokio::test]
+async fn a_failed_translation_is_retried_on_changed_pixels_despite_identical_text() {
+    let (mut h, mut orch) = harness().await;
+
+    // Tick 1: the engine fails for "Hello" — the error surfaces and
+    // nothing is shown, so there is no shown text to suppress against.
+    h.responses
+        .send(Err(TranslateError::new("HTTP 503 unavailable")))
+        .await
+        .unwrap();
+    feed(
+        &h,
+        1,
+        &frame_animated(&[block(0, 0, "Hello")], 0, 7),
+        Some(vec![block(0, 0, "Hello")]),
+    )
+    .await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Error { stage, .. } => assert_eq!(stage, Stage::Translate),
+        other => panic!("expected Error, got {other:?}"),
+    }
+    assert_eq!(h.translate.calls(), ["Hello"]);
+
+    // Tick 2: the pixels change (jitter) but the text is the SAME. The
+    // earlier fire failed, so the suppression record is empty — the engine
+    // is tried again (retry-on-pixel-change is preserved for failures).
+    feed(
+        &h,
+        1,
+        &frame_animated(&[block(0, 0, "Hello")], 1, 8),
+        Some(vec![block(0, 0, "Hello")]),
+    )
+    .await;
+    orch.tick().await;
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello", "Hello"],
+        "a failed read must be retried when the pixels change again"
+    );
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => assert_eq!(translation, "[TH] Hello"),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+
+    // Tick 3: now that a translation IS shown, identical re-reads are
+    // suppressed again.
+    feed(
+        &h,
+        1,
+        &frame_animated(&[block(0, 0, "Hello")], 2, 9),
+        Some(vec![block(0, 0, "Hello")]),
+    )
+    .await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello", "Hello"]);
+    assert_no_event(&mut h.events, "suppressed again after the successful retry").await;
+}
+
+#[tokio::test]
+async fn reappearance_after_removal_retranslates_identical_text() {
+    let (mut h, mut orch) = harness().await;
+    let hello = vec![block(0, 0, "Hello")];
+
+    feed_tick(&h, 1, hello.clone()).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+
+    // Gone for two consecutive passes → removed (the state, including the
+    // shown-text record, is dropped).
+    feed_tick(&h, 1, vec![]).await;
+    orch.tick().await;
+    feed_unchanged(&h, 1, vec![]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::BlocksRemoved { .. } => {}
+        other => panic!("expected BlocksRemoved, got {other:?}"),
+    }
+
+    // It reappears with the same text on jittered pixels: the cleared
+    // record must not suppress the fresh translation.
+    feed(&h, 1, &frame_animated(&hello, 1, 9), Some(hello)).await;
+    orch.tick().await;
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello", "Hello"],
+        "reappearance re-translates even though the text is unchanged"
+    );
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { .. } => {}
+        other => panic!("expected Translated for the returning block, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn fused_path_suppresses_identical_text_too() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Tick 1: read + translated in one fused call.
+    feed_fused(
+        &h,
+        &frame_for(&blocks),
+        Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")]),
+    )
+    .await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(h.fused.calls().len(), 1);
+
+    // Tick 2: the frame changed (animation), the model reads the same
+    // "Hello" — its answer is dropped before display: no event. The model
+    // itself WAS called (suppression sits after the read, on the fire).
+    feed_fused(
+        &h,
+        &frame_animated(&blocks, 1, 8),
+        Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")]),
+    )
+    .await;
+    orch.tick().await;
+    assert_eq!(h.fused.calls().len(), 2);
+    assert_no_event(&mut h.events, "an identical fused answer must not re-emit").await;
+
+    // Tick 3: a genuine text change flows through normally.
+    feed_fused(
+        &h,
+        &frame_animated(&blocks, 2, text_mark("Goodbye")),
+        Ok(vec![fused_block(0, 0, "Goodbye", "ลาก่อน")]),
+    )
+    .await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => assert_eq!(translation, "ลาก่อน"),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
 // ---- Independent tracking ----
 
 #[tokio::test]

@@ -13,7 +13,12 @@
 //! when its result fires, so an unchanged screen costs capture + hashing
 //! only and an unchanged block is never re-emitted — in fused mode the
 //! block's translation rides in its pending change instead of being
-//! requested from a Translate Engine on fire.
+//! requested from a Translate Engine on fire. Pixel hashing alone cannot
+//! see that a re-read found the SAME text, though (ticket 22): jitter
+//! around unchanged glyphs changes a block's dHash and would re-call the
+//! engine with identical text — so the shared fire path also compares the
+//! read's trimmed text against the block's last shown translation and
+//! drops exact repeats before any engine call or event.
 //!
 //! All collaborators are ports (`capture`, `ocr`, `translate`, `clock`) plus
 //! the watched zone list, the paused flag, and the active Excluded Blocks,
@@ -190,6 +195,16 @@ struct BlockState {
     /// `None` = never translated. A pass whose block hashes to this value
     /// is skipped — even when its OCR text jitters.
     fired_hash: Option<u64>,
+    /// Ticket 22: the trimmed text of the last read that was successfully
+    /// translated and shown. A matured read whose trimmed text equals this
+    /// is suppressed on the shared fire path — pixel jitter around
+    /// unchanged glyphs (animation, antialiasing) must not re-call the
+    /// engine or re-emit the event for a translation the In-place Overlay
+    /// already displays. Recorded only on success: a failed fire records
+    /// nothing, so the read is retried when the pixels change again.
+    /// Cleared with the rest of the state when the block is removed, so
+    /// reappearance re-translates.
+    last_fired_text: Option<String>,
     /// A pixel change observed but not yet fired: still inside the
     /// stability window, or pixels that keep changing (an animation). The
     /// change's rect and text are from the last OCR'd frame that showed
@@ -549,16 +564,17 @@ impl Orchestrator {
                 if now.saturating_sub(since) >= stable_ms {
                     entry.pending = None;
                     self.fire_read(
+                        entry,
                         zone.region,
                         &block,
                         &text,
+                        hash,
                         fused_translation.as_deref(),
                         &origin,
                         &label,
                         &image,
                     )
                     .await;
-                    entry.fired_hash = Some(hash);
                 } else {
                     // ...otherwise keep waiting, refreshing the cached read
                     // to this frame — the newest one a fast-path fire could
@@ -581,16 +597,17 @@ impl Orchestrator {
                 if stable_ms == 0 {
                     entry.pending = None;
                     self.fire_read(
+                        entry,
                         zone.region,
                         &block,
                         &text,
+                        hash,
                         fused_translation.as_deref(),
                         &origin,
                         &label,
                         &image,
                     )
                     .await;
-                    entry.fired_hash = Some(hash);
                 }
             }
         }
@@ -655,16 +672,17 @@ impl Orchestrator {
                 continue; // unreachable: maturity was checked above
             };
             self.fire_read(
+                entry,
                 region,
                 &pending.rect,
                 &pending.text,
+                pending.hash,
                 pending.translation.as_deref(),
                 origin,
                 label,
                 image,
             )
             .await;
-            entry.fired_hash = Some(pending.hash);
         }
     }
 
@@ -755,27 +773,50 @@ impl Orchestrator {
             .ok();
     }
 
-    /// Fires one read: a fused read displays the translation the model
-    /// already answered (ticket 12); a classic OCR read asks the Translate
-    /// Engine ([`Self::translate_and_emit`]).
+    /// Fires one read through the block's tracking state: a fused read
+    /// displays the translation the model already answered (ticket 12); a
+    /// classic OCR read asks the Translate Engine
+    /// ([`Self::translate_and_emit`]). Ticket 22: this is the shared fire
+    /// path of both reading modes and the one place the dedup record is
+    /// written. A read whose trimmed text equals the block's last SHOWN
+    /// text is dropped before the engine is called or the fused answer is
+    /// emitted — the In-place Overlay already displays that translation,
+    /// and pixel jitter around unchanged glyphs must not re-request it.
+    /// Otherwise `fired_hash` advances to `hash` unconditionally (a failed
+    /// read still counts as handled, so a dead engine is not hammered
+    /// every tick), while `last_fired_text` records the text only when a
+    /// translation was actually shown — keeping "retried when the pixels
+    /// change again" true for failures.
     #[allow(clippy::too_many_arguments)]
     async fn fire_read(
         &self,
+        entry: &mut BlockState,
         region: Region,
         rect: &TextBlock,
         text: &str,
+        hash: u64,
         fused_translation: Option<&str>,
         origin: &EventOrigin,
         label: &str,
         image: &CapturedImage,
     ) {
+        if entry.last_fired_text.as_deref() == Some(text) {
+            return; // suppressed: nothing shown, nothing recorded
+        }
         let style = self.sampled_style(image, rect);
-        match fused_translation {
-            Some(thai) => self.emit_fused_block(region, rect, thai, origin, style).await,
+        let shown = match fused_translation {
+            Some(thai) => {
+                self.emit_fused_block(region, rect, thai, origin, style).await;
+                true
+            }
             None => {
                 self.translate_and_emit(region, rect, text, origin, label, style)
                     .await
             }
+        };
+        entry.fired_hash = Some(hash);
+        if shown {
+            entry.last_fired_text = Some(text.to_string());
         }
     }
 
@@ -808,9 +849,11 @@ impl Orchestrator {
 
     /// Glossary short-circuit, engine translate, and the resulting event
     /// for one block read. `rect` is region-relative; the emitted block
-    /// carries screen coordinates. A failed translation still counts as
-    /// handled (the caller records the change) so a dead engine is not
-    /// hammered every tick — it is retried when the pixels change again.
+    /// carries screen coordinates. Returns whether a translation was
+    /// emitted: `false` on engine failure, so the caller records no shown
+    /// text and the read is retried when the pixels change again. A failed
+    /// translation still counts as handled (the caller records the change)
+    /// so a dead engine is not hammered every tick.
     #[allow(clippy::too_many_arguments)]
     async fn translate_and_emit(
         &self,
@@ -820,7 +863,7 @@ impl Orchestrator {
         origin: &EventOrigin,
         label: &str,
         style: Option<SampledStyle>,
-    ) {
+    ) -> bool {
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
             None => {
@@ -864,8 +907,12 @@ impl Orchestrator {
         match translated {
             Ok((translation, via)) => {
                 self.emit_translated(region, rect, translation, via, origin, style);
+                true
             }
-            Err(message) => self.emit(Stage::Translate, format!("{label}: {message}")),
+            Err(message) => {
+                self.emit(Stage::Translate, format!("{label}: {message}"));
+                false
+            }
         }
     }
 
