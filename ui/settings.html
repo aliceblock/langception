@@ -450,8 +450,14 @@
         <div class="form-grid">
           <label class="form-row">
             <span>Font</span>
-            <input id="style-font" type="text" spellcheck="false" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" />
+            <span class="style-pair" style="flex-direction: column; align-items: stretch;">
+              <input id="style-font" type="text" spellcheck="false" list="font-list" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" placeholder="Noto Sans Thai" />
+              <datalist id="font-list"></datalist>
+            </span>
           </label>
+          <div class="row">
+            <span id="style-preview" title="Preview of the selected font">เวอร์ติน · The ship cannot survive 1999</span>
+          </div>
           <label class="form-row">
             <span>Size (6–96)</span>
             <input id="style-size" type="number" min="6" max="96" step="1" />

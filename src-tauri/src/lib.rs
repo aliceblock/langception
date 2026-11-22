@@ -1,6 +1,7 @@
 // Adapter types are public so the opt-in manual smoke test can drive them
 // directly (tests/manual_smoke.rs).
 pub mod capture;
+pub mod fonts;
 pub mod foreground;
 #[cfg(windows)]
 pub mod ocr;

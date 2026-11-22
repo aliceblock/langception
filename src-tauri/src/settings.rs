@@ -812,6 +812,15 @@ pub(crate) async fn list_running_apps() -> Result<Vec<crate::foreground::Running
         .map_err(|e| format!("background task failed: {e}"))
 }
 
+/// Installed font family names for the Text Style selector (ticket 15).
+/// DirectWrite enumeration is a COM call, so it stays off the IPC thread.
+#[tauri::command]
+pub(crate) async fn list_fonts() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(crate::fonts::font_families)
+        .await
+        .map_err(|e| format!("background task failed: {e}"))
+}
+
 #[tauri::command]
 pub(crate) async fn create_profile(app: AppHandle, profile: ProfileDto) -> Result<String, String> {
     let (name, exe, language, engine, genderless) = parse_profile_dto(profile)?;

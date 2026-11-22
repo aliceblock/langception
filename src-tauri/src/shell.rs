@@ -406,6 +406,7 @@ pub fn run() {
             crate::settings::import_glossary,
             crate::settings::export_glossary,
             crate::settings::list_running_apps,
+            crate::settings::list_fonts,
             crate::settings::create_profile,
             crate::settings::update_profile,
             crate::settings::delete_profile,

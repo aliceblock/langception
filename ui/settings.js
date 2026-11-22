@@ -1001,6 +1001,39 @@ for (const control of [styleFont, styleSize, styleColor, styleOutlineWidth, styl
   control.addEventListener("change", scheduleStyleSave);
 }
 
+// Font selector (ticket 15): the dropdown lists the fonts actually installed
+// on this PC (DirectWrite), while the field stays typeable so a hand-edited
+// config name never breaks. A live preview renders the current selection
+// with the same fallback stack the overlay uses.
+const stylePreview = document.getElementById("style-preview");
+
+function updateStylePreview() {
+  const family = styleFont.value.trim() || "Noto Sans Thai";
+  stylePreview.style.fontFamily = `"${family}", "Noto Sans Thai", "Segoe UI", sans-serif`;
+}
+
+async function loadFontList() {
+  if (styleFont.dataset.loaded) return;
+  styleFont.dataset.loaded = "true";
+  try {
+    const fonts = await invoke("list_fonts");
+    const list = document.getElementById("font-list");
+    for (const font of fonts) {
+      const option = document.createElement("option");
+      option.value = font;
+      list.append(option);
+    }
+  } catch (e) {
+    styleFont.dataset.loaded = ""; // retry next open: the list is optional
+    toast(`Could not list installed fonts: ${e}`, "error");
+  }
+}
+
+styleFont.addEventListener("input", updateStylePreview);
+styleFont.addEventListener("change", updateStylePreview);
+updateStylePreview();
+loadFontList();
+
 // Hotkeys --------------------------------------------------------------------
 
 const hotkeyInputs = {
