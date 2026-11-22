@@ -47,7 +47,9 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
         WebviewWindowBuilder::new(app, SETTINGS_LABEL, WebviewUrl::App("settings.html".into()))
             .title("Langception — Settings")
             .inner_size(740.0, 640.0)
-            .min_inner_size(560.0, 440.0)
+            // Minimums measured where the layout actually breaks (ticket 17):
+            // the tab strip ends at 552px, the config forms need ~510px.
+            .min_inner_size(620.0, 440.0)
             .resizable(true)
             // Frameless (ticket 16): the page draws its own title bar with a
             // data-tauri-drag-region (drag + double-click maximize) and
