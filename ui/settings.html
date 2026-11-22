@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Langception — Settings</title>
+    <link rel="stylesheet" href="settings.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">L</span>
+        <h1>Langception — Settings</h1>
+        <span id="privacy-chip" class="chip privacy hidden" title="The active Translate Engine sends screen text off-machine">☁ cloud</span>
+        <span id="config-error-chip" class="chip error hidden" title="config.toml is broken — see the Results Window">config error</span>
+      </div>
+    </header>
+
+    <!-- First-run wizard: shown before the tabs on the very first launch
+         (status.firstRun) or via "Run setup wizard" in About. Skippable —
+         zero-config always works. -->
+    <div id="wizard" class="wizard hidden">
+      <h2>Welcome to Langception</h2>
+      <p class="wizard-lede">
+        Langception reads text on your screen and shows its Thai translation.
+        It works immediately with no setup — the default engine is free and
+        keyless. This wizard just checks the two things worth knowing about:
+      </p>
+
+      <section class="wizard-step">
+        <h3>1 · OCR language packs</h3>
+        <p class="hint">
+          Windows OCR silently finds nothing for a language whose pack is not
+          installed. You only need the pack for the language you will read
+          (English is usually preinstalled); missing packs for other languages
+          never block anything.
+        </p>
+        <ul id="wizard-packs" class="packs"></ul>
+        <div class="row">
+          <button id="wizard-recheck" class="btn small">Re-check</button>
+          <button id="wizard-open-language-settings" class="btn small">
+            Open Windows language settings
+          </button>
+          <span id="wizard-packs-note" class="hint"></span>
+        </div>
+      </section>
+
+      <section class="wizard-step">
+        <h3>2 · Translation engine</h3>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>Google Translate (unofficial)</strong>
+            <span class="chip privacy">☁ cloud</span>
+            <span class="chip ok">active by default</span>
+          </div>
+          <p class="hint">
+            Free, no key, no setup (ADR-0002). It is a cloud engine: whenever
+            translation runs, screen text is sent to Google's endpoint — a ☁
+            badge shows this in the tray tooltip and the Results Window.
+          </p>
+          <p class="hint">
+            More engines (Azure, DeepL, Gemini, local models) arrive in later
+            versions — see Settings → Engines. You can skip the rest for now:
+            translation works with zero configuration.
+          </p>
+        </div>
+      </section>
+
+      <div class="wizard-actions">
+        <button id="wizard-skip" class="btn">Skip setup</button>
+        <button id="wizard-finish" class="btn primary">Get started</button>
+      </div>
+    </div>
+
+    <nav id="tabs" class="tabs hidden">
+      <button class="tab active" data-tab="general">General</button>
+      <button class="tab" data-tab="engines">Engines</button>
+      <button class="tab" data-tab="glossary">Glossary</button>
+      <button class="tab" data-tab="text-style">Text Style</button>
+      <button class="tab" data-tab="hotkeys">Hotkeys</button>
+      <button class="tab" data-tab="about">About</button>
+    </nav>
+
+    <main id="tab-pages" class="pages hidden">
+      <section id="tab-general" class="page active">
+        <h2>General</h2>
+        <div class="form-grid">
+          <label class="form-row">
+            <span>Source language</span>
+            <select id="general-language">
+              <option value="en">English</option>
+              <option value="ja">Japanese</option>
+              <option value="zh">Chinese</option>
+              <option value="ko">Korean</option>
+            </select>
+          </label>
+          <label class="form-row">
+            <span>Cadence (ms)</span>
+            <input id="general-cadence" type="number" min="50" max="10000" step="50" />
+          </label>
+          <label class="form-row">
+            <span>Stability (ms)</span>
+            <input id="general-stability" type="number" min="0" max="10000" step="50" />
+          </label>
+          <label class="form-row">
+            <span>Start with Windows</span>
+            <input id="general-autostart" type="checkbox" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="general-save" class="btn primary">Save</button>
+          <span class="hint">
+            Language, cadence and stability apply when translation (re)starts —
+            a running loop restarts automatically. Start-with-Windows applies
+            immediately.
+          </span>
+        </div>
+      </section>
+
+      <section id="tab-engines" class="page">
+        <h2>Engines</h2>
+        <h3>Translate Engine</h3>
+        <div class="engine-card">
+          <div class="engine-title">
+            <strong>Google Translate (unofficial)</strong>
+            <span class="chip privacy" title="Screen text is sent to Google's translation endpoint">☁ cloud</span>
+          </div>
+          <p class="hint">
+            The keyless default (ADR-0002). Free, but unofficial — it can
+            rate-limit or break, and every failure surfaces visibly. More
+            engines (Azure F0, DeepL, Gemini, OpenAI-compatible, local models)
+            arrive in later versions; a cloud engine always shows the ☁
+            privacy badge in the tray tooltip and the Results Window.
+          </p>
+        </div>
+        <h3>OCR Engine — Windows OCR language packs</h3>
+        <p class="hint">
+          The OCR engine reads the screen locally. It needs a Windows language
+          pack for the Source Language you read; a missing pack silently
+          produces nothing, so it is checked here instead.
+        </p>
+        <ul id="engines-packs" class="packs"></ul>
+        <div class="row">
+          <button id="engines-recheck" class="btn small">Re-check</button>
+          <button id="engines-open-language-settings" class="btn small">
+            Open Windows language settings
+          </button>
+          <span id="engines-packs-note" class="hint"></span>
+        </div>
+      </section>
+
+      <section id="tab-glossary" class="page">
+        <h2>Glossary</h2>
+        <p class="hint">
+          A block whose ENTIRE text matches a term (trimmed, case-insensitive)
+          shows the pinned Thai without calling the engine. Partial matches
+          are left to the engine.
+        </p>
+        <div class="row glossary-add">
+          <input id="glossary-new-term" type="text" placeholder="Term (e.g. Vertin)" spellcheck="false" />
+          <input id="glossary-new-thai" type="text" placeholder="Thai (e.g. เวอร์ติน)" spellcheck="false" />
+          <button id="glossary-add-btn" class="btn primary">Add</button>
+        </div>
+        <div class="row glossary-io">
+          <button id="glossary-export" class="btn small">Export JSON…</button>
+          <button id="glossary-import" class="btn small">Import JSON…</button>
+          <select id="glossary-import-mode" title="Import mode">
+            <option value="merge">merge (keep existing)</option>
+            <option value="replace">replace all</option>
+          </select>
+          <span id="glossary-note" class="hint"></span>
+        </div>
+        <ul id="glossary-list" class="glossary-list"></ul>
+        <div id="glossary-empty" class="empty hidden">No terms yet.</div>
+      </section>
+
+      <section id="tab-text-style" class="page">
+        <h2>Text Style</h2>
+        <p class="hint">How Thai text is drawn on the In-place Overlay — applies live.</p>
+        <div class="form-grid">
+          <label class="form-row">
+            <span>Font</span>
+            <input id="style-font" type="text" spellcheck="false" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" />
+          </label>
+          <label class="form-row">
+            <span>Size (6–96)</span>
+            <input id="style-size" type="number" min="6" max="96" step="1" />
+          </label>
+          <label class="form-row">
+            <span>Color</span>
+            <input id="style-color" type="color" />
+          </label>
+          <label class="form-row">
+            <span>Outline (0 = off)</span>
+            <span class="style-pair">
+              <input id="style-outline-width" type="range" min="0" max="8" step="0.5" />
+              <input id="style-outline-color" type="color" title="Outline color" />
+            </span>
+          </label>
+          <label class="form-row">
+            <span>Background pill</span>
+            <span class="style-pair">
+              <input id="style-background" type="checkbox" title="Background pill behind each translation" />
+              <input id="style-opacity" type="range" min="0" max="1" step="0.05" title="Pill opacity" />
+            </span>
+          </label>
+        </div>
+      </section>
+
+      <section id="tab-hotkeys" class="page">
+        <h2>Hotkeys</h2>
+        <p class="hint">
+          Global hotkeys, system-wide. Format: modifiers + key, e.g. "Alt+T",
+          "Ctrl+Shift+Z", "F9". Saving re-registers them immediately — if a
+          key is taken by another app, a warning appears in the Results Window.
+        </p>
+        <div class="form-grid">
+          <label class="form-row">
+            <span>Toggle translation</span>
+            <input id="hotkey-toggle" type="text" spellcheck="false" />
+          </label>
+          <label class="form-row">
+            <span>New Capture Zone</span>
+            <input id="hotkey-new-zone" type="text" spellcheck="false" />
+          </label>
+          <label class="form-row">
+            <span>Pause / resume</span>
+            <input id="hotkey-pause" type="text" spellcheck="false" />
+          </label>
+          <label class="form-row">
+            <span>Adjust Mode</span>
+            <input id="hotkey-adjust" type="text" spellcheck="false" />
+          </label>
+          <label class="form-row">
+            <span>One-shot Capture</span>
+            <input id="hotkey-one-shot" type="text" spellcheck="false" />
+          </label>
+        </div>
+        <div class="row">
+          <button id="hotkeys-save" class="btn primary">Save hotkeys</button>
+        </div>
+      </section>
+
+      <section id="tab-about" class="page">
+        <h2>About</h2>
+        <div class="about-grid">
+          <span>Product</span><span id="about-product">—</span>
+          <span>Version</span><span id="about-version">—</span>
+          <span>Target language</span><span id="about-target">—</span>
+          <span>Config file</span><span id="about-config-path" class="mono">—</span>
+        </div>
+        <div class="row">
+          <button id="about-open-config" class="btn small">Open config folder</button>
+          <button id="about-wizard" class="btn small">Run setup wizard</button>
+        </div>
+        <p class="hint">
+          Privacy: the default engine sends screen text to Google's
+          translation endpoint (an ☁ badge shows whenever a cloud engine is
+          active). OCR runs locally on Windows. The config file is
+          hand-editable — zones you draw and blocks you exclude are saved
+          there automatically.
+        </p>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="settings.js"></script>
+  </body>
+</html>

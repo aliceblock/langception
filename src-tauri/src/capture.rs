@@ -4,6 +4,7 @@
 
 use langception_core::ports::{CaptureError, CaptureSource, CapturedImage, Region};
 
+#[derive(Default)]
 pub struct GdiCaptureSource;
 
 impl GdiCaptureSource {
@@ -46,14 +47,16 @@ fn capture_region_blocking(region: Region) -> Result<CapturedImage, CaptureError
             }
 
             let inner = (|| {
-                let mut bmi = BITMAPINFO::default();
-                bmi.bmiHeader = BITMAPINFOHEADER {
-                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                    biWidth: width as i32,
-                    biHeight: -(height as i32), // negative = top-down rows
-                    biPlanes: 1,
-                    biBitCount: 32,
-                    biCompression: BI_RGB.0,
+                let bmi = BITMAPINFO {
+                    bmiHeader: BITMAPINFOHEADER {
+                        biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                        biWidth: width as i32,
+                        biHeight: -(height as i32), // negative = top-down rows
+                        biPlanes: 1,
+                        biBitCount: 32,
+                        biCompression: BI_RGB.0,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 };
 

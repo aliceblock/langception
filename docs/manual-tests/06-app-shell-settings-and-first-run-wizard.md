@@ -1,0 +1,140 @@
+# Manual smoke checklist — Ticket 06 (App shell: settings window + first-run wizard)
+
+The glossary JSON import/export format, merge/upsert/case-normalization rules,
+and editor primitives are covered by offline tests (`cargo test`, `glossary`
+module). This checklist covers what only a real Windows session can show: the
+first-run wizard on a fresh config, real OCR-pack enumeration, native file
+dialogs, live hotkey rebinding, the privacy badge, single-instance focus, and
+the Windows autostart registry behavior. Run once on a real machine.
+
+## Setup
+
+1. `cargo run` from the repo root. For the first-run wizard steps you need a
+   CLEAN state: quit Langception, delete
+   `%APPDATA%\langception\config.toml`, and start again (back the file up if
+   you have zones/glossary worth keeping — or just let the app recreate a
+   default and re-draw a zone after).
+2. Note which OCR language packs your machine actually has (Settings →
+   Time & Language → Language & region) so the wizard's verdict can be
+   checked against reality.
+
+## Checklist
+
+### First-run wizard
+
+- [ ] **Auto-opens on first launch**: with no config file, the app starts
+      with the Settings window open on the wizard view (tabs hidden). The
+      Results Window also appears (as it always does).
+- [ ] **Pack detection is truthful**: each of EN/JA/ZH/KO shows
+      "installed" + the pack tag, or "missing" with install instructions —
+      matching what Windows Settings shows. "Re-check" re-runs the probe
+      without reopening the window.
+- [ ] **"Open Windows language settings"** opens Time & Language →
+      Language & region.
+- [ ] **Skippable**: "Skip setup" and "Get started" both reveal the six
+      tabs; nothing is required. Translation works immediately afterward
+      (draw a zone with Alt+Z → translation appears in the Results Window)
+      with zero configuration.
+- [ ] **Shows exactly once**: quit and relaunch — the app starts with the
+      tabs, not the wizard. (It returns only if the config file is deleted
+      again, or via About → "Run setup wizard".)
+
+### Settings window shell
+
+- [ ] **Tray menu**: "Settings…" opens/focuses the window; the window is
+      NOT always-on-top and NOT click-through-ghostly (normal window).
+- [ ] **Hide-on-close**: closing the settings window hides it (app stays in
+      the tray); tray → Settings… reopens it with the same tab selected.
+- [ ] **Never a capture source**: with translation running in full-screen
+      mode, the settings window's text is not translated and does not
+      trigger OCR churn (ADR-0003 exclusion).
+- [ ] **Results Window entry point**: the "Settings" button in the Results
+      Window header opens/focuses the same window. The Results Window no
+      longer has a Text Style panel (it moved to Settings → Text Style).
+
+### General tab
+
+- [ ] **Source language switch**: set language to a language whose pack is
+      MISSING → if translation is running it restarts and OCR errors become
+      visible ("No Windows OCR language pack…"); set it back to a working
+      language → translation resumes.
+- [ ] **Cadence/stability persist**: change cadence to 250 and stability to
+      0, Save → the Results Window status line shows "every 250ms · hold
+      0ms" (after the automatic restart). Values survive an app restart.
+- [ ] **Rejection is visible**: enter cadence 10 → the toast shows the
+      validation error ("cadence_ms must be at least 50"); config.toml is
+      unchanged.
+- [ ] **Start with Windows**: toggle on → a `Langception` entry appears in
+      Task Manager → Startup apps (or HKCU\...\Run); toggle off → entry
+      gone. The checkbox reflects reality after each toggle and after an
+      app restart.
+
+### Engines tab
+
+- [ ] **Engine card** shows Google Translate (unofficial) with the ☁ cloud
+      chip and the ADR-0002 note.
+- [ ] **Pack panel** probes on first open and matches the wizard's result.
+
+### Glossary tab
+
+- [ ] **Add**: add a term (e.g. `Vertin` → `เวอร์ติน`); it appears in the
+      list and `config.toml` gains it under `[glossary]`.
+- [ ] **Short-circuit still works**: with a zone over a block whose ENTIRE
+      text equals the term, the translation appears instantly and matches
+      the pinned Thai (Results Window entry, engine not needed offline).
+- [ ] **Duplicate rejection**: adding `VERTIN` (different case) is rejected
+      with a visible toast ("already exists (case-insensitive)").
+- [ ] **Edit inline**: click a term, change it, Enter → the row updates in
+      place; an invalid edit (empty Thai, duplicate) shows a toast and the
+      row reverts.
+- [ ] **Delete**: ✕ removes the row and the config entry.
+- [ ] **Export**: Export JSON… → save dialog → pick a path → the file is a
+      JSON object `{"term": "thai"}`; a toast reports the count.
+- [ ] **Import round-trip**: delete all terms, then Import JSON… with the
+      file you exported (merge mode) → all terms return; the toast reports
+      added/updated counts. Import again with "replace all" → same result,
+      no duplicates.
+- [ ] **Bad file is visible**: import a non-JSON file (or an array) → an
+      error toast names the problem; the glossary is unchanged.
+- [ ] **Live loop pickup**: with translation RUNNING over a glossary term,
+      add a new entry → within a moment the block matching it shows the
+      pinned Thai (the loop restarted; the overlay briefly clears and
+      recaptures — expected).
+
+### Text Style tab
+
+- [ ] **Live apply**: change size/color/outline/background with translation
+      running → overlay pills restyle immediately (no restart). Short-form
+      hex colors from config render correctly in the color pickers.
+- [ ] **Persists**: values survive restart; overlays pick them up on load.
+
+### Hotkeys tab
+
+- [ ] **Live rebind WITHOUT restart**: change Toggle translation to `F9`,
+      Save → press F9 immediately → translation toggles. Alt+T no longer
+      fires (old binding dropped). The change is in config.toml.
+- [ ] **Conflict is visible**: bind two actions to the same key → toast
+      "…is bound to both…" and nothing is saved. Bind a key another app
+      owns → after save, a warning appears in the Results Window's warning
+      line naming the hotkey.
+- [ ] **Empty rejected**: clearing a field → toast "must not be empty".
+
+### Privacy badge
+
+- [ ] **Tray tooltip**: hover the tray icon while translation is RUNNING →
+      "Langception — running · ☁ Google Translate (unofficial)". When
+      stopped → "Langception — stopped" with no ☁ note.
+- [ ] **Results Window badge**: the amber "☁ cloud" chip shows in the
+      header while translation runs (or a one-shot pass is in flight) and
+      disappears when stopped. Tooltip names the engine.
+- [ ] **One-shot only**: with translation stopped, run a One-shot Capture
+      (Alt+Q) → the badge appears during the pass and clears after it.
+
+### Single instance + misc
+
+- [ ] **Single instance**: with Langception running, launch it again → the
+      second process exits at once; the FIRST instance surfaces (Results
+      Window focused, or the settings window if Results was closed).
+- [ ] **About tab**: product/version/config path filled; "Open config
+      folder" opens the folder containing config.toml; "Run setup wizard"
+      re-shows the wizard view.

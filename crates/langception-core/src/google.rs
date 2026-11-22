@@ -98,6 +98,16 @@ impl TranslateEngine for GoogleTranslateEngine {
         }
         parse_translation_response(&body)
     }
+
+    /// The privacy badge names this engine while it is active.
+    fn name(&self) -> &str {
+        "Google Translate (unofficial)"
+    }
+
+    /// Every translation posts screen text to Google's endpoint (ADR-0002).
+    fn is_cloud(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

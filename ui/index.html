@@ -12,10 +12,12 @@
         <span class="logo">L</span>
         <h1>Langception</h1>
         <span id="status-pill" class="pill stopped">Stopped</span>
+        <span id="privacy-chip" class="chip privacy hidden" title="The active Translate Engine sends screen text off-machine">☁ cloud</span>
         <span id="adjust-chip" class="chip hidden">Adjust</span>
         <button id="pause-btn" class="btn" disabled>Pause</button>
         <button id="adjust-btn" class="btn">Adjust</button>
         <button id="toggle-btn" class="btn">Start</button>
+        <button id="settings-btn" class="btn">Settings</button>
       </div>
       <div id="config-line" class="config-line">loading…</div>
       <div id="warnings-line" class="warnings-line hidden"></div>
@@ -58,38 +60,6 @@
       </summary>
       <ul id="excluded-list" class="zones-list"></ul>
       <div id="excluded-empty" class="zones-empty hidden"></div>
-    </details>
-
-    <details id="style-panel" class="style-panel">
-      <summary>Text Style (overlay) <span class="hint">applies live</span></summary>
-      <div class="style-grid">
-        <label class="style-row">
-          <span>Font</span>
-          <input id="style-font" type="text" spellcheck="false" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" />
-        </label>
-        <label class="style-row">
-          <span>Size</span>
-          <input id="style-size" type="number" min="6" max="96" step="1" />
-        </label>
-        <label class="style-row">
-          <span>Color</span>
-          <input id="style-color" type="color" />
-        </label>
-        <label class="style-row">
-          <span>Outline</span>
-          <span class="style-pair">
-            <input id="style-outline-width" type="range" min="0" max="8" step="0.5" title="Outline width (0 = off)" />
-            <input id="style-outline-color" type="color" title="Outline color" />
-          </span>
-        </label>
-        <label class="style-row">
-          <span>Pill</span>
-          <span class="style-pair">
-            <input id="style-background" type="checkbox" title="Background pill behind each translation" />
-            <input id="style-opacity" type="range" min="0" max="1" step="0.05" title="Pill opacity" />
-          </span>
-        </label>
-      </div>
     </details>
 
     <div id="error-banner" class="error-banner hidden"></div>

@@ -3,7 +3,10 @@
 pub mod capture;
 #[cfg(windows)]
 pub mod ocr;
+#[cfg(windows)]
+pub mod ocr_detect;
 mod overlay;
+pub mod settings;
 mod shell;
 
 pub fn run() {

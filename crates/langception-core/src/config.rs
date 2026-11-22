@@ -381,7 +381,9 @@ background_opacity = 0.6
 
 [hotkeys]
 # Global hotkeys, rebindable. Format: modifiers + key, e.g. "Alt+T",
-# "Ctrl+Shift+Z", "F9". They apply system-wide.
+# "Ctrl+Shift+Z", "F9". They apply system-wide. Rebind them in
+# Settings → Hotkeys (applies immediately); hand edits apply after the
+# app restarts.
 toggle_translation = "Alt+T"
 new_zone = "Alt+Z"
 pause_translation = "Alt+P"
@@ -391,7 +393,8 @@ one_shot_capture = "Alt+Q"
 [glossary]
 # Terms that pin a fixed Thai translation. A block whose ENTIRE text
 # matches a term (trimmed, case-insensitive) shows the Thai below
-# without calling the translation engine.
+# without calling the translation engine. Manage entries in
+# Settings → Glossary (add/edit/delete, JSON import/export).
 # Vertin = "เวอร์ติน"
 
 # Capture Zones are appended here automatically. A zone remembers the

@@ -1,9 +1,11 @@
-//! The Tauri shell: tray-first control, global hotkeys (rebindable via
-//! config), the Capture Zone picker overlay (Alt+Z / Alt+Q), Adjust Mode
-//! (Alt+A: zone drag/resize + block exclusion, ticket 04), full-screen mode
-//! with monitor selection, the per-monitor In-place Overlay (ticket 03), the
-//! Results Window event bridge, and the config file lifecycle. Thin adapter —
-//! exercised by the manual smoke checklist.
+//! The Tauri shell: tray-first control, global hotkeys (rebindable live from
+//! Settings → Hotkeys, or via config), the Capture Zone picker overlay
+//! (Alt+Z / Alt+Q), Adjust Mode (Alt+A: zone drag/resize + block exclusion,
+//! ticket 04), full-screen mode with monitor selection, the per-monitor
+//! In-place Overlay (ticket 03), the Results Window event bridge, the
+//! config file lifecycle, single-instance behavior, and the cloud-engine
+//! privacy badge (ticket 06). Thin adapter — exercised by the manual smoke
+//! checklist.
 
 use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, TextStyle};
 use langception_core::glossary::Glossary;
@@ -20,6 +22,7 @@ use tauri::{
     AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Size,
     WebviewUrl, WebviewWindowBuilder, Wry,
 };
+use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 use tokio::sync::{mpsc, watch};
 
@@ -69,6 +72,16 @@ pub struct Status {
     pub text_style: TextStyleDto,
     pub target_language: &'static str,
     pub config_path: String,
+    /// The active Translate Engine while a pipeline is in flight, but only
+    /// when it sends screen text off-machine (`is_cloud`). Drives the
+    /// privacy badge in the Results Window and the tray tooltip (ticket 06).
+    pub privacy_engine: Option<String>,
+    /// True on the very first launch (no config file existed when the app
+    /// started): the settings window opens with the setup wizard.
+    pub first_run: bool,
+    /// Whether Langception launches at Windows sign-in (OS-managed, not in
+    /// config.toml).
+    pub start_with_windows: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,7 +113,7 @@ pub struct ExcludedStatus {
     pub region: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HotkeyStatus {
     pub toggle: String,
@@ -171,7 +184,7 @@ impl Default for HotkeyStatus {
     }
 }
 
-struct RunningLoop {
+pub(crate) struct RunningLoop {
     orchestrator: tauri::async_runtime::JoinHandle<()>,
     forwarder: tauri::async_runtime::JoinHandle<()>,
 }
@@ -187,12 +200,14 @@ struct RegisteredHotkeys {
     one_shot: Option<Shortcut>,
 }
 
-struct AppState {
+/// Shared app state. `pub(crate)` fields: the settings module (ticket 06)
+/// mutates config and reads runtime flags through the shell's helpers.
+pub(crate) struct AppState {
     /// `Some(Err)` = the config file is broken; surfaced in the Results
     /// Window, never silently.
-    config: Mutex<Option<Result<AppConfig, String>>>,
-    config_path: PathBuf,
-    running: Mutex<Option<RunningLoop>>,
+    pub(crate) config: Mutex<Option<Result<AppConfig, String>>>,
+    pub(crate) config_path: PathBuf,
+    pub(crate) running: Mutex<Option<RunningLoop>>,
     paused: Mutex<bool>,
     /// Adjust Mode (Alt+A): click-through off, zones draggable/resizable,
     /// full-screen blocks clickable for exclusion.
@@ -205,7 +220,7 @@ struct AppState {
     /// The Excluded Blocks currently in force (all of them in full-screen
     /// mode; empty in zones mode — exclusions are consulted there only).
     exclusions_tx: watch::Sender<Vec<ExcludedBlock>>,
-    warnings: Mutex<Vec<String>>,
+    pub(crate) warnings: Mutex<Vec<String>>,
     registered: Mutex<RegisteredHotkeys>,
     toggle_item: Mutex<Option<MenuItem<Wry>>>,
     pause_item: Mutex<Option<MenuItem<Wry>>>,
@@ -214,6 +229,14 @@ struct AppState {
     tray: Mutex<Option<TrayIcon<Wry>>>,
     /// `Some` while the picker overlay is open, recording why.
     picker_mode: Mutex<Option<PickerMode>>,
+    /// The active pipeline's cloud Translate Engine display name (`None` =
+    /// no pipeline in flight, or the engine is local). Set when the loop or
+    /// a one-shot starts, cleared when they stop — the privacy badge reads
+    /// this (ticket 06).
+    pub(crate) cloud_engine: Mutex<Option<String>>,
+    /// True when no config file existed at startup (first launch): the
+    /// settings window opens straight into the setup wizard.
+    pub(crate) first_run: bool,
 }
 
 pub fn run() {
@@ -221,11 +244,38 @@ pub fn run() {
     let (paused_tx, _) = watch::channel(false);
     let (exclusions_tx, _) = watch::channel(Vec::new());
 
+    // First launch = no config file yet, detected BEFORE load_config writes
+    // the template: the setup wizard shows exactly once.
+    let config_path = config_file_path();
+    let first_run = !config_path.exists();
+
     tauri::Builder::default()
+        // Single-instance MUST be the first registered plugin: a second
+        // launch never reaches Builder::run — it hands off here and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Surface the running instance: focus the Results Window when it
+            // exists, otherwise open the settings window.
+            let app = app.clone();
+            spawn_off_main(&app, |app| {
+                if let Some(window) = app.get_webview_window("results") {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                } else {
+                    crate::settings::open_settings(app)?;
+                }
+                Ok(())
+            });
+        }))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(AppState {
             config: Mutex::new(None),
-            config_path: config_file_path(),
+            config_path,
             running: Mutex::new(None),
             paused: Mutex::new(false),
             adjust_mode: Mutex::new(false),
@@ -240,6 +290,8 @@ pub fn run() {
             fullscreen_item: Mutex::new(None),
             tray: Mutex::new(None),
             picker_mode: Mutex::new(None),
+            cloud_engine: Mutex::new(None),
+            first_run,
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
@@ -258,7 +310,21 @@ pub fn run() {
             exclude_block,
             delete_excluded_block,
             get_text_style,
-            set_text_style
+            set_text_style,
+            crate::settings::open_settings_window,
+            crate::settings::get_ocr_pack_status,
+            crate::settings::open_language_pack_settings,
+            crate::settings::get_about,
+            crate::settings::set_general,
+            crate::settings::set_start_with_windows,
+            crate::settings::set_hotkeys,
+            crate::settings::list_glossary,
+            crate::settings::add_glossary_entry,
+            crate::settings::update_glossary_entry,
+            crate::settings::delete_glossary_entry,
+            crate::settings::import_glossary,
+            crate::settings::export_glossary,
+            open_config_folder
         ])
         .on_window_event(|window, event| {
             // The picker overlay is ephemeral; however it dies, the session
@@ -271,12 +337,29 @@ pub fn run() {
                     .lock()
                     .unwrap() = None;
             }
+            // The settings window hides instead of closing (tray-first: the
+            // app keeps running); reopening is instant and keeps page state.
+            // The hide itself runs off the main thread — window manipulation
+            // from inside an event handler can deadlock (see run_off_main).
+            if window.label() == crate::settings::SETTINGS_LABEL {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let app = window.app_handle().clone();
+                    spawn_off_main(&app, |app| {
+                        if let Some(window) = app.get_webview_window(crate::settings::SETTINGS_LABEL) {
+                            let _ = window.hide();
+                        }
+                        Ok(())
+                    });
+                }
+            }
         })
         .setup(|app| {
             let handle = app.handle().clone();
 
             // Load (or first-run create) the config; a broken file must show
-            // up in the Results Window, not vanish.
+            // up in the Results Window, not vanish. First launch (no config
+            // file yet) opens straight into the setup wizard.
             let state = handle.state::<AppState>();
             let config_path = state.config_path.clone();
             *state.config.lock().unwrap() = Some(load_config(&config_path));
@@ -296,6 +379,13 @@ pub fn run() {
                 let _ = window.show();
             }
             apply_state(&handle);
+
+            if state.first_run {
+                // Window creation runs off the main thread (run_off_main's
+                // rule); the page decides via status.firstRun to show the
+                // wizard view first.
+                spawn_off_main(&handle, crate::settings::open_settings);
+            }
 
             Ok(())
         })
@@ -361,6 +451,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     )?;
     let new_zone = MenuItem::with_id(app, "new-zone", "New Capture Zone", true, None::<&str>)?;
     let one_shot = MenuItem::with_id(app, "one-shot", "One-shot Capture", true, None::<&str>)?;
+    let settings_item =
+        MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let open_config =
         MenuItem::with_id(app, "open-config", "Open Config Folder", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -376,6 +468,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &separator,
             &new_zone,
             &one_shot,
+            &settings_item,
             &open_config,
             &quit,
         ],
@@ -424,7 +517,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             }
             "new-zone" => spawn_off_main(app, |app| open_picker(app, PickerMode::Zone)),
             "one-shot" => spawn_off_main(app, |app| open_picker(app, PickerMode::OneShot)),
-            "open-config" => open_config_folder(app),
+            "settings" => spawn_off_main(app, crate::settings::open_settings),
+            "open-config" => open_config_folder_inner(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -475,8 +569,21 @@ fn install_hotkeys(app: &AppHandle) -> tauri::Result<()> {
             .push("config is broken — default hotkeys are active".into());
     }
 
+    for warning in register_hotkeys(app, &hotkeys) {
+        state.warnings.lock().unwrap().push(warning);
+    }
+    Ok(())
+}
+
+/// Binds every configured hotkey, after dropping all previous bindings (so
+/// a live rebind from Settings → Hotkeys stops firing the old accelerator).
+/// Returns one warning per hotkey that failed to parse or register; the
+/// others keep working.
+pub(crate) fn register_hotkeys(app: &AppHandle, hotkeys: &HotkeySettings) -> Vec<String> {
+    let mut warnings = Vec::new();
+    let _ = app.global_shortcut().unregister_all();
+
     let mut registered = RegisteredHotkeys::default();
-    let mut warnings = state.warnings.lock().unwrap();
     for (action, bind) in [
         ("toggle", (&hotkeys.toggle_translation, Bind::Toggle)),
         ("new_zone", (&hotkeys.new_zone, Bind::NewZone)),
@@ -503,9 +610,8 @@ fn install_hotkeys(app: &AppHandle) -> tauri::Result<()> {
             )),
         }
     }
-    drop(warnings);
-    *state.registered.lock().unwrap() = registered;
-    Ok(())
+    *app.state::<AppState>().registered.lock().unwrap() = registered;
+    warnings
 }
 
 enum Bind {
@@ -556,7 +662,7 @@ fn dispatch_shortcut(app: &AppHandle, pressed: &Shortcut, event: ShortcutEvent) 
 
 /// One refresh path for every state change: tray labels/tooltip + the
 /// Results Window's status snapshot.
-fn apply_state(app: &AppHandle) {
+pub(crate) fn apply_state(app: &AppHandle) {
     let state = app.state::<AppState>();
     let running = state.running.lock().unwrap().is_some();
     let paused = *state.paused.lock().unwrap();
@@ -593,6 +699,13 @@ fn apply_state(app: &AppHandle) {
     }
     if let Some(tray) = state.tray.lock().unwrap().as_ref() {
         let mode_note = if fullscreen { " · full screen" } else { "" };
+        // Privacy badge (ticket 06): whenever a pipeline is in flight and
+        // its Translate Engine sends screen text off-machine, the tooltip
+        // says so — the user never has to open a window to know.
+        let privacy_note = match &*state.cloud_engine.lock().unwrap() {
+            Some(engine) if running => format!(" · ☁ {engine}"),
+            _ => String::new(),
+        };
         let tooltip = if !running {
             "Langception — stopped"
         } else if paused {
@@ -600,7 +713,7 @@ fn apply_state(app: &AppHandle) {
         } else {
             "Langception — running"
         };
-        let _ = tray.set_tooltip(Some(format!("{tooltip}{mode_note}")));
+        let _ = tray.set_tooltip(Some(format!("{tooltip}{mode_note}{privacy_note}")));
     }
     let _ = app.emit("engine-state", &status_for(app));
 }
@@ -716,6 +829,9 @@ fn status_for(app: &AppHandle) -> Status {
         ),
     };
 
+    let privacy_engine = state.cloud_engine.lock().unwrap().clone();
+    let start_with_windows = app.autolaunch().is_enabled().unwrap_or(false);
+
     Status {
         running,
         paused,
@@ -741,6 +857,9 @@ fn status_for(app: &AppHandle) -> Status {
         text_style,
         target_language: TARGET_LANGUAGE,
         config_path,
+        privacy_engine,
+        first_run: state.first_run,
+        start_with_windows,
     }
 }
 
@@ -845,6 +964,13 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     let _ = state.exclusions_tx.send(active_exclusions(&config));
 
     let pipeline = build_pipeline(&config)?;
+    // Privacy badge (ticket 06): record whether the active engine sends
+    // screen text off-machine while the loop runs.
+    *state.cloud_engine.lock().unwrap() = if pipeline.translate.is_cloud() {
+        Some(pipeline.translate.name().to_string())
+    } else {
+        None
+    };
     let (events_tx, events_rx) = mpsc::unbounded_channel();
 
     // Per-monitor overlays show the translations in place. Creation failure
@@ -894,6 +1020,9 @@ fn stop_loop(app: &AppHandle) {
     // Pause is a sub-state of running: stopping clears it.
     *state.paused.lock().unwrap() = false;
     let _ = state.paused_tx.send(false);
+    // Nothing translates after this: the privacy badge goes away with the
+    // pipeline.
+    *state.cloud_engine.lock().unwrap() = None;
     // Nothing new is translated and stale Thai must not linger on screen.
     // While Adjust Mode is on the overlays stay visible (they carry the
     // draggable zone rectangles), so only their blocks are cleared.
@@ -907,7 +1036,7 @@ fn stop_loop(app: &AppHandle) {
 
 /// Adds a warning unless the exact same one is already shown (start/stop
 /// cycles must not pile up duplicates).
-fn push_warning(state: &AppState, message: String) {
+pub(crate) fn push_warning(state: &AppState, message: String) {
     let mut warnings = state.warnings.lock().unwrap();
     if !warnings.iter().any(|w| w == &message) {
         warnings.push(message);
@@ -939,7 +1068,13 @@ fn toggle_pause(app: &AppHandle) {
     apply_state(app);
 }
 
-fn open_config_folder(app: &AppHandle) {
+/// The About tab's button and the tray item share this.
+#[tauri::command]
+fn open_config_folder(app: AppHandle) {
+    open_config_folder_inner(&app);
+}
+
+fn open_config_folder_inner(app: &AppHandle) {
     let state = app.state::<AppState>();
     let path = state.config_path.clone();
     let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or(path);
@@ -1287,11 +1422,6 @@ fn region_from_css(monitor: &Monitor, x: i32, y: i32, width: i32, height: i32) -
     }
 }
 
-fn save_config(config: &AppConfig, path: &Path) -> Result<(), String> {
-    let text = config.to_toml_string().map_err(|e| e.to_string())?;
-    std::fs::write(path, text).map_err(|e| format!("cannot write {}: {e}", path.display()))
-}
-
 /// The next free "Zone N" name (existing names win, so deletes never cause
 /// collisions).
 fn next_zone_name(config: &AppConfig) -> String {
@@ -1308,10 +1438,15 @@ fn next_zone_name(config: &AppConfig) -> String {
     unreachable!()
 }
 
-fn with_config_mut(
+/// Runs one edit against the in-memory config and persists it. The edit
+/// applies to a clone first; the result is only committed to memory AND
+/// file when the serialized form still parses and validates — a rejected
+/// edit (bad cadence, duplicate name, …) never lands anywhere, and the
+/// caller's error is shown in whichever surface asked.
+pub(crate) fn with_config_mut<T>(
     app: &AppHandle,
-    edit: impl FnOnce(&mut AppConfig) -> Result<(), String>,
-) -> Result<AppConfig, String> {
+    edit: impl FnOnce(&mut AppConfig) -> Result<T, String>,
+) -> Result<T, String> {
     let state = app.state::<AppState>();
     let mut guard = state.config.lock().unwrap();
     let config = match &mut *guard {
@@ -1319,9 +1454,43 @@ fn with_config_mut(
         Some(Err(message)) => return Err(message.clone()),
         None => return Err("config not loaded yet".into()),
     };
-    edit(config)?;
-    save_config(config, &state.config_path)?;
-    Ok(config.clone())
+    let mut edited = config.clone();
+    let value = edit(&mut edited)?;
+    let text = edited
+        .to_toml_string()
+        .map_err(|e| format!("edit rejected: {e}"))?;
+    AppConfig::from_toml_str(&text).map_err(|e| format!("edit rejected: {e}"))?;
+    std::fs::write(&state.config_path, &text)
+        .map_err(|e| format!("cannot write {}: {e}", state.config_path.display()))?;
+    *config = edited;
+    Ok(value)
+}
+
+/// A clone of the current valid config (`Err` when broken/not yet loaded).
+pub(crate) fn current_config(app: &AppHandle) -> Result<AppConfig, String> {
+    match &*app.state::<AppState>().config.lock().unwrap() {
+        Some(Ok(config)) => Ok(config.clone()),
+        Some(Err(message)) => Err(message.clone()),
+        None => Err("config not loaded yet".into()),
+    }
+}
+
+/// Applies an edit that the running loop only reads at start (source
+/// language, cadence, stability, glossary): restarts the loop so the change
+/// visibly applies, resetting per-block tracking (a language change rebuilds
+/// the OCR engine anyway). No-op while stopped.
+pub(crate) fn restart_loop_if_running(app: &AppHandle) {
+    let running = app.state::<AppState>().running.lock().unwrap().is_some();
+    if !running {
+        return;
+    }
+    stop_loop(app);
+    if let Err(message) = start_loop(app) {
+        push_warning(
+            &app.state::<AppState>(),
+            format!("could not restart translation after a settings change: {message}"),
+        );
+    }
 }
 
 // ---- Commands invoked from the Results Window and the picker ----
@@ -1333,9 +1502,9 @@ fn with_config_mut(
 /// ON the main thread, `WebviewWindowBuilder::build()` waits for the very
 /// loop that is blocked, the invoke never settles, nothing errors, and
 /// the button that issued it stays frozen. Every command path that can
-/// create or move the overlay/picker windows goes through here (or
-/// [`spawn_off_main`] when no answer is needed).
-async fn run_off_main<T, F>(app: AppHandle, f: F) -> Result<T, String>
+/// create or move the overlay/picker/settings windows goes through here
+/// (or [`spawn_off_main`] when no answer is needed).
+pub(crate) async fn run_off_main<T, F>(app: AppHandle, f: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce(&AppHandle) -> Result<T, String> + Send + 'static,
@@ -1409,7 +1578,7 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
             }
         }
     }
-    let config = with_config_mut(&app, |config| {
+    with_config_mut(&app, |config| {
         let zone = config
             .zones
             .iter_mut()
@@ -1418,6 +1587,7 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
         zone.name = name;
         Ok(())
     })?;
+    let config = current_config(&app)?;
     let _ = state.zones_tx.send(active_zones(&app, &config));
     apply_state(&app);
     Ok(())
@@ -1426,7 +1596,7 @@ fn rename_zone(app: AppHandle, id: String, name: String) -> Result<(), String> {
 #[tauri::command]
 fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let config = with_config_mut(&app, |config| {
+    with_config_mut(&app, |config| {
         let before = config.zones.len();
         config.zones.retain(|z| z.id != id);
         if config.zones.len() == before {
@@ -1434,6 +1604,7 @@ fn delete_zone(app: AppHandle, id: String) -> Result<(), String> {
         }
         Ok(())
     })?;
+    let config = current_config(&app)?;
     let _ = state.zones_tx.send(active_zones(&app, &config));
     // Its translations must not linger on the overlay either.
     crate::overlay::clear_zone(&app, &id);
@@ -1507,7 +1678,7 @@ fn commit_zone_drag_inner(
             // with the error visible in it. The picker covers the primary
             // monitor, so the new zone remembers it.
             let name = monitor_name(&monitor);
-            let config = with_config_mut(app, |config| {
+            with_config_mut(app, |config| {
                 config.zones.push(Zone {
                     id: format!(
                         "z{}",
@@ -1522,6 +1693,7 @@ fn commit_zone_drag_inner(
                 });
                 Ok(())
             })?;
+            let config = current_config(app)?;
             close_picker(app);
             let _ = state.zones_tx.send(active_zones(app, &config));
             // Zones are what the loop watches: creating the first one starts
@@ -1621,7 +1793,7 @@ fn set_capture_mode_inner(
     monitor: Option<String>,
 ) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let config = with_config_mut(app, |config| {
+    with_config_mut(app, |config| {
         config.mode.target = target;
         // A monitor choice only matters in full-screen mode; switching to
         // zones mode must not wipe the remembered monitor.
@@ -1632,6 +1804,7 @@ fn set_capture_mode_inner(
         }
         Ok(())
     })?;
+    let config = current_config(app)?;
     let _ = state.zones_tx.send(active_zones(app, &config));
     let _ = state.exclusions_tx.send(active_exclusions(&config));
     // Pills from the previous target must not linger: a zone pill and a
@@ -1660,7 +1833,7 @@ async fn update_zone_region(
     }
     run_off_main(app, move |app| {
         let state = app.state::<AppState>();
-        let config = with_config_mut(app, |config| {
+        with_config_mut(app, |config| {
             let zone = config
                 .zones
                 .iter_mut()
@@ -1674,6 +1847,7 @@ async fn update_zone_region(
             };
             Ok(())
         })?;
+        let config = current_config(app)?;
         let _ = state.zones_tx.send(active_zones(app, &config));
         // Repositions/re-creates the overlay windows while adjusting.
         refresh_adjust_overlays(app);
@@ -1714,10 +1888,11 @@ fn exclude_block(
         },
         label: label.trim().to_string(),
     };
-    let config = with_config_mut(&app, |config| {
+    with_config_mut(&app, |config| {
         config.excluded_blocks.push(exclusion.clone());
         Ok(())
     })?;
+    let config = current_config(&app)?;
     // Active immediately in full-screen mode (the orchestrator stops
     // translating the position on its next pass).
     let _ = state.exclusions_tx.send(active_exclusions(&config));
@@ -1731,7 +1906,7 @@ fn exclude_block(
 #[tauri::command]
 fn delete_excluded_block(app: AppHandle, id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
-    let config = with_config_mut(&app, |config| {
+    with_config_mut(&app, |config| {
         let before = config.excluded_blocks.len();
         config.excluded_blocks.retain(|e| e.id != id);
         if config.excluded_blocks.len() == before {
@@ -1739,6 +1914,7 @@ fn delete_excluded_block(app: AppHandle, id: String) -> Result<(), String> {
         }
         Ok(())
     })?;
+    let config = current_config(&app)?;
     let _ = state.exclusions_tx.send(active_exclusions(&config));
     apply_state(&app);
     Ok(())
@@ -1780,6 +1956,15 @@ fn run_one_shot(
     let (_excluded_tx, excluded_rx) = watch::channel(exclusions);
     let (events_tx, events_rx) = mpsc::unbounded_channel();
 
+    // A one-shot also sends screen text to the engine: the privacy badge
+    // covers it too (cleared once the pass completes).
+    *app.state::<AppState>().cloud_engine.lock().unwrap() = if pipeline.translate.is_cloud() {
+        Some(pipeline.translate.name().to_string())
+    } else {
+        None
+    };
+    apply_state(app);
+
     let orchestrator = Orchestrator::new(
         pipeline.capture,
         pipeline.ocr,
@@ -1793,9 +1978,17 @@ fn run_one_shot(
         events_tx,
     );
 
+    let task_app = app.clone();
     tauri::async_runtime::spawn(async move {
         orchestrator.capture_once(region).await;
         // events_tx drops with the orchestrator: the forwarder drains and exits.
+        // Clear the privacy badge only if the loop is not running — a loop
+        // started during the pass owns the badge now (stop_loop clears it).
+        let state = task_app.state::<AppState>();
+        if state.running.lock().unwrap().is_none() {
+            *state.cloud_engine.lock().unwrap() = None;
+            apply_state(&task_app);
+        }
     });
     // One-shot events never reach the overlay (Results Window only), so the
     // forwarder needs no overlay list.

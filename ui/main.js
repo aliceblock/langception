@@ -2,17 +2,20 @@
 // Events from the translation loop: "loop-event" (translated | error) and
 // "engine-state" (status snapshot with the capture target, zone list,
 // Excluded Blocks + hotkeys). Zone/exclusion management (rename/delete/
-// clear) and mode switching invoke the shell directly. No build step.
+// clear) and mode switching invoke the shell directly; config editing lives
+// in the Settings window (ticket 06). No build step.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const { writeText } = window.__TAURI__.clipboardManager;
 
 const statusPill = document.getElementById("status-pill");
+const privacyChip = document.getElementById("privacy-chip");
 const adjustChip = document.getElementById("adjust-chip");
 const toggleBtn = document.getElementById("toggle-btn");
 const pauseBtn = document.getElementById("pause-btn");
 const adjustBtn = document.getElementById("adjust-btn");
+const settingsBtn = document.getElementById("settings-btn");
 const configLine = document.getElementById("config-line");
 const warningsLine = document.getElementById("warnings-line");
 const errorBanner = document.getElementById("error-banner");
@@ -33,13 +36,6 @@ const modeHint = document.getElementById("mode-hint");
 const excludedTitle = document.getElementById("excluded-title");
 const excludedList = document.getElementById("excluded-list");
 const excludedEmpty = document.getElementById("excluded-empty");
-const styleFont = document.getElementById("style-font");
-const styleSize = document.getElementById("style-size");
-const styleColor = document.getElementById("style-color");
-const styleOutlineWidth = document.getElementById("style-outline-width");
-const styleOutlineColor = document.getElementById("style-outline-color");
-const styleBackground = document.getElementById("style-background");
-const styleOpacity = document.getElementById("style-opacity");
 
 let running = false;
 let paused = false;
@@ -56,8 +52,6 @@ let hotkeys = {
   oneShot: "Alt+Q",
 };
 let lastError = null; // { stage, message } — stays visible until the next success
-let styleLoaded = false; // inputs initialize from the first status snapshot only
-let styleSaveTimer = null;
 
 function renderStatus(status) {
   running = status.running;
@@ -68,10 +62,6 @@ function renderStatus(status) {
   mode = status.mode || "zones";
   fullscreenMonitor = status.fullscreenMonitor || "";
   if (status.hotkeys) hotkeys = status.hotkeys;
-  if (!styleLoaded && status.textStyle) {
-    styleLoaded = true;
-    loadStyleInputs(status.textStyle);
-  }
 
   if (status.configError) {
     statusPill.textContent = "Config error";
@@ -88,6 +78,14 @@ function renderStatus(status) {
   }
   adjustChip.classList.toggle("hidden", !status.adjustMode);
   adjustBtn.textContent = status.adjustMode ? "Exit Adjust" : "Adjust";
+
+  // Privacy badge (ticket 06): shown whenever the active Translate Engine
+  // sends screen text off-machine (same data as the tray tooltip).
+  const privacyEngine = status.privacyEngine;
+  privacyChip.classList.toggle("hidden", !privacyEngine);
+  if (privacyEngine) {
+    privacyChip.title = `${privacyEngine} sends screen text to the cloud while translation runs`;
+  }
 
   toggleBtn.textContent = running ? "Stop" : "Start";
   toggleBtn.classList.toggle("primary", !running);
@@ -323,57 +321,6 @@ function beginRename(row, zone, nameBtn) {
   input.select();
 }
 
-// ---- Text Style panel (the minimal settings surface; the full settings
-// window arrives with ticket 06). Every change persists via set_text_style
-// and is pushed to the overlays live. ----
-
-// `type=color` inputs need #rrggbb; config allows the short form.
-function normalizeHex(value, fallback) {
-  let v = (value || "").trim();
-  if (!v.startsWith("#")) v = "#" + v;
-  if (/^#[0-9a-fA-F]{3}$/.test(v)) {
-    v = "#" + [...v.slice(1)].map((c) => c + c).join("");
-  }
-  return /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : fallback;
-}
-
-function loadStyleInputs(style) {
-  styleFont.value = style.fontFamily;
-  styleSize.value = style.fontSize;
-  styleColor.value = normalizeHex(style.color, "#ffffff");
-  styleOutlineWidth.value = style.outlineWidth;
-  styleOutlineColor.value = normalizeHex(style.outlineColor, "#000000");
-  styleBackground.checked = style.background;
-  styleOpacity.value = style.backgroundOpacity;
-}
-
-function collectStyle() {
-  return {
-    fontFamily: styleFont.value.trim() || "Noto Sans Thai",
-    fontSize: Number(styleSize.value) || 16,
-    color: normalizeHex(styleColor.value, "#ffffff"),
-    outlineWidth: Number(styleOutlineWidth.value) || 0,
-    outlineColor: normalizeHex(styleOutlineColor.value, "#000000"),
-    background: styleBackground.checked,
-    backgroundOpacity: Number(styleOpacity.value) || 0,
-  };
-}
-
-// Sliders fire a burst of input events; a short trailing debounce keeps the
-// live feel without hammering config.toml per pixel.
-function scheduleStyleSave() {
-  clearTimeout(styleSaveTimer);
-  styleSaveTimer = setTimeout(saveStyle, 250);
-}
-
-async function saveStyle() {
-  try {
-    await invoke("set_text_style", { style: collectStyle() });
-  } catch (e) {
-    showError("text-style", String(e));
-  }
-}
-
 // ---- Loop events ----
 
 function addEntry(block, translation, origin, atMs) {
@@ -506,8 +453,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (mode === "fullscreen") applyCaptureMode("fullscreen", monitorSelect.value);
   });
 
-  for (const control of [styleFont, styleSize, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity]) {
-    control.addEventListener("input", scheduleStyleSave);
-    control.addEventListener("change", scheduleStyleSave);
-  }
+  // The settings window (ticket 06) owns config editing: General, Engines,
+  // Glossary, Text Style, Hotkeys, About. It hides on close, so this just
+  // surfaces it.
+  settingsBtn.addEventListener("click", async () => {
+    settingsBtn.disabled = true;
+    try {
+      await invoke("open_settings_window");
+    } catch (e) {
+      showError("settings", String(e));
+    } finally {
+      settingsBtn.disabled = false;
+    }
+  });
 });

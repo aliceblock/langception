@@ -168,6 +168,19 @@ pub trait TranslateEngine: Send + Sync {
         source: SourceLanguage,
         target: &str,
     ) -> Result<String, TranslateError>;
+
+    /// Display name of the engine (privacy badge, Engines tab).
+    fn name(&self) -> &str {
+        "engine"
+    }
+
+    /// Whether this engine sends screen text off-machine. The shell consults
+    /// it whenever a pipeline becomes active: a cloud engine must surface the
+    /// privacy badge (spec: "the user always knows what leaves their
+    /// computer"). Engines that never call out keep the default `false`.
+    fn is_cloud(&self) -> bool {
+        false
+    }
 }
 
 /// Time abstraction for the loop: pacing between ticks and event timestamps.

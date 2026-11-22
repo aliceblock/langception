@@ -117,7 +117,10 @@ fn init_ocr_engine(code: &str) -> Result<WinOcrEngine, String> {
     ))
 }
 
-fn try_create(tag: &str) -> Result<WinOcrEngine, String> {
+/// Creates one OCR engine for an installed pack tag. Shared with
+/// `ocr_detect` (the wizard probes packs with the same call the pipeline
+/// makes, so "installed" means "actually usable").
+pub(crate) fn try_create(tag: &str) -> Result<WinOcrEngine, String> {
     let hstr = windows::core::HSTRING::from(tag);
     let language = Language::CreateLanguage(&hstr)
         .map_err(|e| format!("invalid language tag \"{tag}\": {e}"))?;
@@ -125,12 +128,12 @@ fn try_create(tag: &str) -> Result<WinOcrEngine, String> {
         .map_err(|e| format!("cannot create OCR engine for \"{tag}\": {e}"))
 }
 
-fn primary_subtag(tag: &str) -> String {
+pub(crate) fn primary_subtag(tag: &str) -> String {
     tag.split(['-', '_']).next().unwrap_or(tag).to_ascii_lowercase()
 }
 
 /// Lower ranks first: Simplified Chinese packs before Traditional, then the rest.
-fn pack_preference(tag: &str) -> u8 {
+pub(crate) fn pack_preference(tag: &str) -> u8 {
     let lower = tag.to_ascii_lowercase();
     if lower.contains("hans") {
         1
@@ -220,10 +223,11 @@ fn software_bitmap_from_bgra(
 /// Every WinRT entry point needs a COM-initialized thread. The blocking pool
 /// reuses threads, so initialize once per thread (MTA: usable from any pool
 /// thread; S_FALSE / RPC_E_CHANGED_MODE both mean "already initialized" and
-/// are fine to ignore).
-fn init_com() {
+/// are fine to ignore). Shared with `ocr_detect` (the wizard's pack probe),
+/// which runs on the same kind of thread.
+pub(crate) fn init_com() {
     thread_local! {
-        static COM_INIT: std::sync::Once = std::sync::Once::new();
+        static COM_INIT: std::sync::Once = const { std::sync::Once::new() };
     }
     COM_INIT.with(|cell| {
         cell.call_once(|| {
