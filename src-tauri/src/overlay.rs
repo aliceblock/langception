@@ -260,6 +260,10 @@ struct StylePayload<'a> {
     /// the translated text. Display-only geometry: the broadcast restyles
     /// live, no loop restart needed (unlike `auto_colors`).
     cover_source: bool,
+    /// Placement (ticket 25): "over" | "below" | "beside" — where the pill
+    /// sits relative to its source Text Block rect. Display-only geometry
+    /// like `cover_source`, which wins over it when both are on.
+    placement: &'a str,
 }
 
 impl<'a> From<&'a TextStyle> for StylePayload<'a> {
@@ -274,6 +278,7 @@ impl<'a> From<&'a TextStyle> for StylePayload<'a> {
             background_opacity: style.background_opacity,
             auto_colors: style.auto_colors,
             cover_source: style.cover_source,
+            placement: style.placement.code(),
         }
     }
 }

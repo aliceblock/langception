@@ -8,7 +8,9 @@
 //! checklist.
 
 use langception_core::azure::AzureTranslateEngine;
-use langception_core::config::{AppConfig, CaptureMode, HotkeySettings, ReadingMode, TextStyle};
+use langception_core::config::{
+    AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextStyle,
+};
 use langception_core::deepl::DeepLTranslateEngine;
 use langception_core::fused::{GeminiFusedEngine, OpenAiFusedEngine};
 use langception_core::gemini::GeminiEngine;
@@ -199,6 +201,9 @@ pub struct TextStyleDto {
     pub background_opacity: f32,
     pub auto_colors: bool,
     pub cover_source: bool,
+    /// Placement (ticket 25): "over" | "below" | "beside" — where the
+    /// translated pill sits relative to its Text Block.
+    pub placement: String,
 }
 
 impl From<&TextStyle> for TextStyleDto {
@@ -213,6 +218,7 @@ impl From<&TextStyle> for TextStyleDto {
             background_opacity: style.background_opacity,
             auto_colors: style.auto_colors,
             cover_source: style.cover_source,
+            placement: style.placement.code().to_string(),
         }
     }
 }
@@ -229,6 +235,9 @@ impl From<TextStyleDto> for TextStyle {
             background_opacity: dto.background_opacity,
             auto_colors: dto.auto_colors,
             cover_source: dto.cover_source,
+            // set_text_style rejects unknown codes before this conversion
+            // runs; the fallback only keeps the conversion total.
+            placement: Placement::from_code(dto.placement.trim()).unwrap_or_default(),
         }
     }
 }
@@ -2605,6 +2614,15 @@ fn get_text_style(app: AppHandle) -> TextStyleDto {
 /// don't: they restyle live via the broadcast.
 #[tauri::command]
 fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
+    // An unknown placement preset is rejected before anything mutates (the
+    // config-file path rejects the same names at parse time) — never a
+    // silent fallback to Over.
+    if Placement::from_code(style.placement.trim()).is_none() {
+        return Err(format!(
+            "placement \"{}\" is unknown — placements: over, below, beside",
+            style.placement.trim()
+        ));
+    }
     let text_style = TextStyle::from(style);
     text_style.validate().map_err(|e| e.to_string())?;
     let mut restart = false;

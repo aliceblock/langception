@@ -38,6 +38,7 @@ const DEFAULT_STYLE = {
   backgroundOpacity: 0.6,
   autoColors: false,
   coverSource: false,
+  placement: "over",
 };
 
 let style = { ...DEFAULT_STYLE };
@@ -142,8 +143,7 @@ function applyStyleTo(entry) {
 function applyStyleToAll() {
   for (const zone of zones.values()) {
     for (const entry of zone.values()) {
-      applyStyleTo(entry);
-      fitText(entry);
+      layoutEntry(entry);
     }
   }
 }
@@ -155,6 +155,13 @@ const PILL_PAD_Y = 2;
 // Cover Source (ticket 24): how far the stretched pill spreads beyond the
 // block rect on every side ("plus a small padding").
 const COVER_PAD_PX = 4;
+// Placement (ticket 25): the gap between the source rect and a Below or
+// Beside pill.
+const PLACEMENT_GAP_PX = 4;
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
 
 // Auto-shrink-to-fit: the Thai must not sprawl over the screen. Phase 1
 // shrinks on a single line until it fits the block's width; if even the
@@ -189,6 +196,52 @@ function fitText(entry) {
   }
 }
 
+// One entry's full restyle: visual style, text fit, then placement. The
+// order matters (placement measures the fitted pill's rendered size), so
+// every restyle path goes through this and the invariant lives in one
+// place.
+function layoutEntry(entry) {
+  applyStyleTo(entry);
+  fitText(entry);
+  placeBlock(entry);
+}
+
+// Placement (ticket 25, CONTEXT.md): shifts a pill away from its source
+// Text Block per the current preset. Runs AFTER fitText so Beside measures
+// the pill's final rendered size. Over is the block origin — today's
+// in-place rendering. Cover Source stretches the pill over the block from
+// its origin, so it wins over any preset (but only means anything with a
+// pill behind it). Every branch writes the FULL position, so switching
+// presets on a live restyle never leaves stale geometry behind.
+function placeBlock(entry) {
+  if (!entry.rect) return;
+  const dpr = window.devicePixelRatio || 1;
+  const placement = style.coverSource && style.background ? "over" : style.placement;
+  if (placement === "below") {
+    // Sits just under the source rect's bottom, aligned with its left
+    // edge; it never overlaps the block.
+    entry.el.style.left = entry.rect.x / dpr + "px";
+    entry.el.style.top =
+      (entry.rect.y + entry.rect.height) / dpr + PLACEMENT_GAP_PX + "px";
+  } else if (placement === "beside") {
+    // Sits just right of the source rect; near the screen edge it flips
+    // to the left side; always clamped on-screen.
+    const pw = entry.el.offsetWidth;
+    const ph = entry.el.offsetHeight;
+    let left = (entry.rect.x + entry.rect.width) / dpr + PLACEMENT_GAP_PX;
+    if (left + pw > window.innerWidth) {
+      left = entry.rect.x / dpr - PLACEMENT_GAP_PX - pw;
+    }
+    left = clamp(left, 0, Math.max(0, window.innerWidth - pw));
+    entry.el.style.left = left + "px";
+    entry.el.style.top = clamp(entry.rect.y / dpr, 0, Math.max(0, window.innerHeight - ph)) + "px";
+  } else {
+    // Over: the block origin — the in-place rendering.
+    entry.el.style.left = entry.rect.x / dpr + "px";
+    entry.el.style.top = entry.rect.y / dpr + "px";
+  }
+}
+
 function updateBlock(payload) {
   if (!payload.translation || !payload.translation.trim()) return;
 
@@ -216,8 +269,7 @@ function updateBlock(payload) {
   entry.el.style.top = payload.y / dpr + "px";
   entry.el.style.maxWidth = entry.boxW + "px";
   entry.textEl.textContent = payload.translation;
-  applyStyleTo(entry); // re-apply: this block's sampled colors may differ
-  fitText(entry);
+  layoutEntry(entry); // re-apply: this block's sampled colors may differ
 }
 
 function removeBlocks(payload) {

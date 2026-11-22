@@ -77,6 +77,13 @@ pub struct TextStyle {
     /// translated text, so the original underneath is dressed over. Takes
     /// precedence over Placement when both are on.
     pub cover_source: bool,
+    /// Placement (ticket 25, CONTEXT.md): where the translated pill sits
+    /// relative to its Text Block — [`Placement::Over`] (the default: the
+    /// original is covered in place), [`Placement::Below`] it, or
+    /// [`Placement::Beside`] it. Display-only config: the overlay derives
+    /// each pill's position from the block's rect, so a change restyles
+    /// live without a loop restart, and Cover Source overrides it.
+    pub placement: Placement,
 }
 
 impl Default for TextStyle {
@@ -91,6 +98,7 @@ impl Default for TextStyle {
             background_opacity: 0.6,
             auto_colors: false,
             cover_source: false,
+            placement: Placement::Over,
         }
     }
 }
@@ -98,6 +106,55 @@ impl Default for TextStyle {
 /// Bundled with the app (`ui/fonts/`) and always in the overlay's font
 /// fallback chain, so Thai renders even when the chosen font has no Thai.
 pub const DEFAULT_FONT_FAMILY: &str = "Noto Sans Thai";
+
+/// Where a translated pill sits relative to its Text Block (ticket 25,
+/// CONTEXT.md "Placement"): [`Placement::Over`] draws in place over the
+/// original, [`Placement::Below`] sits under the block, and
+/// [`Placement::Beside`] sits to its right (flipping left near the screen
+/// edge). Presets rather than manual X/Y geometry — the overlay computes
+/// each pill's position from the block's rect, so nothing needs per-game
+/// tuning. Cover Source wins when both are on.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Placement {
+    #[default]
+    Over,
+    Below,
+    Beside,
+}
+
+impl Placement {
+    /// The config-file / settings-surface spelling.
+    pub fn code(self) -> &'static str {
+        match self {
+            Placement::Over => "over",
+            Placement::Below => "below",
+            Placement::Beside => "beside",
+        }
+    }
+
+    /// Parses [`Placement::code`] output; `None` for anything else, so an
+    /// unknown hand-edited name can be rejected with a visible error.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "over" => Some(Placement::Over),
+            "below" => Some(Placement::Below),
+            "beside" => Some(Placement::Beside),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Placement {
+    /// The UI label.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Placement::Over => "Over",
+            Placement::Below => "Below",
+            Placement::Beside => "Beside",
+        })
+    }
+}
 
 /// `#rgb` / `#rrggbb` (leading `#` optional) — everything the overlay's
 /// CSS needs for text/outline colors.
@@ -771,6 +828,11 @@ cover_source = false
 # pixels, so translations dress like the scene they cover. `color` above is
 # the fallback for blocks whose sampling fails.
 auto_colors = false
+# Placement (CONTEXT.md): where each translated pill sits relative to its
+# Text Block — "over" the original (in place, the default), "below" it, or
+# "beside" it (right of the block; near the screen edge it flips left).
+# Applies live; cover_source above wins when both are on.
+placement = "over"
 
 [hotkeys]
 # Global hotkeys, rebindable. Format: modifiers + key, e.g. "Alt+T",
@@ -905,7 +967,8 @@ language = "en"
             .replace("background = true", "background = false")
             .replace("background_opacity = 0.6", "background_opacity = 0.25")
             .replace("cover_source = false", "cover_source = true")
-            .replace("auto_colors = false", "auto_colors = true");
+            .replace("auto_colors = false", "auto_colors = true")
+            .replace("placement = \"over\"", "placement = \"beside\"");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(
             config.text_style,
@@ -919,6 +982,7 @@ language = "en"
                 background_opacity: 0.25,
                 auto_colors: true,
                 cover_source: true,
+                placement: Placement::Beside,
             }
         );
 
@@ -952,6 +1016,68 @@ language = "en"
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert!(!config.text_style.cover_source);
         assert_eq!(config.text_style, TextStyle::default());
+    }
+
+    // ---- Placement presets (ticket 25) ----
+
+    #[test]
+    fn placement_defaults_to_over_for_configs_written_before_it() {
+        // A pre-ticket-25 config has no `placement` key; serde's container
+        // default must fill it in (Over = the old in-place rendering) rather
+        // than reject the file.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("placement"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.text_style.placement, Placement::Over);
+        assert_eq!(config.text_style, TextStyle::default());
+    }
+
+    #[test]
+    fn placement_roundtrips_through_toml() {
+        for (code, expected) in [
+            ("over", Placement::Over),
+            ("below", Placement::Below),
+            ("beside", Placement::Beside),
+        ] {
+            let text = AppConfig::DEFAULT_TEMPLATE
+                .replace("placement = \"over\"", &format!("placement = \"{code}\""));
+            let config = AppConfig::from_toml_str(&text).unwrap();
+            assert_eq!(config.text_style.placement, expected, "{code} parses");
+
+            let serialized = config.to_toml_string().unwrap();
+            assert!(
+                serialized.contains(&format!("placement = \"{code}\"")),
+                "the preset stays a hand-editable TOML string: {serialized}"
+            );
+            assert_eq!(config, AppConfig::from_toml_str(&serialized).unwrap());
+        }
+    }
+
+    #[test]
+    fn unknown_placement_is_rejected() {
+        let text =
+            AppConfig::DEFAULT_TEMPLATE.replace("placement = \"over\"", "placement = \"diagonal\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("placement"), "was: {err}");
+    }
+
+    #[test]
+    fn placement_codes_and_display_labels_roundtrip() {
+        // `code` is the config-file spelling, `Display` the UI label; each
+        // variant's code parses back to itself.
+        for (placement, code, label) in [
+            (Placement::Over, "over", "Over"),
+            (Placement::Below, "below", "Below"),
+            (Placement::Beside, "beside", "Beside"),
+        ] {
+            assert_eq!(placement.code(), code);
+            assert_eq!(Placement::from_code(code), Some(placement));
+            assert_eq!(placement.to_string(), label);
+        }
+        assert_eq!(Placement::from_code("diagonal"), None);
     }
 
     #[test]
