@@ -1,0 +1,98 @@
+/* Langception shared theme (ticket 16): the black/yellow token block, the
+   focus ring, dark scrollbars, and the frameless title-bar chrome. Linked
+   by every normal window (Results, Settings) before its own stylesheet, so
+   a page can override anything here. The overlay pills and the picker keep
+   their own chrome (overlay.css, picker.css) but share the same palette. */
+
+:root {
+  /* Black/yellow brand: near-black surfaces, yellow accent. --accent-ink is
+     the text color ON yellow (11:1 contrast); --accent-deep ends the logo
+     gradient; --info keeps the cyan identity for interactive geometry
+     (Adjust Mode, zone rectangles). color-scheme: dark keeps native
+     select/datalist/scrollbars dark even when Windows itself runs light —
+     the app is dark-only by design. */
+  color-scheme: dark;
+  --bg: #0d0e12;
+  --panel: #15171d;
+  --panel-2: #1e212a;
+  --border: #2d303b;
+  --text: #f2f3f7;
+  --muted: #9aa2b5;
+  --accent: #ffc91f;
+  --accent-2: #ffd95c;
+  --accent-deep: #d99e00;
+  --accent-ink: #191302;
+  --info: #6cc7ff;
+  --ok: #3ecf7a;
+  --err: #ff5566;
+  --glossary: #f2b63c;
+}
+
+/* Keyboard focus is always visible: a yellow ring nothing else paints over. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Thin dark scrollbars (the default Windows ones glare on near-black). */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Frameless window chrome: the title-bar row carries
+   data-tauri-drag-region (drag + double-click maximize) — so does every
+   child that is not interactive, because Tauri starts a drag only when the
+   mousedown target itself has the attribute and a plain span would consume
+   the event. .titlebar-buttons (filled by titlebar.js) is the one zone that
+   opts back out so clicks always reach the controls. */
+.titlebar-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.logo {
+  width: 26px; height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent-2), var(--accent-deep));
+  color: var(--accent-ink);
+  font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+.titlebar-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.tb-btn {
+  width: 34px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tb-btn:hover { background: var(--panel-2); color: var(--text); }
+.tb-btn.close:hover { background: var(--err); color: #fff; }

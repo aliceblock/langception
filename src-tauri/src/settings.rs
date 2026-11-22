@@ -49,6 +49,10 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
             .inner_size(740.0, 640.0)
             .min_inner_size(560.0, 440.0)
             .resizable(true)
+            // Frameless (ticket 16): the page draws its own title bar with a
+            // data-tauri-drag-region (drag + double-click maximize) and
+            // min/close buttons; close still hides to tray.
+            .decorations(false)
             .center()
             .visible(false)
             .build()

@@ -4,20 +4,32 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Langception — Results</title>
+    <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <!-- Frameless window (ticket 16): the first row is the drag region —
+         drag moves the window, double-click maximizes/restores. Every
+         non-interactive child carries the attribute too (Tauri starts a
+         drag only on the exact target), so the bar drags from anywhere.
+         titlebar.js fills .titlebar-buttons; close hides to tray (the Rust
+         side turns close requests into hides). -->
     <header>
-      <div class="brand">
-        <span class="logo">L</span>
-        <h1>Langception</h1>
-        <span id="status-pill" class="pill stopped">Stopped</span>
-        <span id="privacy-chip" class="chip privacy hidden" title="The active Translate Engine sends screen text off-machine">☁ cloud</span>
-        <span id="adjust-chip" class="chip hidden">Adjust</span>
-        <button id="pause-btn" class="btn" disabled>Pause</button>
-        <button id="adjust-btn" class="btn">Adjust</button>
-        <button id="toggle-btn" class="btn">Start</button>
-        <button id="settings-btn" class="btn">Settings</button>
+      <div class="titlebar-row" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <span class="logo" data-tauri-drag-region>L</span>
+          <h1 data-tauri-drag-region>Langception</h1>
+          <span id="status-pill" class="pill stopped" data-tauri-drag-region>Stopped</span>
+          <span id="privacy-chip" class="chip privacy hidden" data-tauri-drag-region title="The active Translate Engine sends screen text off-machine">☁ cloud</span>
+          <span id="adjust-chip" class="chip hidden" data-tauri-drag-region>Adjust</span>
+        </div>
+        <div class="header-actions">
+          <button id="pause-btn" class="btn" disabled>Pause</button>
+          <button id="adjust-btn" class="btn">Adjust</button>
+          <button id="toggle-btn" class="btn">Start</button>
+          <button id="settings-btn" class="btn">Settings</button>
+          <div class="titlebar-buttons"></div>
+        </div>
       </div>
       <div id="config-line" class="config-line">loading…</div>
       <div id="warnings-line" class="warnings-line hidden"></div>
@@ -73,6 +85,7 @@
     </main>
 
     <div id="copied-toast" class="toast hidden">Copied ✓</div>
+    <script src="titlebar.js"></script>
     <script src="main.js"></script>
   </body>
 </html>

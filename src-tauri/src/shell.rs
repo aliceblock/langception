@@ -35,6 +35,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, S
 use tauri_plugin_notification::NotificationExt as _;
 use tokio::sync::{mpsc, watch};
 
+/// The tray-first main window (always-on-top translations list). Lives here because the tray,
+/// the single-instance handoff, and close-to-tray all show/hide it by label.
+const RESULTS_LABEL: &str = "results";
 const PICKER_LABEL: &str = "zone-picker";
 /// Drags smaller than this (CSS px) count as a click: the session cancels.
 const MIN_DRAG_CSS_PX: i32 = 8;
@@ -328,7 +331,7 @@ pub fn run() {
             // exists, otherwise open the settings window.
             let app = app.clone();
             spawn_off_main(&app, |app| {
-                if let Some(window) = app.get_webview_window("results") {
+                if let Some(window) = app.get_webview_window(RESULTS_LABEL) {
                     let _ = window.show();
                     let _ = window.unminimize();
                     let _ = window.set_focus();
@@ -428,18 +431,23 @@ pub fn run() {
                     .lock()
                     .unwrap_or_else(|p| p.into_inner()) = None;
             }
-            // The settings window hides instead of closing (tray-first: the
-            // app keeps running); reopening is instant and keeps page state.
-            // The hide itself runs off the main thread — window manipulation
-            // from inside an event handler can deadlock (see run_off_main).
-            if window.label() == crate::settings::SETTINGS_LABEL {
+            // The frameless windows (settings, results) hide instead of
+            // closing (tray-first: the app keeps running); reopening is
+            // instant and keeps page state. Hiding the results window also
+            // keeps it alive for the tray left-click and second-launch
+            // handoff, which show/focus it by label. The hide itself runs
+            // off the main thread — window manipulation from inside an
+            // event handler can deadlock (see run_off_main).
+            if matches!(
+                window.label(),
+                crate::settings::SETTINGS_LABEL | RESULTS_LABEL
+            ) {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
+                    let label = window.label().to_string();
                     let app = window.app_handle().clone();
-                    spawn_off_main(&app, |app| {
-                        if let Some(window) =
-                            app.get_webview_window(crate::settings::SETTINGS_LABEL)
-                        {
+                    spawn_off_main(&app, move |app| {
+                        if let Some(window) = app.get_webview_window(&label) {
                             let _ = window.hide();
                         }
                         Ok(())
@@ -461,7 +469,7 @@ pub fn run() {
             install_hotkeys(&handle)?;
             spawn_profile_watcher(&handle);
 
-            if let Some(window) = handle.get_webview_window("results") {
+            if let Some(window) = handle.get_webview_window(RESULTS_LABEL) {
                 // Langception's own windows are never translation sources
                 // (ADR-0003): the Results Window displays Thai, and a zone
                 // overlapping it would translate its own entries forever.
@@ -625,7 +633,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             {
                 let app = tray.app_handle().clone();
                 spawn_off_main(&app, |app| {
-                    if let Some(window) = app.get_webview_window("results") {
+                    if let Some(window) = app.get_webview_window(RESULTS_LABEL) {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
@@ -1330,7 +1338,7 @@ fn spawn_forwarder(
                 event,
                 LoopEvent::Translated { .. } | LoopEvent::Error { .. }
             ) {
-                if let Some(window) = bridge_app.get_webview_window("results") {
+                if let Some(window) = bridge_app.get_webview_window(RESULTS_LABEL) {
                     // Window temporarily unavailable (user hid it): keep the loop.
                     let _ = window.emit("loop-event", &event);
                 }

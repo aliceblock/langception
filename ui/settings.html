@@ -4,15 +4,25 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Langception — Settings</title>
+    <link rel="stylesheet" href="theme.css" />
     <link rel="stylesheet" href="settings.css" />
   </head>
   <body>
+    <!-- Frameless window (ticket 16): this row is the drag region — drag
+         moves the window, double-click maximizes/restores. Every
+         non-interactive child carries the attribute too (Tauri starts a
+         drag only on the exact target), so the bar drags from anywhere.
+         titlebar.js fills .titlebar-buttons; close hides to tray (the Rust
+         side turns close requests into hides). -->
     <header>
-      <div class="brand">
-        <span class="logo">L</span>
-        <h1>Langception — Settings</h1>
-        <span id="privacy-chip" class="chip privacy hidden" title="The active Translate Engine sends screen text off-machine">☁ cloud</span>
-        <span id="config-error-chip" class="chip error hidden" title="config.toml is broken — see the Results Window">config error</span>
+      <div class="titlebar-row" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <span class="logo" data-tauri-drag-region>L</span>
+          <h1 data-tauri-drag-region>Langception — Settings</h1>
+          <span id="privacy-chip" class="chip privacy hidden" data-tauri-drag-region title="The active Translate Engine sends screen text off-machine">☁ cloud</span>
+          <span id="config-error-chip" class="chip error hidden" data-tauri-drag-region title="config.toml is broken — see the Results Window">config error</span>
+        </div>
+        <div class="titlebar-buttons"></div>
       </div>
     </header>
 
@@ -540,6 +550,7 @@
     </main>
 
     <div id="toast" class="toast hidden"></div>
+    <script src="titlebar.js"></script>
     <script src="settings.js"></script>
   </body>
 </html>

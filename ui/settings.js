@@ -18,6 +18,9 @@ const toastEl = document.getElementById("toast");
 const privacyChip = document.getElementById("privacy-chip");
 const configErrorChip = document.getElementById("config-error-chip");
 
+// Frameless window controls (min/close) are wired by titlebar.js, loaded
+// before this script.
+
 let toastTimer = null;
 function toast(message, kind = "ok") {
   toastEl.textContent = message;

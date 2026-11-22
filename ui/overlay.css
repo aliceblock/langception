@@ -89,16 +89,19 @@ body.adjust .overlay-block:hover {
 .zone-rect {
   position: absolute;
   box-sizing: border-box;
-  border: 1.5px dashed #7fd4ff;
-  background: rgba(127, 212, 255, 0.08);
+  /* Same cyan as the theme's --info (theme.css): one identity for
+     interactive geometry across windows. Hardcoded — overlay.html does not
+     load theme.css. */
+  border: 1.5px dashed #6cc7ff;
+  background: rgba(108, 199, 255, 0.08);
   cursor: move;
   pointer-events: auto;
   z-index: 9000;
 }
 
 .zone-rect:hover {
-  border-color: #b7e7ff;
-  background: rgba(127, 212, 255, 0.14);
+  border-color: #aad9ff;
+  background: rgba(108, 199, 255, 0.14);
 }
 
 .zone-label {
@@ -107,7 +110,7 @@ body.adjust .overlay-block:hover {
   left: -1.5px;
   padding: 1px 8px;
   border-radius: 3px 3px 0 0;
-  background: #7fd4ff;
+  background: #6cc7ff;
   color: #10222c;
   font-family: "Segoe UI", sans-serif;
   font-size: 11px;
@@ -121,7 +124,7 @@ body.adjust .overlay-block:hover {
   position: absolute;
   width: 9px;
   height: 9px;
-  background: #7fd4ff;
+  background: #6cc7ff;
   border: 1px solid #fff;
   border-radius: 2px;
   z-index: 1;

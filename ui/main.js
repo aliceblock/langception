@@ -37,6 +37,9 @@ const excludedTitle = document.getElementById("excluded-title");
 const excludedList = document.getElementById("excluded-list");
 const excludedEmpty = document.getElementById("excluded-empty");
 
+// Frameless window controls (min/close) are wired by titlebar.js, loaded
+// before this script.
+
 let running = false;
 let paused = false;
 let zones = [];
