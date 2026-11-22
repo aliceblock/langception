@@ -61,6 +61,9 @@ pub struct Status {
     pub zones: Vec<ZoneStatus>,
     pub excluded_blocks: Vec<ExcludedStatus>,
     pub cadence_ms: u32,
+    /// How long a changed block must hold stable before it is translated
+    /// (ticket 05).
+    pub stability_ms: u32,
     pub glossary_terms: usize,
     pub hotkeys: HotkeyStatus,
     pub text_style: TextStyleDto,
@@ -632,6 +635,7 @@ fn status_for(app: &AppHandle) -> Status {
         zones,
         excluded_blocks,
         cadence_ms,
+        stability_ms,
         glossary_terms,
         hotkeys,
         text_style,
@@ -673,6 +677,7 @@ fn status_for(app: &AppHandle) -> Status {
                 })
                 .collect(),
             config.capture.cadence_ms,
+            config.capture.stability_ms,
             config.glossary.0.len(),
             HotkeyStatus {
                 toggle: config.hotkeys.toggle_translation.clone(),
@@ -692,6 +697,7 @@ fn status_for(app: &AppHandle) -> Status {
             Vec::new(),
             0,
             0,
+            0,
             default_hotkeys,
             TextStyleDto::default(),
         ),
@@ -702,6 +708,7 @@ fn status_for(app: &AppHandle) -> Status {
             String::new(),
             Vec::new(),
             Vec::new(),
+            0,
             0,
             0,
             default_hotkeys,
@@ -728,6 +735,7 @@ fn status_for(app: &AppHandle) -> Status {
         zones,
         excluded_blocks,
         cadence_ms,
+        stability_ms,
         glossary_terms,
         hotkeys,
         text_style,
@@ -751,6 +759,7 @@ fn build_pipeline(config: &AppConfig) -> Result<Pipeline, String> {
         config: LoopConfig {
             source_language: config.source.language,
             cadence: Duration::from_millis(config.capture.cadence_ms as u64),
+            stability: Duration::from_millis(config.capture.stability_ms as u64),
         },
         glossary: config.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),

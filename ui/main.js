@@ -100,7 +100,7 @@ function renderStatus(status) {
       : `${zones.filter((z) => z.enabled).length} zone${zones.length === 1 ? "" : "s"}`;
   configLine.textContent = status.configError
     ? `Config: ${status.configPath}`
-    : `${status.language} → ${status.targetLanguage} · ${watched} · every ${status.cadenceMs}ms · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
+    : `${status.language} → ${status.targetLanguage} · ${watched} · every ${status.cadenceMs}ms · hold ${status.stabilityMs}ms · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
 
   if (status.warnings && status.warnings.length > 0) {
     warningsLine.textContent = status.warnings.join("\n");

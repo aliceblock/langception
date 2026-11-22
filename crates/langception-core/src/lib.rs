@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod glossary;
+pub(crate) mod hash;
 pub mod google;
 pub mod orchestrator;
 pub mod ports;
