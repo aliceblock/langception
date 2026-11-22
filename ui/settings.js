@@ -129,6 +129,7 @@ document.getElementById("wizard-skip").addEventListener("click", finishWizard);
 const generalLanguage = document.getElementById("general-language");
 const generalCadence = document.getElementById("general-cadence");
 const generalStability = document.getElementById("general-stability");
+const generalGenderless = document.getElementById("general-genderless");
 const generalAutostart = document.getElementById("general-autostart");
 let generalLoaded = false;
 
@@ -138,6 +139,7 @@ function loadGeneral(status) {
   generalLanguage.value = status.language;
   generalCadence.value = status.cadenceMs;
   generalStability.value = status.stabilityMs;
+  generalGenderless.checked = Boolean(status.genderless);
   generalAutostart.checked = Boolean(status.startWithWindows);
 }
 
@@ -150,6 +152,7 @@ document.getElementById("general-save").addEventListener("click", async () => {
         language: generalLanguage.value,
         cadenceMs: cadence,
         stabilityMs: stability,
+        genderless: generalGenderless.checked,
       },
     });
     toast("General settings saved");

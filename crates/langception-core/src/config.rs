@@ -202,6 +202,14 @@ pub const TRANSLATE_ENGINES: [&str; 1] = ["google"];
 /// Everything the app reads from the config file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppConfig {
+    /// Genderless Mode (CONTEXT.md) global toggle: when true, the engine's
+    /// Thai output is scrubbed of gendered politeness particles and
+    /// first-person pronouns (ticket 08), so translated speech carries no
+    /// speaker gender. A Profile's [`GenderlessOverride::Inherit`] follows
+    /// this value. First field so it serializes as a bare TOML key before
+    /// any table section.
+    #[serde(default)]
+    pub genderless: bool,
     pub source: SourceSettings,
     /// Slice 1 watched a single `[region]`. Capture Zones (ticket 02)
     /// replaced it; a config that still carries one is migrated into a zone
@@ -425,6 +433,13 @@ impl AppConfig {
 # saved into this file automatically. You can also edit it by hand; restart
 # the app after changing [hotkeys].
 
+# Genderless Mode (CONTEXT.md): translated speech carries no speaker
+# gender — gendered politeness particles (ครับ/ค่ะ/จ้า …) and gendered
+# first-person pronouns (ผม/ฉัน/หนู → เรา) are scrubbed from every
+# translation. Settings → General owns this toggle; a Profile's
+# "genderless" override below can force it on or off per app.
+genderless = false
+
 [source]
 # Language Langception expects to read: "en" | "ja" | "zh" | "ko"
 language = "en"
@@ -512,8 +527,9 @@ one_shot_capture = "Alt+Q"
 # Profile's zones are relative to its app's WINDOW (top-left = the
 # window's top-left corner, physical px) and move with it; with no zones
 # the whole window is watched. Its glossary is merged over the global one
-# above (the profile wins on conflict); genderless: "inherit" | "on" |
-# "off"; engine: "google" or omit to inherit the global engine.
+# above (the profile wins on conflict); genderless: "inherit" (follows
+# the genderless key above) | "on" | "off"; engine: "google" or omit to
+# inherit the global engine.
 # [[profiles]]
 # id = "p1700000000000000000"
 # name = "Reverse: 1999"
@@ -564,6 +580,7 @@ mod tests {
         assert!(config.excluded_blocks.is_empty());
         assert!(config.region.is_none());
         assert_eq!(config.hotkeys, HotkeySettings::default());
+        assert!(!config.genderless);
     }
 
     #[test]
@@ -1169,5 +1186,37 @@ language = "en"
         assert_eq!(config.profiles[0].zones[0].name, "Chat box");
         assert_eq!(config.zones.len(), 1);
         assert_eq!(config.zones[0].name, "Chat box");
+    }
+
+    // ---- Genderless Mode global toggle (ticket 08) ----
+
+    #[test]
+    fn genderless_toggles_on_and_roundtrips_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("genderless = false", "genderless = true");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert!(config.genderless);
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+        assert!(
+            config
+                .to_toml_string()
+                .unwrap()
+                .contains("genderless = true"),
+            "the toggle stays a bare top-level key, hand-editable"
+        );
+    }
+
+    #[test]
+    fn ticket07_config_without_genderless_gets_the_default() {
+        // A config from before ticket 08 has no genderless key (serde
+        // default fills it) — and one written by hand without the key
+        // still parses.
+        let legacy = AppConfig::DEFAULT_TEMPLATE.replace(
+            "\n# Genderless Mode (CONTEXT.md): translated speech carries no speaker\n# gender — gendered politeness particles (ครับ/ค่ะ/จ้า …) and gendered\n# first-person pronouns (ผม/ฉัน/หนู → เรา) are scrubbed from every\n# translation. Settings → General owns this toggle; a Profile's\n# \"genderless\" override below can force it on or off per app.\ngenderless = false\n",
+            "",
+        );
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert!(!config.genderless);
     }
 }

@@ -40,6 +40,7 @@ fn config() -> LoopConfig {
         // exercise dedup, removals, exclusions and errors, not the
         // debounce. The stability-window tests build their own config.
         stability: Duration::ZERO,
+        genderless: false,
     }
 }
 
@@ -308,7 +309,11 @@ struct Harness {
 
 /// The harness starts watching one zone (z1 = REGION), like the app does
 /// after a first zone was drawn, with no Excluded Blocks in force.
-async fn harness_with(glossary: Glossary, stability: Duration) -> (Harness, Orchestrator) {
+async fn harness_with(
+    glossary: Glossary,
+    stability: Duration,
+    genderless: bool,
+) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
     let (ocr_tx, ocr) = FakeOcr::new();
@@ -323,6 +328,7 @@ async fn harness_with(glossary: Glossary, stability: Duration) -> (Harness, Orch
 
     let config = LoopConfig {
         stability,
+        genderless,
         ..config()
     };
     let orchestrator = Orchestrator::new(
@@ -357,11 +363,16 @@ async fn harness_with(glossary: Glossary, stability: Duration) -> (Harness, Orch
 }
 
 async fn harness() -> (Harness, Orchestrator) {
-    harness_with(Glossary::default(), Duration::ZERO).await
+    harness_with(Glossary::default(), Duration::ZERO, false).await
 }
 
 async fn harness_with_stability(ms: u64) -> (Harness, Orchestrator) {
-    harness_with(Glossary::default(), Duration::from_millis(ms)).await
+    harness_with(Glossary::default(), Duration::from_millis(ms), false).await
+}
+
+/// Genderless Mode on: the loop scrubs gendered Thai from engine output.
+async fn harness_genderless() -> (Harness, Orchestrator) {
+    harness_with(Glossary::default(), Duration::ZERO, true).await
 }
 
 fn set_zones(h: &Harness, zones: Vec<Zone>) {
@@ -403,10 +414,7 @@ async fn feed(h: &Harness, zone_count: usize, frame: &CapturedImage, ocr: Option
     for _ in 0..zone_count {
         h.images.send(frame.clone()).await.unwrap();
         if let Some(blocks) = &ocr {
-            h.ocr_results
-                .send(Ok(blocks.clone()))
-                .await
-                .unwrap();
+            h.ocr_results.send(Ok(blocks.clone())).await.unwrap();
         }
     }
 }
@@ -569,7 +577,11 @@ async fn a_stable_change_fires_exactly_once() {
     h.clock.set_now_ms(1000);
     feed(&h, 1, &frame, None).await;
     orch.tick().await;
-    assert_eq!(h.translate.calls(), ["Hello"], "a stable change fires exactly once");
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello"],
+        "a stable change fires exactly once"
+    );
     assert_no_event(&mut h.events, "no event after the single fire").await;
 }
 
@@ -881,7 +893,7 @@ async fn glossary_match_shows_glossary_thai_and_never_calls_engine() {
     glossary
         .0
         .insert("VERTIN".to_string(), "เวอร์ติน".to_string());
-    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO).await;
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, false).await;
     let blocks = vec![block(0, 0, "  vertin  ")];
 
     feed_tick(&h, 1, blocks.clone()).await;
@@ -1012,7 +1024,10 @@ async fn ocr_error_retries_on_the_next_pass() {
 async fn capture_once_translates_with_oneshot_origin_and_no_dedup() {
     let (mut h, mut orch) = harness().await;
 
-    h.images.send(frame_for(&[block(0, 0, "Hello")])).await.unwrap();
+    h.images
+        .send(frame_for(&[block(0, 0, "Hello")]))
+        .await
+        .unwrap();
     h.ocr_results
         .send(Ok(vec![block(0, 0, "Hello")]))
         .await
@@ -1025,7 +1040,10 @@ async fn capture_once_translates_with_oneshot_origin_and_no_dedup() {
     }
 
     // One-shot has no tracking state: the same text translates again.
-    h.images.send(frame_for(&[block(0, 0, "Hello")])).await.unwrap();
+    h.images
+        .send(frame_for(&[block(0, 0, "Hello")]))
+        .await
+        .unwrap();
     h.ocr_results
         .send(Ok(vec![block(0, 0, "Hello")]))
         .await
@@ -1359,7 +1377,11 @@ async fn excluded_blocks_are_never_translated_or_displayed() {
     feed_unchanged(&h, 1, blocks).await;
     orch.tick().await;
     assert_eq!(h.translate.calls(), ["World"]);
-    assert_no_event(&mut h.events, "the excluded block must stay silent across ticks").await;
+    assert_no_event(
+        &mut h.events,
+        "the excluded block must stay silent across ticks",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -1404,7 +1426,11 @@ async fn clearing_an_exclusion_translates_the_block_again() {
         .unwrap();
     feed_tick(&h, 1, blocks.clone()).await;
     orch.tick().await;
-    assert_eq!(h.translate.calls(), ["Hello"], "no re-translation while excluded");
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello"],
+        "no re-translation while excluded"
+    );
     assert_no_event(&mut h.events, "no events for the newly excluded block").await;
 
     // The user clears the exclusion in the Results Window: the block must
@@ -1430,7 +1456,10 @@ async fn one_shot_pass_honors_exclusions() {
     h.excluded_tx
         .send(vec![exclusion("x1", 200, 300, 100, 20)])
         .unwrap();
-    h.images.send(frame_for(&[block(100, 200, "Hello")])).await.unwrap();
+    h.images
+        .send(frame_for(&[block(100, 200, "Hello")]))
+        .await
+        .unwrap();
     h.ocr_results
         .send(Ok(vec![block(100, 200, "Hello")]))
         .await
@@ -1447,4 +1476,96 @@ async fn one_shot_pass_honors_exclusions() {
         "the excluded block must not produce a one-shot event",
     )
     .await;
+}
+
+// ---- Genderless Mode (ticket 08) ----
+
+#[tokio::test]
+async fn genderless_mode_scrubs_engine_output() {
+    let (mut h, mut orch) = harness_genderless().await;
+
+    // The fake engine returns gendered Thai (particles + first-person
+    // pronouns) for three blocks; the displayed text must be genderless.
+    for gendered in ["สวัสดีครับ", "ฉันไม่รู้", "ได้นะครับ"]
+    {
+        h.responses.send(Ok(gendered.to_string())).await.unwrap();
+    }
+    feed_tick(
+        &h,
+        1,
+        vec![
+            block(0, 0, "Hello"),
+            block(0, 50, "Bye"),
+            block(0, 100, "Okay"),
+        ],
+    )
+    .await;
+    orch.tick().await;
+
+    // The scrubber is output-side only: the engine still sees the OCR text.
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello", "Bye", "Okay"],
+        "the request side is untouched by the scrubber"
+    );
+    for expected in ["สวัสดี", "เราไม่รู้", "ได้"] {
+        match next_event(&mut h.events).await {
+            LoopEvent::Translated { translation, via, .. } => {
+                assert_eq!(translation, expected);
+                assert_eq!(
+                    via,
+                    Via::Engine,
+                    "scrubbed output still comes via the engine"
+                );
+            }
+            other => panic!("expected Translated \"{expected}\", got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn genderless_disabled_passes_engine_output_through() {
+    let (mut h, mut orch) = harness().await;
+
+    h.responses.send(Ok("สวัสดีครับ".to_string())).await.unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => {
+            assert_eq!(
+                translation, "สวัสดีครับ",
+                "with the mode off, engine output passes through untouched"
+            );
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn genderless_mode_never_scrubs_glossary_output() {
+    // A Glossary pin is the user's own Thai — the short-circuit sits
+    // before the scrubber, so even a gendered entry shows verbatim.
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("VERTIN".to_string(), "ข้าคือเวอร์ตินค่ะ".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, true).await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "  vertin  ")]).await;
+    orch.tick().await;
+
+    assert!(
+        h.translate.calls().is_empty(),
+        "glossary match must still short-circuit the engine"
+    );
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated {
+            translation, via, ..
+        } => {
+            assert_eq!(translation, "ข้าคือเวอร์ตินค่ะ", "pinned Thai shows verbatim");
+            assert_eq!(via, Via::Glossary);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
 }

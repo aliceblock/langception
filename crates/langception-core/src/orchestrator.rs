@@ -1,6 +1,7 @@
 //! The translation loop: capture → change detection → OCR → Excluded Block
 //! filter → per-block stability window → glossary short-circuit → translate
-//! → events, across every active Capture Zone.
+//! → genderless scrub (ticket 08) → events, across every active Capture
+//! Zone.
 //!
 //! All collaborators are ports (`capture`, `ocr`, `translate`, `clock`) plus
 //! the watched zone list, the paused flag, and the active Excluded Blocks,
@@ -100,6 +101,13 @@ pub struct LoopConfig {
     /// OCR+translate fire (ticket 05; debounces animations, whose pixels
     /// never stop changing). 0 fires on the detecting pass itself.
     pub stability: Duration,
+    /// Genderless Mode (ticket 08): scrub gendered Thai politeness
+    /// particles and first-person pronouns from ENGINE output before it
+    /// is displayed. Read at loop start like the language — the shell
+    /// restarts the loop when the toggle or the active Profile's override
+    /// changes. Glossary output is the user's own pinned Thai and is
+    /// never scrubbed.
+    pub genderless: bool,
 }
 
 /// A Text Block is identified by its on-screen position, quantized so
@@ -563,7 +571,18 @@ impl Orchestrator {
                     crate::ports::TARGET_LANGUAGE,
                 )
                 .await
-                .map(|thai| (thai, Via::Engine))
+                .map(|thai| {
+                    // Genderless Mode (ticket 08): engine output is
+                    // scrubbed before display; the glossary path above
+                    // short-circuits past this — a pinned translation is
+                    // the user's own Thai, never rewritten.
+                    let thai = if self.config.genderless {
+                        crate::genderless::scrub(&thai)
+                    } else {
+                        thai
+                    };
+                    (thai, Via::Engine)
+                })
                 .map_err(|e| e.message),
         };
         match translated {

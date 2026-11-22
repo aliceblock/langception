@@ -1,10 +1,10 @@
 //! The settings window (ticket 06): one surface for every config the app
 //! keeps, doubling as the first-run wizard host. The Results Window stays
 //! the live dashboard; this window owns the *editing*: General (language,
-//! cadence, stability, start-with-Windows), Engines (engine card + OCR
-//! language-pack detection), Glossary (full management + JSON import/
-//! export), Profiles (ticket 07: per-app configuration), Text Style,
-//! Hotkeys (rebinds apply live), About.
+//! cadence, stability, Genderless Mode, start-with-Windows), Engines
+//! (engine card + OCR language-pack detection), Glossary (full
+//! management + JSON import/export), Profiles (ticket 07: per-app
+//! configuration), Text Style, Hotkeys (rebinds apply live), About.
 //!
 //! The wizard is a view inside this window: on the first launch (no config
 //! file when the app started) the shell opens it automatically and the page
@@ -122,6 +122,8 @@ pub struct GeneralSettingsDto {
     pub language: String,
     pub cadence_ms: u32,
     pub stability_ms: u32,
+    /// The Genderless Mode global toggle (ticket 08).
+    pub genderless: bool,
 }
 
 #[tauri::command]
@@ -141,11 +143,12 @@ pub(crate) async fn set_general(
             config.source.language = language;
             config.capture.cadence_ms = settings.cadence_ms;
             config.capture.stability_ms = settings.stability_ms;
+            config.genderless = settings.genderless;
             Ok(())
         })?;
-        // Language/cadence/stability are read when the loop starts: restart
-        // it so the change visibly applies (a language change must reset
-        // tracking anyway — the OCR engine is rebuilt).
+        // Language/cadence/stability/genderless are read when the loop
+        // starts: restart it so the change visibly applies (a language
+        // change must reset tracking anyway — the OCR engine is rebuilt).
         restart_loop_if_running(app);
         apply_state(app);
         Ok(())

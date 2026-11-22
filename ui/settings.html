@@ -103,6 +103,10 @@
             <span>Stability (ms)</span>
             <input id="general-stability" type="number" min="0" max="10000" step="50" />
           </label>
+          <label class="form-row" title="Translated speech carries no speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns (ผม/ฉัน/หนู → เรา) are scrubbed from engine output">
+            <span>Genderless Mode</span>
+            <input id="general-genderless" type="checkbox" />
+          </label>
           <label class="form-row">
             <span>Start with Windows</span>
             <input id="general-autostart" type="checkbox" />
@@ -111,9 +115,10 @@
         <div class="row">
           <button id="general-save" class="btn primary">Save</button>
           <span class="hint">
-            Language, cadence and stability apply when translation (re)starts —
-            a running loop restarts automatically. Start-with-Windows applies
-            immediately.
+            Language, cadence, stability and Genderless Mode apply when
+            translation (re)starts — a running loop restarts automatically.
+            Start-with-Windows applies immediately. Per-app Profiles can
+            override Genderless Mode (Settings → Profiles).
           </span>
         </div>
       </section>
@@ -228,9 +233,9 @@
             <label class="form-row">
               <span>Genderless Mode</span>
               <select id="profile-genderless">
-                <option value="inherit">Inherit global</option>
-                <option value="on">On</option>
-                <option value="off">Off</option>
+                <option value="inherit">Inherit global (Settings → General)</option>
+                <option value="on">Force on</option>
+                <option value="off">Force off</option>
               </select>
             </label>
           </div>

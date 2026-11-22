@@ -72,6 +72,9 @@ pub struct Status {
     /// How long a changed block must hold stable before it is translated
     /// (ticket 05).
     pub stability_ms: u32,
+    /// The Genderless Mode global toggle (ticket 08); a Profile's override
+    /// (Settings → Profiles) layers on top of this per app.
+    pub genderless: bool,
     pub glossary_terms: usize,
     pub hotkeys: HotkeyStatus,
     pub text_style: TextStyleDto,
@@ -810,6 +813,7 @@ fn status_for(app: &AppHandle) -> Status {
         excluded_blocks,
         cadence_ms,
         stability_ms,
+        genderless,
         glossary_terms,
         hotkeys,
         text_style,
@@ -852,6 +856,7 @@ fn status_for(app: &AppHandle) -> Status {
                 .collect(),
             config.capture.cadence_ms,
             config.capture.stability_ms,
+            config.genderless,
             config.glossary.0.len(),
             HotkeyStatus {
                 toggle: config.hotkeys.toggle_translation.clone(),
@@ -871,6 +876,7 @@ fn status_for(app: &AppHandle) -> Status {
             Vec::new(),
             0,
             0,
+            false,
             0,
             default_hotkeys,
             TextStyleDto::default(),
@@ -884,6 +890,7 @@ fn status_for(app: &AppHandle) -> Status {
             Vec::new(),
             0,
             0,
+            false,
             0,
             default_hotkeys,
             TextStyleDto::default(),
@@ -943,6 +950,7 @@ fn status_for(app: &AppHandle) -> Status {
         excluded_blocks,
         cadence_ms,
         stability_ms,
+        genderless,
         glossary_terms,
         hotkeys,
         text_style,
@@ -981,11 +989,9 @@ struct EffectiveTarget {
     glossary: Glossary,
     /// The Profile's engine choice (`None` = the global engine).
     engine: Option<String>,
-    /// The effective Genderless Mode. Computed and carried now, but first
-    /// CONSUMED by ticket 08's Thai scrubber (the global toggle lands
-    /// there too — until then the global value is off, and only a
-    /// Profile's explicit "on" turns it on).
-    #[allow(dead_code)]
+    /// The effective Genderless Mode (ticket 08): the Profile's override,
+    /// or the global toggle — the orchestrator's Thai scrubber consumes it
+    /// via the loop config.
     genderless: bool,
 }
 
@@ -1006,7 +1012,7 @@ fn effective_target(app: &AppHandle, config: &AppConfig) -> EffectiveTarget {
             language: profile.language,
             glossary: profile.effective_glossary(&config.glossary),
             engine: profile.engine.clone(),
-            genderless: profile.effective_genderless(false),
+            genderless: profile.effective_genderless(config.genderless),
         };
     }
     EffectiveTarget {
@@ -1017,8 +1023,7 @@ fn effective_target(app: &AppHandle, config: &AppConfig) -> EffectiveTarget {
         language: config.source.language,
         glossary: config.glossary.clone(),
         engine: None,
-        // The global Genderless toggle lands with ticket 08.
-        genderless: false,
+        genderless: config.genderless,
     }
 }
 
@@ -1039,6 +1044,7 @@ fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeli
             source_language: target.language,
             cadence: Duration::from_millis(config.capture.cadence_ms as u64),
             stability: Duration::from_millis(config.capture.stability_ms as u64),
+            genderless: target.genderless,
         },
         glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
