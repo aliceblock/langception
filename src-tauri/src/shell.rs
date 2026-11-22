@@ -2150,22 +2150,27 @@ fn profile_watch_tick(app: &AppHandle) -> Result<(), String> {
     if changed {
         // Engine switches (ticket 27): the Profile activating names the
         // engine it swaps in — the log line pairs with the loop's own
-        // start line that restart_loop_if_running produces.
-        let guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
-        match (&new_id, &*guard) {
-            (Some(id), Some(Ok(config))) => {
-                if let Some(profile) = config.profiles.iter().find(|p| p.id == *id) {
-                    let engine = profile.engine.as_deref().unwrap_or("global default");
-                    crate::logging::log(
-                        "profile",
-                        format!("activated \"{}\" (engine: {engine})", profile.name),
-                    );
+        // start line that restart_loop_if_running produces. The guard is
+        // scoped: restart_loop_if_running and apply_state re-lock config,
+        // and this thread would deadlock against itself (and then hold
+        // config forever, freezing every command) if the lock spanned them.
+        {
+            let guard = state.config.lock().unwrap_or_else(|p| p.into_inner());
+            match (&new_id, &*guard) {
+                (Some(id), Some(Ok(config))) => {
+                    if let Some(profile) = config.profiles.iter().find(|p| p.id == *id) {
+                        let engine = profile.engine.as_deref().unwrap_or("global default");
+                        crate::logging::log(
+                            "profile",
+                            format!("activated \"{}\" (engine: {engine})", profile.name),
+                        );
+                    }
                 }
+                (None, _) => {
+                    crate::logging::log("profile", "deactivated — back to the global target");
+                }
+                _ => {}
             }
-            (None, _) => {
-                crate::logging::log("profile", "deactivated — back to the global target");
-            }
-            _ => {}
         }
         // Activation/deactivation swaps everything the pipeline reads at
         // start (language, glossary, engine, zones): restart the running
