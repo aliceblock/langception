@@ -2847,3 +2847,93 @@ async fn auto_colors_ride_fused_reads_too() {
         other => panic!("expected Translated, got {other:?}"),
     }
 }
+
+// ---- Multi-line merge (ticket 23) ----
+//
+// The classic read path merges consecutive OCR lines that visually form one
+// paragraph into ONE Text Block before tracking (the pure pass and its
+// geometry tests live in `core/src/merge.rs`). These pin the end-to-end
+// behavior: the merged block translates, dedups, and is excluded as one.
+
+#[tokio::test]
+async fn stacked_lines_translate_as_one_merged_block() {
+    let (mut h, mut orch) = harness().await;
+    // Two lines of one paragraph (20px lines, 4px leading) — Windows OCR's
+    // per-line output.
+    let lines = vec![block(100, 200, "Hello"), block(100, 224, "World")];
+
+    feed_tick(&h, 1, lines.clone()).await;
+    orch.tick().await;
+
+    // ONE engine call with the joined text — not two per-line calls.
+    assert_eq!(h.translate.calls(), ["Hello World"]);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated {
+            key,
+            block,
+            translation,
+            ..
+        } => {
+            assert_eq!(translation, "[TH] Hello World");
+            // The union rect in screen coordinates (REGION sits at
+            // 100,100), keyed by the merged block's top-left like any
+            // block.
+            assert_eq!((block.x, block.y), (200, 300));
+            assert_eq!((block.width, block.height), (100, 44));
+            assert_eq!(block.text, "Hello World");
+            assert_eq!(key, "25,50");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+
+    // The merged block dedups as one: pixel-identical screen → fast path,
+    // no re-translation, no event.
+    feed_unchanged(&h, 1, lines).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello World"]);
+    assert_no_event(&mut h.events, "the merged block must dedup as one").await;
+}
+
+#[tokio::test]
+async fn an_exclusion_covering_a_merged_block_suppresses_it() {
+    let (mut h, mut orch) = harness().await;
+    // The two stacked lines merge into one block at screen
+    // (200, 300, 100×44); the exclusion covers the whole merged rect.
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 300, 100, 44)])
+        .unwrap();
+
+    feed_tick(
+        &h,
+        1,
+        vec![block(100, 200, "Hello"), block(100, 224, "World")],
+    )
+    .await;
+    orch.tick().await;
+
+    assert!(
+        h.translate.calls().is_empty(),
+        "a merged block under an exclusion must not reach the engine, calls were: {:?}",
+        h.translate.calls()
+    );
+    assert_no_event(&mut h.events, "an excluded merged block must not emit").await;
+}
+
+#[tokio::test]
+async fn one_shot_capture_merges_stacked_lines_too() {
+    let (mut h, orch) = harness().await;
+    let lines = vec![block(0, 0, "Hello"), block(0, 24, "World")];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+
+    orch.capture_once(REGION).await;
+
+    assert_eq!(h.translate.calls(), ["Hello World"]);
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { block, origin, .. } => {
+            assert_eq!((block.x, block.y, block.width, block.height), (100, 100, 100, 44));
+            assert_eq!(origin, EventOrigin::OneShot);
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}

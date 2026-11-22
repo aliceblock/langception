@@ -1,5 +1,6 @@
-//! The translation loop: capture → change detection → read → Excluded Block
-//! filter → per-block stability window → glossary short-circuit → translate
+//! The translation loop: capture → change detection → read → multi-line
+//! merge (classic path only, ticket 23) → Excluded Block filter →
+//! per-block stability window → glossary short-circuit → translate
 //! (LLM engines get per-block prompt guidance: relevant Glossary entries +
 //! the Genderless instruction, ticket 11) → genderless scrub (ticket 08) →
 //! events, across every active Capture Zone.
@@ -8,6 +9,11 @@
 //! per-block translation, or — when a fused engine is attached — ONE
 //! vision-LLM call that reads every Text Block and translates it in the
 //! same answer, bypassing both the OcrEngine and TranslateEngine stages.
+//! On the classic path the OCR output first runs through the multi-line
+//! merge ([`crate::merge::merge_lines`], ticket 23): consecutive lines
+//! that visually form one paragraph become one Text Block before tracking,
+//! so a multi-line box is one pill and one engine call. The fused path is
+//! untouched — the vision model already reads the zone as a whole.
 //! Everything downstream of the read is shared: the frame checksum still
 //! decides whether the read runs at all, and each block's dHash still gates
 //! when its result fires, so an unchanged screen costs capture + hashing
@@ -38,6 +44,7 @@
 
 use crate::glossary::Glossary;
 use crate::hash::{block_dhash, frame_checksum};
+use crate::merge::merge_lines;
 use crate::ports::{
     CaptureSource, CapturedImage, Clock, ExcludedBlock, FusedEngine, OcrEngine, Region,
     SourceLanguage, TextBlock, TranslateEngine, Zone,
@@ -425,7 +432,9 @@ impl Orchestrator {
                 return;
             }
         };
-        for block in blocks {
+        // Ticket 23: the same merge pass as the zone loop's classic read
+        // (crate::merge) — a multi-line paragraph is one Text Block here too.
+        for block in merge_lines(blocks, self.config.source_language) {
             let text = block.text.trim().to_string();
             if text.is_empty() {
                 continue;
@@ -517,7 +526,12 @@ impl Orchestrator {
                         return state;
                     }
                 };
-                blocks.into_iter().map(|block| (block, None)).collect()
+                // Ticket 23: merge consecutive OCR lines into one Text
+                // Block before tracking (rationale in crate::merge).
+                merge_lines(blocks, self.config.source_language)
+                    .into_iter()
+                    .map(|block| (block, None))
+                    .collect()
             }
         };
 

@@ -12,6 +12,7 @@ pub mod genderless;
 pub mod glossary;
 pub mod google;
 pub(crate) mod hash;
+pub mod merge;
 pub mod openai;
 pub mod orchestrator;
 pub mod ports;
