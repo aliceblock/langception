@@ -537,6 +537,11 @@ fn monitor_name(monitor: &Monitor) -> String {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    // Ticket 18: closing the Results Window hides it (tray-first), so the
+    // menu needs an explicit way back — a left-click on the icon does the
+    // same thing, but nobody discovers that.
+    let show_results =
+        MenuItem::with_id(app, "show-results", "Show Results Window", true, None::<&str>)?;
     let toggle = MenuItem::with_id(app, "toggle", "Start Translation", true, None::<&str>)?;
     let pause = MenuItem::with_id(app, "pause", "Pause Translation", false, None::<&str>)?;
     let adjust = MenuItem::with_id(app, "adjust", "Enter Adjust Mode", true, None::<&str>)?;
@@ -561,6 +566,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(
         app,
         &[
+            &show_results,
+            &separator,
             &toggle,
             &pause,
             &adjust,
@@ -595,6 +602,14 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             // Every item that reaches the overlay/picker windows runs off the
             // main thread (see run_off_main); failures surface as warnings.
+            "show-results" => spawn_off_main(app, |app| {
+                if let Some(window) = app.get_webview_window(RESULTS_LABEL) {
+                    let _ = window.show();
+                    let _ = window.unminimize();
+                    let _ = window.set_focus();
+                }
+                Ok(())
+            }),
             "toggle" => spawn_off_main(app, toggle_translation),
             "pause" => toggle_pause(app),
             "adjust" => spawn_off_main(app, |app| {

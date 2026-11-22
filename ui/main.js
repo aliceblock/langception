@@ -16,7 +16,6 @@ const toggleBtn = document.getElementById("toggle-btn");
 const pauseBtn = document.getElementById("pause-btn");
 const adjustBtn = document.getElementById("adjust-btn");
 const settingsBtn = document.getElementById("settings-btn");
-const configLine = document.getElementById("config-line");
 const warningsLine = document.getElementById("warnings-line");
 const errorBanner = document.getElementById("error-banner");
 const resultsList = document.getElementById("results");
@@ -95,25 +94,17 @@ function renderStatus(status) {
   pauseBtn.disabled = !running;
   pauseBtn.textContent = paused ? "Resume" : "Pause";
 
-  const watched =
-    mode === "fullscreen"
-      ? "full-screen mode"
-      : `${zones.filter((z) => z.enabled).length} zone${zones.length === 1 ? "" : "s"}`;
-  // Ticket 07: when a Profile matches the foreground app, its settings are
-  // what the loop runs with — name it so the line tells the truth.
-  const activeProfile = (status.profiles || []).find(
-    (p) => p.id && p.id === status.activeProfileId,
-  );
-  const profileNote = activeProfile ? ` · profile "${activeProfile.name}"` : "";
-  // Ticket 12: fused reading replaces Windows OCR with one vision-model
-  // call — name it on the line so the loop's slowness is explainable.
-  const readingNote = status.reading === "fused" ? " · fused vision reading" : "";
-  configLine.textContent = status.configError
-    ? `Config: ${status.configPath}`
-    : `${status.language} → ${status.targetLanguage}${profileNote} · ${watched} · every ${status.cadenceMs}ms · hold ${status.stabilityMs}ms${readingNote} · glossary ${status.glossaryTerms} terms · ${status.configPath}`;
-
-  if (status.warnings && status.warnings.length > 0) {
-    warningsLine.textContent = status.warnings.join("\n");
+  // Ticket 18: the dense config line is gone — engine, cadence, hold,
+  // glossary count and the config path live in the Settings tabs and the
+  // tray tooltip. A config error surfaces in the warnings strip instead
+  // (with the path — that's the file to fix); warnings stay
+  // only-when-present.
+  const warnings = [...(status.warnings || [])];
+  if (status.configError) {
+    warnings.unshift(`config.toml is broken — ${status.configPath}`);
+  }
+  if (warnings.length > 0) {
+    warningsLine.textContent = warnings.join("\n");
     warningsLine.classList.remove("hidden");
   } else {
     warningsLine.classList.add("hidden");
