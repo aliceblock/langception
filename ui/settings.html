@@ -466,7 +466,16 @@
             </span>
           </label>
           <div class="row">
-            <span id="style-preview" title="Preview of the selected font">เวอร์ติน · The ship cannot survive 1999</span>
+            <!-- Exact live preview (ticket 26): the pill inside is styled
+                 by the overlay's shared renderer (pill-style.js) against
+                 the in-form values, so it shows what an In-place Overlay
+                 pill would draw — before anything is saved. -->
+            <div id="style-preview" title="Exact preview — rendered with the same pill code as the In-place Overlay">
+              <span id="style-preview-pill"><span id="style-preview-text">เรือลำนี้ไม่อาจรอดชีวิตในปี 1999</span></span>
+              <span id="style-preview-note" class="hint hidden">
+                Auto Colors is on — showing the manual colors (the fallback)
+              </span>
+            </div>
           </div>
           <label class="form-row">
             <span>Size (6–96)</span>
@@ -578,6 +587,7 @@
 
     <div id="toast" class="toast hidden"></div>
     <script src="titlebar.js"></script>
+    <script src="pill-style.js"></script>
     <script src="settings.js"></script>
   </body>
 </html>

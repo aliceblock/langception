@@ -996,6 +996,27 @@ function collectStyle() {
   };
 }
 
+// Exact live preview (ticket 26): collectStyle() is the single source of
+// truth — the exact object a save would store — pushed through the
+// overlay's shared pill renderer (pill-style.js), so the preview cannot
+// drift from what the In-place Overlay draws. Geometry (Placement, Cover
+// Source stretch) is out of scope: it depends on each block's source rect,
+// which settings does not have. Auto Colors sampling needs capture data,
+// so the manual colors — the documented fallback — always show; the note
+// under the pill says so while Auto Colors is on.
+const stylePreviewPill = document.getElementById("style-preview-pill");
+const stylePreviewText = document.getElementById("style-preview-text");
+const stylePreviewNote = document.getElementById("style-preview-note");
+
+function updateStylePreview() {
+  const style = collectStyle();
+  applyPillStyle(stylePreviewPill, style, null);
+  // The overlay's fitText always sets the size explicitly on the text
+  // element; the preview does the same, at the configured size.
+  stylePreviewText.style.fontSize = style.fontSize + "px";
+  stylePreviewNote.classList.toggle("hidden", !style.autoColors);
+}
+
 // Sliders fire a burst of input events; a short trailing debounce keeps the
 // live feel without hammering config.toml per pixel.
 function scheduleStyleSave() {
@@ -1010,6 +1031,10 @@ function scheduleStyleSave() {
 }
 
 for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity, styleCoverSource, stylePlacement]) {
+  // The preview repaints instantly from the in-form values; the save to
+  // config.toml stays debounced behind it.
+  control.addEventListener("input", updateStylePreview);
+  control.addEventListener("change", updateStylePreview);
   control.addEventListener("input", scheduleStyleSave);
   control.addEventListener("change", scheduleStyleSave);
 }
@@ -1022,15 +1047,8 @@ styleAutoColors.addEventListener("change", () => {
 
 // Font selector (ticket 15): the dropdown lists the fonts actually installed
 // on this PC (DirectWrite), while the field stays typeable so a hand-edited
-// config name never breaks. A live preview renders the current selection
-// with the same fallback stack the overlay uses.
-const stylePreview = document.getElementById("style-preview");
-
-function updateStylePreview() {
-  const family = styleFont.value.trim() || "Noto Sans Thai";
-  stylePreview.style.fontFamily = `"${family}", "Noto Sans Thai", "Segoe UI", sans-serif`;
-}
-
+// config name never breaks. (Its font-only preview grew into the exact
+// whole-style preview above — ticket 26.)
 async function loadFontList() {
   if (styleFont.dataset.loaded) return;
   styleFont.dataset.loaded = "true";
@@ -1048,8 +1066,8 @@ async function loadFontList() {
   }
 }
 
-styleFont.addEventListener("input", updateStylePreview);
-styleFont.addEventListener("change", updateStylePreview);
+// Renders the fallback style immediately; DOMContentLoaded refreshes it
+// with the saved config values once the inputs are filled.
 updateStylePreview();
 loadFontList();
 
@@ -1129,6 +1147,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   loadGeneral(status);
   loadStyleInputs(status.textStyle);
+  updateStylePreview();
   loadHotkeys(status.hotkeys);
   renderGlossary();
   renderProfiles(status);

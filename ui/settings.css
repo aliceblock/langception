@@ -162,18 +162,52 @@ h3 { font-size: 12.5px; font-weight: 600; margin: 14px 0 6px; color: var(--text)
 .form-row input:focus, .form-row select:focus { outline: none; border-color: var(--accent); }
 .style-pair { display: flex; align-items: center; gap: 8px; }
 
-/* Font selector live preview (ticket 15): Thai + Latin sample rendered in
-   the chosen family with the overlay's fallback stack. */
+/* Exact Text Style preview (ticket 26): the pill element inside is styled
+   by the overlay's shared renderer (pill-style.js) against the in-form
+   values, so the preview shows what the In-place Overlay will draw. The
+   stage backdrop is only a stand-in scene — real pills float over
+   arbitrary screen content. */
+
+/* Bundled Noto Sans Thai, same declaration as overlay.css (canonical
+   there): the preview renders the bundled font even when no Thai-capable
+   font is installed on this PC. */
+@font-face {
+  font-family: "Noto Sans Thai";
+  src: url("fonts/NotoSansThai-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
 #style-preview {
-  display: block;
-  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: var(--panel-2);
-  color: var(--text);
-  font-size: 18px;
-  line-height: 1.4;
+  background: linear-gradient(160deg, #3a4152 0%, #262b38 55%, #1a1d27 100%);
   max-width: 420px;
+  overflow: hidden;
+}
+
+/* Mirrors .overlay-block's text metrics (overlay.css) — line-height,
+   weight, and the 300px wrap point, so a large size wraps in the preview
+   exactly where the overlay's pill would; box-sizing is already global
+   border-box here, same as the overlay's explicit rule. paint-order and
+   the stroke come from the shared applyPillStyle, not from here.
+   inline-block keeps the pill hugging the text the way the overlay's div
+   does. */
+#style-preview-pill {
+  display: inline-block;
+  max-width: 300px;
+  line-height: 1.3;
+  font-weight: 400;
+}
+
+#style-preview-note {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
 }
 
 /* ---- Glossary ---- */
