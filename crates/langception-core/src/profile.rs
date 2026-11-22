@@ -140,8 +140,11 @@ impl Profile {
 
 /// A window-relative zone's screen rectangle: intersected with `window`,
 /// so a zone never captures outside the app's window even after the window
-/// moved or shrank. `None` when nothing is left of the zone.
-fn zone_in_window(window: Region, rel: Region) -> Option<Region> {
+/// moved or shrank. `None` when nothing is left of the zone. Ticket 40:
+/// also the Adjust Mode payload's conversion — the rectangles the overlay
+/// shows must be exactly the ones the loop captures, so both go through
+/// this clamp.
+pub fn zone_in_window(window: Region, rel: Region) -> Option<Region> {
     let left = (window.x + rel.x).max(window.x);
     let top = (window.y + rel.y).max(window.y);
     let right = (window.x + rel.x + rel.width as i32).min(window.right());
@@ -169,6 +172,32 @@ impl Region {
     fn bottom(&self) -> i32 {
         self.y + self.height as i32
     }
+}
+
+/// A dropped Adjust Mode rectangle (screen px) as a window-relative
+/// ProfileZone region (ticket 40): clamped inside `window` and re-expressed
+/// from its top-left — the same shape zone drawing stores, so an adjusted
+/// zone follows the window exactly like a drawn one. A rectangle hanging
+/// past the window's edge keeps only its inside part (the drop clamps,
+/// mirroring how capture clamps via [`zone_in_window`]); `None` when it
+/// does not intersect the window at all — the caller reports and the
+/// overlay visual reverts.
+pub fn clamp_region_to_window(window: Region, region: Region) -> Option<Region> {
+    let left = region.x.max(window.x);
+    let top = region.y.max(window.y);
+    let right = (region.x + region.width as i32).min(window.x + window.width as i32);
+    let bottom = (region.y + region.height as i32).min(window.y + window.height as i32);
+    let width = right - left;
+    let height = bottom - top;
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    Some(Region {
+        x: left - window.x,
+        y: top - window.y,
+        width: width as u32,
+        height: height as u32,
+    })
 }
 
 #[cfg(test)]
@@ -339,6 +368,90 @@ mod tests {
                 height: 170
             }
         );
+    }
+
+    // ---- Adjust Mode conversions (ticket 40) ----
+
+    #[test]
+    fn zone_in_window_yields_the_clamped_screen_rect_directly() {
+        // The Adjust payload seam (ticket 40): the rects the overlay shows
+        // must equal the ones capture produces, so the shell calls the
+        // same conversion the loop does.
+        assert_eq!(
+            zone_in_window(window(), rel(10, 20, 300, 100)),
+            Some(Region {
+                x: 110,
+                y: 220,
+                width: 300,
+                height: 100
+            })
+        );
+        assert_eq!(
+            zone_in_window(window(), rel(1000, 0, 100, 100)),
+            None,
+            "entirely outside the window"
+        );
+    }
+
+    #[test]
+    fn dropped_rect_inside_the_window_stores_window_relative() {
+        let dropped = Region {
+            x: 150,
+            y: 250,
+            width: 300,
+            height: 100,
+        };
+        assert_eq!(clamp_region_to_window(window(), dropped), Some(rel(50, 50, 300, 100)));
+    }
+
+    #[test]
+    fn dropped_rect_equal_to_the_window_fills_it() {
+        assert_eq!(clamp_region_to_window(window(), window()), Some(rel(0, 0, 800, 600)));
+    }
+
+    #[test]
+    fn dropped_rect_hanging_out_of_the_window_is_clamped() {
+        // 150px hangs past the window's right edge (window: 100..900) and
+        // 100px below its bottom (200..800).
+        let dropped = Region {
+            x: 850,
+            y: 700,
+            width: 200,
+            height: 200,
+        };
+        assert_eq!(clamp_region_to_window(window(), dropped), Some(rel(750, 500, 50, 100)));
+        // Same across the top/left edges.
+        let dropped = Region {
+            x: 50,
+            y: 100,
+            width: 200,
+            height: 200,
+        };
+        assert_eq!(clamp_region_to_window(window(), dropped), Some(rel(0, 0, 150, 100)));
+    }
+
+    #[test]
+    fn dropped_rect_entirely_outside_the_window_is_rejected() {
+        let dropped = Region {
+            x: 2000,
+            y: 300,
+            width: 100,
+            height: 50,
+        };
+        assert_eq!(clamp_region_to_window(window(), dropped), None);
+        // Fully above the window's top edge.
+        let dropped = Region {
+            x: 100,
+            y: 100,
+            width: 100,
+            height: 50,
+        };
+        assert_eq!(clamp_region_to_window(window(), dropped), None);
+    }
+
+    #[test]
+    fn dropped_zero_size_rect_is_rejected() {
+        assert_eq!(clamp_region_to_window(window(), rel(150, 250, 0, 0)), None);
     }
 
     // ---- Layered settings while active ----

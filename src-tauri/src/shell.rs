@@ -23,7 +23,9 @@ use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, Stage,
 use langception_core::ports::{
     ExcludedBlock, FusedEngine, Region, SourceLanguage, TranslateEngine, Zone, TARGET_LANGUAGE,
 };
-use langception_core::profile::{GenderlessOverride, Profile, ProfileZone};
+use langception_core::profile::{
+    clamp_region_to_window, zone_in_window, GenderlessOverride, Profile, ProfileZone,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -422,6 +424,7 @@ pub fn run() {
             rename_zone,
             delete_zone,
             update_zone_region,
+            update_profile_zone_region,
             open_zone_picker,
             get_picker_mode,
             commit_zone_drag,
@@ -1846,6 +1849,9 @@ fn fullscreen_watch_monitor(app: &AppHandle, config: &AppConfig) -> Result<Monit
 /// whether the capture target is full-screen, and the zone rectangles on
 /// this monitor (physical px, monitor-relative). In full-screen mode the
 /// zones panel stays empty — blocks are excluded by clicking them instead.
+/// While a Profile is active its own Capture Zones ARE the watched regions
+/// (ticket 40), so they are the adjust rects and the global list does not
+/// apply.
 fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
     let state = app.state::<AppState>();
     let (target, zones) = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
@@ -1853,6 +1859,19 @@ fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
         _ => (CaptureMode::Zones, Vec::new()),
     };
     let fullscreen = matches!(target, CaptureMode::FullScreen);
+
+    // Ticket 40: the active Profile's zones replace the global ones (the
+    // profile app's window may also sit on another monitor — then this
+    // monitor's payload simply carries none of them). A missing window
+    // cannot proceed: the payload carries the same clear message zone
+    // drawing shows.
+    let (profile_id, profile_note, profile_rects) = match profile_adjust_zones(app, monitor) {
+        Ok(Some((id, rects))) => (Some(id), None, rects),
+        Ok(None) => (None, None, Vec::new()),
+        Err(message) => (None, Some(message), Vec::new()),
+    };
+    let profile_active = profile_id.is_some() || profile_note.is_some();
+
     let origin = monitor.position();
     let size = monitor.size();
     let name = monitor_name(monitor);
@@ -1860,7 +1879,9 @@ fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
     // A zone shows up on the monitor it belongs to (by name; legacy zones
     // with no monitor follow their region's center). Disabled zones have no
     // monitor to appear on.
-    let zone_rects = if fullscreen {
+    let zone_rects = if profile_active {
+        profile_rects
+    } else if fullscreen {
         Vec::new()
     } else {
         zones
@@ -1894,7 +1915,82 @@ fn adjust_payload_for(app: &AppHandle, monitor: &Monitor) -> AdjustPayload {
         zones: zone_rects,
         origin_x: origin.x,
         origin_y: origin.y,
+        profile_id,
+        note: profile_note,
     }
+}
+
+/// The active Profile's Capture Zones as adjust rects for `monitor`
+/// (ticket 40), or `None` when no Profile is active — then the global
+/// zones apply, unchanged. The Profile comes from `state.active_profile` —
+/// the same determination the profile watcher made, NOT a fresh foreground
+/// query: with Adjust Mode on, clicking a zone rect can hand the OS
+/// foreground to the overlay itself (a Langception window, never a
+/// translation source per ADR-0003), and a fresh query would drop the
+/// Profile mid-interaction. The window rect is then looked up by the
+/// Profile's executable exactly like zone drawing (`app_window_rect`), so
+/// the rects — clamped through the very same `zone_in_window` the loop
+/// captures with — are what the loop watches. `Err` when that app has no
+/// visible window right now (closed/minimized): adjusting cannot proceed
+/// and the message rides the payload to the page, like the picker's.
+fn profile_adjust_zones(
+    app: &AppHandle,
+    monitor: &Monitor,
+) -> Result<Option<(String, Vec<AdjustZone>)>, String> {
+    let Some(profile_id) = app
+        .state::<AppState>()
+        .active_profile
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+    else {
+        return Ok(None);
+    };
+    let config = current_config(app)?;
+    let Some(profile) = config.profiles.iter().find(|p| p.id == profile_id) else {
+        // The watcher clears a deleted profile from active_profile on its
+        // next tick (≤250ms); until then the global zones show.
+        return Ok(None);
+    };
+    let Some(window) = crate::foreground::app_window_rect(&profile.exe) else {
+        return Err(format!(
+            "\"{0}\" has no visible window right now — start the app (not minimized), then adjust its zones",
+            profile.exe
+        ));
+    };
+    let origin = monitor.position();
+    let size = monitor.size();
+    let rects = profile
+        .zones
+        .iter()
+        .filter_map(|zone| {
+            // Same clamp capture uses: a zone hanging out of the (maybe
+            // shrunken) window shows only its inside part, a zone with
+            // nothing left does not show — what the user drags is what the
+            // loop captures. A zone-less Profile's synthetic whole-window
+            // zone is NOT adjustable (there is no stored region a drop
+            // could persist into, and creating zones is the picker's job),
+            // so it never appears here.
+            zone_in_window(window, zone.region)
+                .filter(|region| {
+                    let center_x = region.x + region.width as i32 / 2;
+                    let center_y = region.y + region.height as i32 / 2;
+                    center_x >= origin.x
+                        && center_x < origin.x + size.width as i32
+                        && center_y >= origin.y
+                        && center_y < origin.y + size.height as i32
+                })
+                .map(|region| AdjustZone {
+                    id: zone.id.clone(),
+                    name: zone.name.clone(),
+                    x: region.x - origin.x,
+                    y: region.y - origin.y,
+                    width: region.width,
+                    height: region.height,
+                })
+        })
+        .collect();
+    Ok(Some((profile_id, rects)))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1907,6 +2003,20 @@ struct AdjustPayload {
     /// global coordinates back (exclusion rects, adjusted zone regions).
     origin_x: i32,
     origin_y: i32,
+    /// Ticket 40: the active Profile's id while ITS zones are the adjust
+    /// rects. The page routes a drop of any rect in this payload to
+    /// update_profile_zone_region with it — an explicit flag rather than
+    /// sniffing id shapes (`pz<nanos>` profile ids vs `z<nanos>` global
+    /// ids never collide today, but the flag survives either scheme
+    /// changing).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    profile_id: Option<String>,
+    /// Ticket 40: set when a Profile is active but its zones cannot be
+    /// adjusted right now (its app's window is gone) — the page shows this
+    /// message instead of the standard note, the way zone drawing reports
+    /// a missing window.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1958,6 +2068,8 @@ fn set_adjust_mode(app: &AppHandle, active: bool) {
                     zones: Vec::new(),
                     origin_x: 0,
                     origin_y: 0,
+                    profile_id: None,
+                    note: None,
                 },
             );
             let _ = window.set_ignore_cursor_events(true);
@@ -2628,22 +2740,11 @@ fn commit_picked_region(
 /// Converts a drawn screen region into window-relative physical px for
 /// storing in a Profile: relative to the app window's top-left, clamped
 /// inside it. Errors when the rectangle does not intersect the window.
+/// Ticket 40: the clamp itself lives in core (unit-tested there) — drawing
+/// and Adjust Mode drops must store the same window-relative shape.
 fn region_in_window(window: Region, region: Region) -> Result<Region, String> {
-    let left = region.x.max(window.x);
-    let top = region.y.max(window.y);
-    let right = (region.x + region.width as i32).min(window.x + window.width as i32);
-    let bottom = (region.y + region.height as i32).min(window.y + window.height as i32);
-    let width = right - left;
-    let height = bottom - top;
-    if width <= 0 || height <= 0 {
-        return Err("the drawn rectangle is entirely outside the app's window".into());
-    }
-    Ok(Region {
-        x: left - window.x,
-        y: top - window.y,
-        width: width as u32,
-        height: height as u32,
-    })
+    clamp_region_to_window(window, region)
+        .ok_or_else(|| "the drawn rectangle is entirely outside the app's window".into())
 }
 
 /// The next free "Zone N" name within one Profile (existing names win).
@@ -2817,6 +2918,74 @@ async fn update_zone_region(
         })?;
         push_active_target(app)?;
         // Repositions/re-creates the overlay windows while adjusting.
+        refresh_adjust_overlays(app);
+        apply_state(app);
+        Ok(())
+    })
+    .await
+}
+
+/// Ticket 40: a Profile Capture Zone rect dropped in Adjust Mode — global
+/// physical px from the overlay page, like the global drop, but persisted
+/// back into the Profile window-relative (profile zones follow the app's
+/// window; global zones pin to the screen). The page routes here on the
+/// payload's `profileId` (see adjust_payload_for) — the global command
+/// stays untouched.
+#[tauri::command]
+async fn update_profile_zone_region(
+    app: AppHandle,
+    profile_id: String,
+    id: String,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    if width == 0 || height == 0 {
+        return Err("Zone width and height must be greater than zero".into());
+    }
+    run_off_main(app, move |app| {
+        // The window rect must be derived NOW, not reused from the payload:
+        // the app's window may have moved or resized since Adjust Mode was
+        // entered, and the page's global coordinates still resolve against
+        // the CURRENT rect — the same re-derive-then-clamp semantics zone
+        // drawing applies to every drag.
+        let profile_exe = {
+            let config = current_config(app)?;
+            config
+                .profiles
+                .iter()
+                .find(|p| p.id == profile_id)
+                .map(|p| p.exe.clone())
+        }
+        .ok_or_else(|| "profile not found (was it deleted elsewhere?)".to_string())?;
+        let window = crate::foreground::app_window_rect(&profile_exe).ok_or_else(|| {
+            format!(
+                "\"{profile_exe}\" has no visible window right now — start the app (not minimized), then adjust its zones"
+            )
+        })?;
+        // Clamp inside the window and store window-relative — the same
+        // shape (and same core helper) zone drawing stores, so an adjusted
+        // zone follows the window exactly like a drawn one. A drop hanging
+        // past the window keeps only its inside part; one entirely outside
+        // is an error and the overlay visual reverts.
+        let rel = clamp_region_to_window(window, Region { x, y, width, height }).ok_or_else(
+            || String::from("the adjusted rectangle is entirely outside the app's window"),
+        )?;
+        crate::settings::with_profile_mut(app, &profile_id, |profile| {
+            let zone = profile
+                .zones
+                .iter_mut()
+                .find(|z| z.id == id)
+                .ok_or_else(|| "zone not found (was it deleted elsewhere?)".to_string())?;
+            zone.region = rel;
+            Ok(())
+        })?;
+        // Mirrors update_zone_region's post-save sequence exactly: the loop
+        // re-scopes on its next tick through the same channel (per-zone
+        // tracking survives — profile_edited's restart would reset it), the
+        // adjust overlays re-render their rects, the status follows.
+        push_active_target(app)?;
         refresh_adjust_overlays(app);
         apply_state(app);
         Ok(())

@@ -4,8 +4,9 @@
 // (zone id, orchestrator block key) and their divs are reused in place, so
 // updates never flicker. "overlay-remove"/"overlay-clear" drop stale blocks,
 // "overlay-style" restyles everything live. "overlay-adjust" toggles Adjust
-// Mode: click-through off, Capture Zone rectangles draggable/resizable, and
-// (full-screen mode) pills clickable to mark Excluded Blocks. No build step.
+// Mode: click-through off, Capture Zone rectangles draggable/resizable (a
+// Profile's own zones while one is active — ticket 40), and (full-screen
+// mode) pills clickable to mark Excluded Blocks. No build step.
 
 const { invoke } = window.__TAURI__.core;
 // Targeted listeners, NOT window.__TAURI__.event.listen: the plain event API
@@ -62,6 +63,10 @@ const adjust = {
   originX: 0, // this monitor's global physical origin
   originY: 0,
   rects: new Map(), // zone id → { x, y, w, h, name }
+  // Ticket 40: the active Profile's id while its Capture Zones are the
+  // adjust rects — drops route to update_profile_zone_region (persisted
+  // window-relative) instead of the global update_zone_region.
+  profileId: null,
 };
 
 // ---- Translation pills ----
@@ -462,7 +467,15 @@ document.addEventListener("mouseup", async (e) => {
   };
   showAdjustNote("Saving…", false);
   try {
-    await invoke("update_zone_region", { id, ...global });
+    // Ticket 40: the payload's rects are a Profile's when `profileId` is
+    // set — the shell converts global px back to window-relative and
+    // clamps inside the app's current window; anything else (failure or
+    // no rects shown) stays on the global path.
+    if (adjust.profileId != null) {
+      await invoke("update_profile_zone_region", { profileId: adjust.profileId, id, ...global });
+    } else {
+      await invoke("update_zone_region", { id, ...global });
+    }
     // The refreshed payload re-syncs the rect; nothing else to do here.
   } catch (err) {
     // Revert to the shell's view of the zone on failure.
@@ -479,6 +492,7 @@ function applyAdjustPayload(payload) {
   adjust.fullscreen = payload.fullscreen;
   adjust.originX = payload.originX;
   adjust.originY = payload.originY;
+  adjust.profileId = payload.profileId || null;
   document.body.classList.toggle("adjust", payload.active);
 
   if (payload.active) {
@@ -496,12 +510,18 @@ function applyAdjustPayload(payload) {
     );
     ensureAdjustLayer();
     renderZoneRects();
-    showAdjustNote(
-      payload.fullscreen
+    // Ticket 40: a profile app with no visible window cannot offer its
+    // zones — the payload carries the same message zone drawing shows.
+    // Otherwise the note names what the rects are: profile zones while a
+    // Profile is active, the global zones otherwise.
+    const note = payload.note
+      ? payload.note
+      : payload.fullscreen
         ? "Adjust Mode — click a block to exclude it (it will not be translated again) · Alt+A to exit"
-        : "Adjust Mode — drag zones to move, handles to resize · Alt+A to exit",
-      false,
-    );
+        : adjust.profileId != null
+          ? "Adjust Mode — drag profile zones to move, handles to resize · Alt+A to exit"
+          : "Adjust Mode — drag zones to move, handles to resize · Alt+A to exit";
+    showAdjustNote(note, Boolean(payload.note));
   } else {
     adjust.rects = new Map();
     if (adjustLayer) {

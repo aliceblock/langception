@@ -785,7 +785,9 @@ pub struct ProfileDto {
 /// Runs one edit against one stored Profile. Keeps id/glossary/zones
 /// unless the edit says otherwise; the serialized config must still parse
 /// and validate (with_config_mut's rule), so a rejected edit lands nowhere.
-fn with_profile_mut<T>(
+/// Ticket 40: also the shell's Adjust Mode drop path (adjusting a Profile
+/// zone persists through here, so saving stays single-shaped).
+pub(crate) fn with_profile_mut<T>(
     app: &AppHandle,
     profile_id: &str,
     edit: impl FnOnce(&mut Profile) -> Result<T, String>,
