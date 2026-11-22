@@ -148,7 +148,6 @@
           </label>
         </div>
         <div class="row">
-          <button id="general-save" class="btn primary">Save</button>
           <span class="hint">
             Language, cadence, stability and Genderless Mode apply when
             translation (re)starts — a running loop restarts automatically.
@@ -349,7 +348,6 @@
           <span class="hint">Used only when Screen reading above is “Vision model” (one fused call reads and translates every block).</span>
         </div>
         <div class="row">
-          <button id="engines-save" class="btn primary">Save engines</button>
           <button id="engines-test" class="btn small">Test default engine</button>
           <span id="engines-note" class="hint"></span>
         </div>
@@ -459,7 +457,6 @@
             </label>
           </div>
           <div class="row">
-            <button id="profile-save" class="btn primary">Save profile</button>
             <span class="hint">
               Saved values apply when translation (re)starts. The app is
               matched case-insensitively by executable name; while it owns
@@ -621,9 +618,6 @@
             <input id="hotkey-one-shot" type="text" spellcheck="false" />
           </label>
         </div>
-        <div class="row">
-          <button id="hotkeys-save" class="btn primary">Save hotkeys</button>
-        </div>
       </section>
 
       <section id="tab-about" class="page">
@@ -649,6 +643,15 @@
         </p>
       </section>
     </main>
+
+    <!-- Ticket 39: one Save for every explicit-save tab (General, Engines,
+         Profiles, Hotkeys), shown only while some tracked field differs from
+         its saved snapshot — regardless of which tab is open. Sits at the
+         window bottom so it stays reachable from any tab; ticket 41 restyles
+         this footer. -->
+    <footer id="save-footer" class="save-footer hidden">
+      <button id="save-all" class="btn primary">Save changes</button>
+    </footer>
 
     <div id="toast" class="toast hidden"></div>
     <script src="titlebar.js"></script>

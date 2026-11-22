@@ -4,10 +4,13 @@
 // configuration, ticket 07), Text Style, Hotkeys (rebinds apply live),
 // About. Doubles as the first-run wizard host: when status.firstRun the
 // wizard view shows before the tabs and is skippable. No build step.
+// Ticket 39: the per-tab Save buttons are gone — one sticky bottom-right
+// Save footer shows only while some explicit-save field is dirty, and
+// closing the window warns before discarding unsaved edits.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
-const { open: openFileDialog, save: saveFileDialog } = window.__TAURI__.dialog;
+const { open: openFileDialog, save: saveFileDialog, ask: askDialog } = window.__TAURI__.dialog;
 
 // Tabs + pages ---------------------------------------------------------------
 
@@ -228,6 +231,10 @@ async function loadEngines() {
     // re-running the wizard.
     wizardAzureKey.value = savedEngines.azure.key;
     wizardAzureRegion.value = savedEngines.azure.region;
+    // Ticket 39: these just-loaded values are the engines baseline (the tab
+    // loads lazily, so the boot snapshot only covered the empty controls).
+    snapshotFields(TRACKED_ENGINES);
+    updateSaveFooter();
   } catch (e) {
     toast(String(e), "error");
   }
@@ -267,14 +274,19 @@ function collectEngines(defaultEngine) {
   };
 }
 
-document.getElementById("engines-save").addEventListener("click", async () => {
+// Ticket 39: the per-tab button's handler, extracted so the sticky footer's
+// Save-all can call it — same validation, same toasts; the boolean just
+// tells the footer whether the save went through.
+async function saveEngines() {
   try {
     await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
     toast("Engines saved");
+    return true;
   } catch (e) {
     toast(String(e), "error");
+    return false;
   }
-});
+}
 
 // "Reset to default" (ticket 37): clear the field AND save right away —
 // empty means the built-in prompt applies again, so the reset is complete
@@ -288,6 +300,10 @@ async function resetPromptToDefault(field, button) {
   try {
     field.value = "";
     await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
+    // Ticket 39: this saved the whole engines form as displayed, so the
+    // engines baseline moves with it.
+    snapshotFields(TRACKED_ENGINES);
+    updateSaveFooter();
     toast(hadContent ? "Prompt reset — the built-in default applies again" : "Already using the built-in default");
   } catch (e) {
     field.value = previous;
@@ -419,7 +435,10 @@ function loadGeneral(status) {
   generalSettingsOnTop.checked = Boolean(status.settingsOnTop);
 }
 
-document.getElementById("general-save").addEventListener("click", async () => {
+// Ticket 39: the per-tab button's handler, extracted so the sticky footer's
+// Save-all can call it — same validation, same toasts; the boolean just
+// tells the footer whether the save went through.
+async function saveGeneral() {
   const cadence = Math.round(Number(generalCadence.value) || 500);
   const stability = Math.round(Number(generalStability.value) || 0);
   try {
@@ -434,10 +453,12 @@ document.getElementById("general-save").addEventListener("click", async () => {
       },
     });
     toast("General settings saved");
+    return true;
   } catch (e) {
     toast(String(e), "error");
+    return false;
   }
-});
+}
 
 generalAutostart.addEventListener("change", async () => {
   const wanted = generalAutostart.checked;
@@ -643,6 +664,12 @@ async function loadRunningApps(force = false) {
 }
 
 function renderExeOptions() {
+  // Ticket 39: this redraw can move the app select programmatically (the
+  // saved app may not be running, so the first running app is shown — what
+  // is displayed is what Save would store). Re-baseline the select only if
+  // the user had not moved it away from the snapshot; a user-chosen exe
+  // stays dirty across the redraw.
+  const before = profileExe.value;
   const chosen = profileExe.dataset.chosen || "";
   profileExe.replaceChildren();
   if (runningApps.length === 0) {
@@ -650,16 +677,19 @@ function renderExeOptions() {
     option.value = chosen;
     option.textContent = chosen || "no running apps — start the app, then ↻";
     profileExe.append(option);
-    return;
+  } else {
+    for (const app of runningApps) {
+      const option = document.createElement("option");
+      option.value = app.exe;
+      option.textContent = app.title ? `${app.title} — ${app.exe}` : app.exe;
+      profileExe.append(option);
+    }
+    const match = runningApps.find((a) => a.exe.toLowerCase() === chosen.toLowerCase());
+    profileExe.value = match ? match.exe : runningApps[0].exe;
   }
-  for (const app of runningApps) {
-    const option = document.createElement("option");
-    option.value = app.exe;
-    option.textContent = app.title ? `${app.title} — ${app.exe}` : app.exe;
-    profileExe.append(option);
+  if (savedSnapshot.get(profileExe) === before) {
+    savedSnapshot.set(profileExe, profileExe.value);
   }
-  const match = runningApps.find((a) => a.exe.toLowerCase() === chosen.toLowerCase());
-  profileExe.value = match ? match.exe : runningApps[0].exe;
 }
 
 function renderProfiles(status) {
@@ -705,7 +735,13 @@ function renderProfiles(status) {
   // Editor inputs only refill when the selection changes (or on explicit
   // save/create) — a status event must never clobber in-progress edits.
   if (selected && populatedProfileId !== selected.id) populateEditor(selected);
-  if (!selected) populatedProfileId = null;
+  if (!selected) {
+    populatedProfileId = null;
+    // Ticket 39: with no profile selected the editor is hidden and its
+    // inputs are stale — re-baseline so leftover values never trip the
+    // footer for a form nobody can save.
+    snapshotFields(TRACKED_PROFILE);
+  }
 }
 
 function populateEditor(profile) {
@@ -716,6 +752,11 @@ function populateEditor(profile) {
   profileLanguage.value = profile.language;
   profileEngine.value = profile.engine || "";
   profileGenderless.value = profile.genderless || "inherit";
+  // Ticket 39: the freshly filled editor is the dirty baseline for this
+  // profile — switching selection discards the previous edits (as it always
+  // did), and the footer must follow.
+  snapshotFields(TRACKED_PROFILE);
+  updateSaveFooter();
 }
 
 profileSelect.addEventListener("change", async () => {
@@ -805,8 +846,11 @@ function disarmDelete() {
 
 document.getElementById("profile-exe-refresh").addEventListener("click", () => loadRunningApps(true));
 
-document.getElementById("profile-save").addEventListener("click", async () => {
-  if (!selectedProfileId) return;
+// Ticket 39: the per-tab button's handler, extracted so the sticky footer's
+// Save-all can call it — same validation, same toasts; the boolean just
+// tells the footer whether the save went through.
+async function saveProfile() {
+  if (!selectedProfileId) return false;
   try {
     await invoke("update_profile", {
       id: selectedProfileId,
@@ -821,10 +865,12 @@ document.getElementById("profile-save").addEventListener("click", async () => {
     toast("Profile saved");
     renderProfiles(await invoke("get_status"));
     await renderProfileGlossary();
+    return true;
   } catch (e) {
     toast(String(e), "error");
+    return false;
   }
-});
+}
 
 // Profile glossary layer — the global glossary's row UI, scoped to the
 // selected profile and the profile-scoped commands.
@@ -1146,6 +1192,11 @@ function scheduleStyleSave() {
   styleSaveTimer = setTimeout(async () => {
     try {
       await invoke("set_text_style", { style: collectStyle() });
+      // Ticket 39: Text Style persists immediately (no Save button), so the
+      // tracker mirrors that — its baseline moves after every debounced save
+      // and these fields practically never show the footer.
+      snapshotFields(TRACKED_STYLE);
+      updateSaveFooter();
     } catch (e) {
       toast(String(e), "error");
     }
@@ -1220,7 +1271,10 @@ function loadHotkeys(hotkeys) {
   hotkeyInputs.oneShot.value = hotkeys.oneShot;
 }
 
-document.getElementById("hotkeys-save").addEventListener("click", async () => {
+// Ticket 39: the per-tab button's handler, extracted so the sticky footer's
+// Save-all can call it — same validation, same toasts; the boolean just
+// tells the footer whether the save went through.
+async function saveHotkeys() {
   try {
     await invoke("set_hotkeys", {
       hotkeys: {
@@ -1232,10 +1286,165 @@ document.getElementById("hotkeys-save").addEventListener("click", async () => {
       },
     });
     toast("Hotkeys saved and re-registered");
+    return true;
   } catch (e) {
     toast(String(e), "error");
+    return false;
   }
-});
+}
+
+// Sticky Save footer + dirty tracking (ticket 39) -----------------------------
+// One Save for every explicit-save area, pinned bottom-right and visible only
+// while some tracked field on ANY tab differs from its last loaded/saved
+// snapshot. Tracked: exactly the fields the four area saves read — Text Style
+// is tracked too but re-baselines after every debounced auto-save, so it
+// practically never trips the footer. Not tracked: the immediate-persistence
+// flows (glossary rows, zone lists, profile create/delete, Start-with-Windows),
+// the wizard's own fields, and the About tab (nothing savable).
+
+const saveFooter = document.getElementById("save-footer");
+const TRACKED_GENERAL = [
+  generalLanguage,
+  generalCadence,
+  generalStability,
+  generalGenderless,
+  generalResultsOnTop,
+  generalSettingsOnTop,
+];
+const TRACKED_ENGINES = [
+  enginesDefault,
+  enginesReading,
+  enginesAzureKey,
+  enginesAzureRegion,
+  enginesDeeplKey,
+  enginesOpenAiBaseUrl,
+  enginesOpenAiKey,
+  enginesOpenAiModel,
+  enginesOpenAiTemperature,
+  enginesLmStudioBaseUrl,
+  enginesLmStudioModel,
+  enginesLmStudioTemperature,
+  enginesGeminiKey,
+  enginesGeminiModel,
+  enginesGeminiTemperature,
+  enginesPromptTranslation,
+  enginesPromptScreenReading,
+];
+const TRACKED_PROFILE = [profileName, profileExe, profileLanguage, profileEngine, profileGenderless];
+const TRACKED_HOTKEYS = [
+  hotkeyInputs.toggle,
+  hotkeyInputs.newZone,
+  hotkeyInputs.pause,
+  hotkeyInputs.adjust,
+  hotkeyInputs.oneShot,
+];
+const TRACKED_STYLE = [
+  styleFont,
+  styleSize,
+  styleAutoColors,
+  styleColor,
+  styleOutlineWidth,
+  styleOutlineColor,
+  styleBackground,
+  styleOpacity,
+  styleCoverSource,
+  styleTextAlignment,
+  stylePlacement,
+];
+
+// Ticket 39: element → field value at last load/save; selects snapshot by
+// value (including the LM Studio "saved, not currently served" option).
+const savedSnapshot = new Map();
+
+function fieldValue(el) {
+  return el.type === "checkbox" ? String(el.checked) : el.value;
+}
+
+function snapshotFields(fields) {
+  for (const el of fields) savedSnapshot.set(el, fieldValue(el));
+}
+
+function fieldsDirty(fields) {
+  return fields.some((el) => savedSnapshot.get(el) !== fieldValue(el));
+}
+
+function anyDirty() {
+  return (
+    fieldsDirty(TRACKED_GENERAL) ||
+    fieldsDirty(TRACKED_ENGINES) ||
+    fieldsDirty(TRACKED_PROFILE) ||
+    fieldsDirty(TRACKED_HOTKEYS) ||
+    fieldsDirty(TRACKED_STYLE)
+  );
+}
+
+function updateSaveFooter() {
+  saveFooter.classList.toggle("hidden", !anyDirty());
+}
+
+// Ticket 39: any edit anywhere flips the footer — the dirty state is
+// tab-independent (edit Engines, wander to Hotkeys, the footer stays).
+for (const el of [
+  ...TRACKED_GENERAL,
+  ...TRACKED_ENGINES,
+  ...TRACKED_PROFILE,
+  ...TRACKED_HOTKEYS,
+  ...TRACKED_STYLE,
+]) {
+  el.addEventListener("input", updateSaveFooter);
+  el.addEventListener("change", updateSaveFooter);
+}
+
+// One press commits every area whose fields drifted from their snapshot,
+// reusing the per-area saves verbatim (validation included). Areas that
+// already match are skipped, so a retry after a failed area does not re-save
+// — and re-toast success for — the ones that went through; saved areas stay
+// saved and a failed area keeps its edits (the footer remains until
+// everything is clean again).
+async function saveAll() {
+  for (const [fields, save] of [
+    [TRACKED_ENGINES, saveEngines],
+    [TRACKED_GENERAL, saveGeneral],
+    [TRACKED_PROFILE, saveProfile],
+    [TRACKED_HOTKEYS, saveHotkeys],
+  ]) {
+    if (!fieldsDirty(fields)) continue;
+    if (await save()) snapshotFields(fields);
+  }
+  updateSaveFooter();
+}
+document.getElementById("save-all").addEventListener("click", saveAll);
+
+// Ticket 39: the close handshake's page side. CloseRequested (titlebar ✕,
+// Alt+F4) no longer hides this window directly — it pings the page, and the
+// page decides: a clean page hides immediately, a dirty page asks first and
+// hides only on confirm. The window only hides either way, so edits survive
+// a cancelled dismiss and a reopen keeps them. Registered top-level (not in
+// the boot handler) so the ping is never missed while get_status is still in
+// flight; the flag keeps a second ✕ from stacking dialogs.
+let closeAskOpen = false;
+async function handleSettingsCloseRequest() {
+  if (closeAskOpen) return;
+  if (!anyDirty()) {
+    invoke("hide_settings").catch((e) => toast(String(e), "error"));
+    return;
+  }
+  closeAskOpen = true;
+  try {
+    const discard = await askDialog("Discard unsaved changes?", {
+      title: "Langception — Settings",
+      kind: "warning",
+    });
+    if (discard) invoke("hide_settings").catch((e) => toast(String(e), "error"));
+  } catch (e) {
+    // A failed dialog must not strand the window silently — surface it and
+    // let the user try again (the window simply stays open, edits intact).
+    toast(String(e), "error");
+  } finally {
+    closeAskOpen = false;
+  }
+}
+listen("settings-request-close", handleSettingsCloseRequest);
 
 // About ----------------------------------------------------------------------
 
@@ -1281,6 +1490,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderProfiles(status);
   loadAbout();
   updateChips(status);
+
+  // Ticket 39: the page just loaded, so everything shown is the saved state
+  // — baseline the tracker from it. Engines re-baselines when its lazy load
+  // fills the fields, Profiles inside populateEditor/renderProfiles.
+  snapshotFields(TRACKED_GENERAL);
+  snapshotFields(TRACKED_STYLE);
+  snapshotFields(TRACKED_HOTKEYS);
+  snapshotFields(TRACKED_ENGINES);
+  updateSaveFooter();
 
   if (status.firstRun) {
     showWizard();

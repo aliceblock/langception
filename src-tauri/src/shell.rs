@@ -423,6 +423,7 @@ pub fn run() {
             get_text_style,
             set_text_style,
             crate::settings::open_settings_window,
+            crate::settings::hide_settings,
             crate::settings::get_ocr_pack_status,
             crate::settings::open_language_pack_settings,
             crate::settings::get_about,
@@ -483,7 +484,17 @@ pub fn run() {
                     let app = window.app_handle().clone();
                     spawn_off_main(&app, move |app| {
                         if let Some(window) = app.get_webview_window(&label) {
-                            let _ = window.hide();
+                            // Ticket 39: the settings page owns the dirty
+                            // state, so hiding it is a handshake — the close
+                            // request pings the page, and the page hides the
+                            // window via hide_settings once the user chose to
+                            // dismiss (a dirty page warns first). The results
+                            // window has nothing unsaved and hides directly.
+                            if label == crate::settings::SETTINGS_LABEL {
+                                let _ = app.emit_to(&label, "settings-request-close", ());
+                            } else {
+                                let _ = window.hide();
+                            }
                         }
                         Ok(())
                     });

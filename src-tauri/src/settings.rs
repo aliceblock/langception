@@ -88,6 +88,24 @@ pub(crate) async fn open_settings_window(app: AppHandle) -> Result<(), String> {
     run_off_main(app, open_settings).await
 }
 
+/// Ticket 39: the settings window's end of the close handshake. CloseRequested
+/// prevents the close and pings the page (`settings-request-close`); the page
+/// owns the dirty state, so it warns about unsaved edits first and calls this
+/// to do the actual hide once the user chose to dismiss. Threading: MUST NOT
+/// run on the main thread (window manipulation — see `run_off_main`).
+#[tauri::command]
+pub(crate) async fn hide_settings(app: AppHandle) -> Result<(), String> {
+    run_off_main(app, |app| {
+        if let Some(window) = app.get_webview_window(SETTINGS_LABEL) {
+            window
+                .hide()
+                .map_err(|e| format!("cannot hide the settings window: {e}"))?;
+        }
+        Ok(())
+    })
+    .await
+}
+
 /// The Engines tab / wizard re-probe. WinRT pack enumeration blocks and
 /// needs COM, so it runs on the blocking pool (never the main thread).
 #[tauri::command]
