@@ -944,6 +944,7 @@ document.getElementById("profile-zone-draw").addEventListener("click", async () 
 
 const styleFont = document.getElementById("style-font");
 const styleSize = document.getElementById("style-size");
+const styleAutoColors = document.getElementById("style-auto-colors");
 const styleColor = document.getElementById("style-color");
 const styleOutlineWidth = document.getElementById("style-outline-width");
 const styleOutlineColor = document.getElementById("style-outline-color");
@@ -967,6 +968,8 @@ function loadStyleInputs(style) {
   styleLoaded = true;
   styleFont.value = style.fontFamily;
   styleSize.value = style.fontSize;
+  styleAutoColors.checked = Boolean(style.autoColors);
+  styleColor.disabled = styleAutoColors.checked;
   styleColor.value = normalizeHex(style.color, "#ffffff");
   styleOutlineWidth.value = style.outlineWidth;
   styleOutlineColor.value = normalizeHex(style.outlineColor, "#000000");
@@ -978,6 +981,7 @@ function collectStyle() {
   return {
     fontFamily: styleFont.value.trim() || "Noto Sans Thai",
     fontSize: Number(styleSize.value) || 16,
+    autoColors: styleAutoColors.checked,
     color: normalizeHex(styleColor.value, "#ffffff"),
     outlineWidth: Number(styleOutlineWidth.value) || 0,
     outlineColor: normalizeHex(styleOutlineColor.value, "#000000"),
@@ -999,10 +1003,16 @@ function scheduleStyleSave() {
   }, 250);
 }
 
-for (const control of [styleFont, styleSize, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity]) {
+for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity]) {
   control.addEventListener("input", scheduleStyleSave);
   control.addEventListener("change", scheduleStyleSave);
 }
+
+// Auto Colors overrides the manual text color per block; grey the picker
+// out while it is on so the panel reads truthfully about what applies.
+styleAutoColors.addEventListener("change", () => {
+  styleColor.disabled = styleAutoColors.checked;
+});
 
 // Font selector (ticket 15): the dropdown lists the fonts actually installed
 // on this PC (DirectWrite), while the field stays typeable so a hand-edited

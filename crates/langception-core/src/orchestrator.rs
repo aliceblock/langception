@@ -34,9 +34,10 @@
 use crate::glossary::Glossary;
 use crate::hash::{block_dhash, frame_checksum};
 use crate::ports::{
-    CaptureSource, Clock, ExcludedBlock, FusedEngine, OcrEngine, Region, SourceLanguage, TextBlock,
-    TranslateEngine, Zone,
+    CaptureSource, CapturedImage, Clock, ExcludedBlock, FusedEngine, OcrEngine, Region,
+    SourceLanguage, TextBlock, TranslateEngine, Zone,
 };
+use crate::sample::{sample_block_style, SampledStyle};
 use async_trait::async_trait;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -89,6 +90,11 @@ pub enum LoopEvent {
         via: Via,
         at_ms: u64,
         origin: EventOrigin,
+        /// Auto Colors (ticket 14): the block's text and pill colors
+        /// sampled from the frame it fired on. `Some` only when
+        /// [`LoopConfig::auto_colors`] is on AND sampling succeeded;
+        /// `None` means the overlay falls back to the manual Text Style.
+        style: Option<SampledStyle>,
     },
     /// Text Blocks that vanished from a region's latest pass: the overlay
     /// clears their translations (stale text must not linger on screen
@@ -123,6 +129,11 @@ pub struct LoopConfig {
     /// changes. Glossary output is the user's own pinned Thai and is
     /// never scrubbed.
     pub genderless: bool,
+    /// Auto Colors (ticket 14): sample each fired block's text and pill
+    /// colors from the captured frame and attach them to its `Translated`
+    /// event. Read at loop start like `genderless` — the shell restarts
+    /// the loop when the Text Style toggle changes.
+    pub auto_colors: bool,
 }
 
 /// A Text Block is identified by its on-screen position, quantized so
@@ -144,6 +155,17 @@ fn block_key(block: &TextBlock) -> (i32, i32) {
 fn block_key_string(block: &TextBlock) -> String {
     let (gx, gy) = block_key(block);
     format!("{gx},{gy}")
+}
+
+/// The block's bounding box as a region — the one place a `TextBlock`
+/// rect becomes the `Region` the pixel-working helpers take.
+fn block_region(block: &TextBlock) -> Region {
+    Region {
+        x: block.x,
+        y: block.y,
+        width: block.width,
+        height: block.height,
+    }
 }
 
 /// The block's bounding box snapped to the block grid, so an OCR box that
@@ -366,8 +388,14 @@ impl Orchestrator {
                 {
                     continue;
                 }
-                self.emit_fused_block(region, &fused.block, &fused.translation, &origin)
-                    .await;
+                self.emit_fused_block(
+                    region,
+                    &fused.block,
+                    &fused.translation,
+                    &origin,
+                    self.sampled_style(&image, &fused.block),
+                )
+                .await;
             }
             return;
         }
@@ -391,8 +419,15 @@ impl Orchestrator {
             if exclusions.iter().any(|e| e.covers(&screen_block)) {
                 continue;
             }
-            self.translate_and_emit(region, &block, &text, &origin, label)
-                .await;
+            self.translate_and_emit(
+                region,
+                &block,
+                &text,
+                &origin,
+                label,
+                self.sampled_style(&image, &block),
+            )
+            .await;
         }
     }
 
@@ -422,7 +457,7 @@ impl Orchestrator {
 
         let frame = frame_checksum(&image);
         if state.last_frame == Some(frame) {
-            self.fire_matured(&mut state, zone.region, &origin, &label)
+            self.fire_matured(&mut state, zone.region, &origin, &label, &image)
                 .await;
             self.advance_removals(&mut state, &origin);
             return state;
@@ -520,6 +555,7 @@ impl Orchestrator {
                         fused_translation.as_deref(),
                         &origin,
                         &label,
+                        &image,
                     )
                     .await;
                     entry.fired_hash = Some(hash);
@@ -551,6 +587,7 @@ impl Orchestrator {
                         fused_translation.as_deref(),
                         &origin,
                         &label,
+                        &image,
                     )
                     .await;
                     entry.fired_hash = Some(hash);
@@ -586,13 +623,15 @@ impl Orchestrator {
     /// tick whose capture matched the last OCR'd frame. Only pendings that
     /// frame actually saw can fire (misses == 0): a block it no longer
     /// shows is not on screen, whatever its pending says. The cached
-    /// rect/text are exactly what that frame read, so the fire is current.
+    /// rect/text are exactly what that frame read, so the fire is current —
+    /// and Auto Colors samples from that same frame.
     async fn fire_matured(
         &self,
         state: &mut ZoneState,
         region: Region,
         origin: &EventOrigin,
         label: &str,
+        image: &CapturedImage,
     ) {
         let now = self.clock.now_ms();
         let stable_ms = self.config.stability.as_millis() as u64;
@@ -622,6 +661,7 @@ impl Orchestrator {
                 pending.translation.as_deref(),
                 origin,
                 label,
+                image,
             )
             .await;
             entry.fired_hash = Some(pending.hash);
@@ -676,6 +716,16 @@ impl Orchestrator {
         }
     }
 
+    /// Auto Colors (ticket 14): the per-block style override for a fired
+    /// read, sampled from the very frame the block's pixels were checked
+    /// on. `None` unless Auto Colors is on and the sample succeeded.
+    fn sampled_style(&self, image: &CapturedImage, rect: &TextBlock) -> Option<SampledStyle> {
+        if !self.config.auto_colors {
+            return None;
+        }
+        sample_block_style(image, block_region(rect)).map(|block| SampledStyle::from_block(&block))
+    }
+
     /// Sends one resolved translation event — the shared tail of every
     /// display path (glossary short-circuit, engine translate, fused
     /// read). `rect` is region-relative; the event carries screen
@@ -687,6 +737,7 @@ impl Orchestrator {
         translation: String,
         via: Via,
         origin: &EventOrigin,
+        style: Option<SampledStyle>,
     ) {
         self.events
             .send(LoopEvent::Translated {
@@ -699,6 +750,7 @@ impl Orchestrator {
                 via,
                 at_ms: self.clock.now_ms(),
                 origin: origin.clone(),
+                style,
             })
             .ok();
     }
@@ -706,6 +758,7 @@ impl Orchestrator {
     /// Fires one read: a fused read displays the translation the model
     /// already answered (ticket 12); a classic OCR read asks the Translate
     /// Engine ([`Self::translate_and_emit`]).
+    #[allow(clippy::too_many_arguments)]
     async fn fire_read(
         &self,
         region: Region,
@@ -714,10 +767,15 @@ impl Orchestrator {
         fused_translation: Option<&str>,
         origin: &EventOrigin,
         label: &str,
+        image: &CapturedImage,
     ) {
+        let style = self.sampled_style(image, rect);
         match fused_translation {
-            Some(thai) => self.emit_fused_block(region, rect, thai, origin).await,
-            None => self.translate_and_emit(region, rect, text, origin, label).await,
+            Some(thai) => self.emit_fused_block(region, rect, thai, origin, style).await,
+            None => {
+                self.translate_and_emit(region, rect, text, origin, label, style)
+                    .await
+            }
         }
     }
 
@@ -732,6 +790,7 @@ impl Orchestrator {
         rect: &TextBlock,
         thai: &str,
         origin: &EventOrigin,
+        style: Option<SampledStyle>,
     ) {
         let (translation, via) = match self.glossary.lookup(&rect.text) {
             Some(pinned) => (pinned, Via::Glossary),
@@ -744,7 +803,7 @@ impl Orchestrator {
                 (thai, Via::Engine)
             }
         };
-        self.emit_translated(region, rect, translation, via, origin);
+        self.emit_translated(region, rect, translation, via, origin, style);
     }
 
     /// Glossary short-circuit, engine translate, and the resulting event
@@ -752,6 +811,7 @@ impl Orchestrator {
     /// carries screen coordinates. A failed translation still counts as
     /// handled (the caller records the change) so a dead engine is not
     /// hammered every tick — it is retried when the pixels change again.
+    #[allow(clippy::too_many_arguments)]
     async fn translate_and_emit(
         &self,
         region: Region,
@@ -759,6 +819,7 @@ impl Orchestrator {
         text: &str,
         origin: &EventOrigin,
         label: &str,
+        style: Option<SampledStyle>,
     ) {
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
@@ -802,7 +863,7 @@ impl Orchestrator {
         };
         match translated {
             Ok((translation, via)) => {
-                self.emit_translated(region, rect, translation, via, origin);
+                self.emit_translated(region, rect, translation, via, origin, style);
             }
             Err(message) => self.emit(Stage::Translate, format!("{label}: {message}")),
         }

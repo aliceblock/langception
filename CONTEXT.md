@@ -40,6 +40,10 @@ _Avoid_: on-screen translation, replace mode
 An always-on-top window listing detected text alongside its translation, for modes where the Overlay is off or unreadable.
 _Avoid_: separate window, side panel
 
+**Auto Colors**:
+A Text Style setting that samples each Text Block's text and pill colors from the captured pixels, so translations dress like the scene they cover. The manual colors stay as the fallback; font size, outline, and pill opacity keep applying.
+_Avoid_: auto style, adaptive colors, color picking
+
 **Adjust Mode**:
 A hotkey-toggled state in which Capture Zones and overlays become draggable/resizable instead of click-through.
 _Avoid_: edit mode, config mode

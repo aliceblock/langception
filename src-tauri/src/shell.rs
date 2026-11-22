@@ -197,6 +197,7 @@ pub struct TextStyleDto {
     pub outline_color: String,
     pub background: bool,
     pub background_opacity: f32,
+    pub auto_colors: bool,
 }
 
 impl From<&TextStyle> for TextStyleDto {
@@ -209,6 +210,7 @@ impl From<&TextStyle> for TextStyleDto {
             outline_color: style.outline_color.clone(),
             background: style.background,
             background_opacity: style.background_opacity,
+            auto_colors: style.auto_colors,
         }
     }
 }
@@ -223,6 +225,7 @@ impl From<TextStyleDto> for TextStyle {
             outline_color: dto.outline_color,
             background: dto.background,
             background_opacity: dto.background_opacity,
+            auto_colors: dto.auto_colors,
         }
     }
 }
@@ -1109,6 +1112,11 @@ fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeli
             cadence: Duration::from_millis(config.capture.cadence_ms as u64),
             stability: Duration::from_millis(config.capture.stability_ms as u64),
             genderless: target.genderless,
+            // Auto Colors (ticket 14): a Text Style toggle, read at loop
+            // start like the language — set_text_style restarts the loop
+            // when it flips so fired blocks start (or stop) carrying
+            // sampled colors.
+            auto_colors: config.text_style.auto_colors,
         },
         glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
@@ -1329,9 +1337,10 @@ fn spawn_forwarder(
                     block,
                     translation,
                     origin,
+                    style,
                     ..
                 } => {
-                    router.show_translation(&bridge_app, origin, key, block, translation);
+                    router.show_translation(&bridge_app, origin, key, block, translation, style.as_ref());
                 }
                 LoopEvent::BlocksRemoved { origin, keys, .. } => {
                     router.hide_blocks(&bridge_app, origin, keys);
@@ -2490,15 +2499,23 @@ fn get_text_style(app: AppHandle) -> TextStyleDto {
 /// The Results Window's Text Style panel persists a new style and pushes it
 /// to the overlays live. Pre-validated against core's rules so a rejected
 /// edit never lands in the in-memory config (same pattern as rename_zone).
+/// Auto Colors is loop-start config (the orchestrator samples at fire
+/// time), so flipping it restarts the loop — color/size/outline edits
+/// don't: they restyle live via the broadcast.
 #[tauri::command]
 fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
     let text_style = TextStyle::from(style);
     text_style.validate().map_err(|e| e.to_string())?;
+    let mut restart = false;
     with_config_mut(&app, |config| {
+        restart = config.text_style.auto_colors != text_style.auto_colors;
         config.text_style = text_style.clone();
         Ok(())
     })?;
     crate::overlay::broadcast_style(&app, &text_style);
+    if restart {
+        restart_loop_if_running(&app);
+    }
     apply_state(&app);
     Ok(())
 }

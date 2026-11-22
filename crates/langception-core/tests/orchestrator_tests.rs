@@ -42,6 +42,7 @@ fn config() -> LoopConfig {
         // debounce. The stability-window tests build their own config.
         stability: Duration::ZERO,
         genderless: false,
+        auto_colors: false,
     }
 }
 
@@ -422,6 +423,7 @@ async fn harness_inner(
     stability: Duration,
     genderless: bool,
     fused: bool,
+    auto_colors: bool,
 ) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
@@ -440,6 +442,7 @@ async fn harness_inner(
     let config = LoopConfig {
         stability,
         genderless,
+        auto_colors,
         ..config()
     };
     let orchestrator = Orchestrator::new(
@@ -481,7 +484,7 @@ async fn harness_with(
     stability: Duration,
     genderless: bool,
 ) -> (Harness, Orchestrator) {
-    harness_inner(glossary, stability, genderless, false).await
+    harness_inner(glossary, stability, genderless, false, false).await
 }
 
 /// The fused pipeline (ticket 12): reads are one vision-model call.
@@ -490,7 +493,12 @@ async fn harness_with_fused(
     stability: Duration,
     genderless: bool,
 ) -> (Harness, Orchestrator) {
-    harness_inner(glossary, stability, genderless, true).await
+    harness_inner(glossary, stability, genderless, true, false).await
+}
+
+/// Auto Colors (ticket 14): fired blocks carry sampled per-block colors.
+async fn harness_auto_colors() -> (Harness, Orchestrator) {
+    harness_inner(Glossary::default(), Duration::ZERO, false, false, true).await
 }
 
 async fn harness() -> (Harness, Orchestrator) {
@@ -2457,3 +2465,114 @@ async fn pipeline_tick_sends_the_image_to_the_http_fused_engine() {
     }
 }
 
+
+// ---- Auto Colors (ticket 14) ----
+
+/// Paints a solid-color rectangle (full RGB, unlike [`paint`]'s blue
+/// channel) — the fixture for color sampling.
+fn paint_rgb(image: &mut CapturedImage, x: i32, y: i32, w: u32, h: u32, rgb: (u8, u8, u8)) {
+    for dy in 0..h as i32 {
+        for dx in 0..w as i32 {
+            let index = (((y + dy) * REGION.width as i32 + (x + dx)) * 4) as usize;
+            image.bgra[index] = rgb.2; // BGRA layout
+            image.bgra[index + 1] = rgb.1;
+            image.bgra[index + 2] = rgb.0;
+        }
+    }
+}
+
+/// Black frame with two white text bars inside `block`'s box — the
+/// canonical sampleable block (white text on black, everywhere else black).
+fn white_bars_frame(block: &TextBlock) -> CapturedImage {
+    let mut image = black_image();
+    for row in [0, 8] {
+        paint_rgb(
+            &mut image,
+            block.x + 4,
+            block.y + row,
+            block.width - 8,
+            4,
+            (255, 255, 255),
+        );
+    }
+    image
+}
+
+#[tokio::test]
+async fn auto_colors_off_sends_no_style() {
+    let (mut h, mut orch) = harness().await;
+    feed_tick(&h, 1, vec![block(100, 200, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { style, .. } => {
+            assert_eq!(style, None, "no sampled colors without the toggle");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn auto_colors_attach_sampled_colors_to_the_fire() {
+    let (mut h, mut orch) = harness_auto_colors().await;
+    let hello = block(100, 200, "Hello");
+    let frame = white_bars_frame(&hello);
+    h.images.send(frame).await.unwrap();
+    h.ocr_results.send(Ok(vec![hello.clone()])).await.unwrap();
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { key, style, .. } => {
+            assert_eq!(key, "25,50", "region-relative grid key");
+            let style = style.expect("Auto Colors on + sampleable frame = colors");
+            assert_eq!(style.text_color, "#ffffff");
+            assert_eq!(style.pill_color, "#000000");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn auto_colors_sampling_failure_falls_back_to_none() {
+    let (mut h, mut orch) = harness_auto_colors().await;
+    // A monochrome frame (plain black — NOT frame_for, whose marker bars
+    // would give the block a real second color) has no distinct text
+    // color: sampling fails and the event carries no style, so the
+    // overlay keeps the manual colors.
+    let frame = black_image();
+    h.images.send(frame).await.unwrap();
+    h.ocr_results
+        .send(Ok(vec![block(100, 200, "Hello")]))
+        .await
+        .unwrap();
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { style, .. } => {
+            assert_eq!(style, None, "unsampleable block = manual style fallback");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn auto_colors_ride_fused_reads_too() {
+    let (mut h, mut orch) =
+        harness_inner(Glossary::default(), Duration::ZERO, false, true, true).await;
+    let hello = block(100, 200, "Hello");
+    let frame = white_bars_frame(&hello);
+    h.images.send(frame).await.unwrap();
+    h.fused_responses
+        .send(Ok(vec![FusedBlock {
+            block: hello.clone(),
+            translation: "[TH] Hello".into(),
+        }]))
+        .await
+        .unwrap();
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, style, .. } => {
+            assert_eq!(translation, "[TH] Hello");
+            let style = style.expect("fused fires carry sampled colors too");
+            assert_eq!(style.text_color, "#ffffff");
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}

@@ -67,6 +67,11 @@ pub struct TextStyle {
     pub outline_color: String,
     pub background: bool,
     pub background_opacity: f32,
+    /// Auto Colors (ticket 14): sample each Text Block's text and pill
+    /// colors from the captured pixels. The manual `color` above is the
+    /// fallback for blocks whose sampling fails; font size, outline, pill
+    /// on/off, and opacity keep applying as usual.
+    pub auto_colors: bool,
 }
 
 impl Default for TextStyle {
@@ -79,6 +84,7 @@ impl Default for TextStyle {
             outline_color: "#000000".to_string(),
             background: true,
             background_opacity: 0.6,
+            auto_colors: false,
         }
     }
 }
@@ -751,6 +757,10 @@ outline_color = "#000000"
 # Background pill behind each translation, with its opacity (0-1).
 background = true
 background_opacity = 0.6
+# Auto Colors: sample each block's text and pill colors from the captured
+# pixels, so translations dress like the scene they cover. `color` above is
+# the fallback for blocks whose sampling fails.
+auto_colors = false
 
 [hotkeys]
 # Global hotkeys, rebindable. Format: modifiers + key, e.g. "Alt+T",
@@ -883,7 +893,8 @@ language = "en"
             .replace("outline_width = 2.0", "outline_width = 0.0")
             .replace("outline_color = \"#000000\"", "outline_color = \"#123456\"")
             .replace("background = true", "background = false")
-            .replace("background_opacity = 0.6", "background_opacity = 0.25");
+            .replace("background_opacity = 0.6", "background_opacity = 0.25")
+            .replace("auto_colors = false", "auto_colors = true");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(
             config.text_style,
@@ -895,11 +906,26 @@ language = "en"
                 outline_color: "#123456".into(),
                 background: false,
                 background_opacity: 0.25,
+                auto_colors: true,
             }
         );
 
         let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn auto_colors_defaults_off_for_configs_written_before_it() {
+        // A pre-ticket-14 config has no `auto_colors` key; serde's
+        // container default must fill it in rather than reject the file.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("auto_colors"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert!(!config.text_style.auto_colors);
+        assert_eq!(config.text_style, TextStyle::default());
     }
 
     #[test]

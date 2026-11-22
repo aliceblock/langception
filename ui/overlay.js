@@ -36,6 +36,7 @@ const DEFAULT_STYLE = {
   outlineColor: "#000000",
   background: true,
   backgroundOpacity: 0.6,
+  autoColors: false,
 };
 
 let style = { ...DEFAULT_STYLE };
@@ -65,7 +66,9 @@ function createBlock() {
   textEl.className = "overlay-text";
   el.append(textEl);
   document.body.append(el);
-  const entry = { el, textEl, boxW: 0, boxH: 0, rect: null, text: "" };
+  // `style` = this block's Auto Colors sample ({ textColor, pillColor } as
+  // "#rrggbb"), or null — set per overlay-update (ticket 14).
+  const entry = { el, textEl, boxW: 0, boxH: 0, rect: null, text: "", style: null };
   applyStyleTo(entry);
   // In Adjust Mode over full-screen mode, clicking a pill marks the block
   // excluded. The listener exists from creation; the check inside keeps it
@@ -74,14 +77,34 @@ function createBlock() {
   return entry;
 }
 
+// "#rrggbb" / "#rgb" → { r, g, b }, or null for anything else.
+function hexToRgb(hex) {
+  const m = /^#([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(hex || "");
+  if (!m) return null;
+  const body = m[1];
+  const full = body.length === 3 ? [...body].map((c) => c + c).join("") : body;
+  return {
+    r: parseInt(full.slice(0, 2), 16),
+    g: parseInt(full.slice(2, 4), 16),
+    b: parseInt(full.slice(4, 6), 16),
+  };
+}
+
 function applyStyleTo(entry) {
   const s = style;
+  // Auto Colors (ticket 14): a block with a successful sample overrides
+  // the manual text color and pill color; everything else (font, size,
+  // outline, pill on/off, opacity) stays manual. Blocks sampled while the
+  // toggle was on keep their colors meaningful only while it stays on —
+  // toggling off restyles everything back to the manual colors.
+  const sampled = s.autoColors && entry.style ? entry.style : null;
   entry.el.style.fontFamily = `"${s.fontFamily}", "Noto Sans Thai", "Segoe UI", sans-serif`;
   entry.el.style.webkitTextStrokeWidth = s.outlineWidth + "px";
   entry.el.style.webkitTextStrokeColor = s.outlineColor;
-  entry.el.style.color = s.color;
+  entry.el.style.color = sampled ? sampled.textColor : s.color;
   if (s.background) {
-    entry.el.style.background = `rgba(0, 0, 0, ${s.backgroundOpacity})`;
+    const rgb = hexToRgb(sampled ? sampled.pillColor : "#000000") || { r: 0, g: 0, b: 0 };
+    entry.el.style.background = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${s.backgroundOpacity})`;
     entry.el.style.padding = "1px 6px";
     entry.el.style.borderRadius = "4px";
   } else {
@@ -157,10 +180,15 @@ function updateBlock(payload) {
   entry.text = payload.text || payload.translation;
   entry.boxW = Math.max(payload.width / dpr, MIN_BOX_PX);
   entry.boxH = Math.max(payload.height / dpr, MIN_FONT_PX);
+  // The sample rides each update (colors follow the scene, so they can
+  // differ between blocks and between fires); applyStyleTo uses it only
+  // while the global autoColors flag is on.
+  entry.style = payload.style || null;
   entry.el.style.left = payload.x / dpr + "px";
   entry.el.style.top = payload.y / dpr + "px";
   entry.el.style.maxWidth = entry.boxW + "px";
   entry.textEl.textContent = payload.translation;
+  applyStyleTo(entry); // re-apply: this block's sampled colors may differ
   fitText(entry);
 }
 

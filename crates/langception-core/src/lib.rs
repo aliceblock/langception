@@ -16,6 +16,7 @@ pub mod openai;
 pub mod orchestrator;
 pub mod ports;
 pub mod profile;
+pub mod sample;
 pub mod prompt;
 #[cfg(test)]
 pub(crate) mod test_support;

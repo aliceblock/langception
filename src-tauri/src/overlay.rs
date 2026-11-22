@@ -8,6 +8,7 @@
 use langception_core::config::TextStyle;
 use langception_core::orchestrator::EventOrigin;
 use langception_core::ports::TextBlock;
+use langception_core::sample::SampledStyle;
 use serde::Serialize;
 use std::collections::HashMap;
 use tauri::{
@@ -219,6 +220,10 @@ struct OverlayUpdate {
     /// The block's source text (the overlay page labels an Excluded Block
     /// with it when the user clicks the pill in Adjust Mode).
     text: String,
+    /// Auto Colors (ticket 14): the block's sampled text/pill colors, when
+    /// the toggle is on and sampling succeeded. `None` = the page keeps
+    /// the manual Text Style for this block.
+    style: Option<SampledStyle>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -245,6 +250,11 @@ struct StylePayload<'a> {
     outline_color: &'a str,
     background: bool,
     background_opacity: f32,
+    /// Auto Colors (ticket 14): when on, per-block sampled colors ride the
+    /// `overlay-update` payload and take precedence; when off, existing
+    /// per-block overrides are ignored (the page restyles to the manual
+    /// colors immediately).
+    auto_colors: bool,
 }
 
 impl<'a> From<&'a TextStyle> for StylePayload<'a> {
@@ -257,6 +267,7 @@ impl<'a> From<&'a TextStyle> for StylePayload<'a> {
             outline_color: &style.outline_color,
             background: style.background,
             background_opacity: style.background_opacity,
+            auto_colors: style.auto_colors,
         }
     }
 }
@@ -289,6 +300,7 @@ impl OverlayRouter {
         key: &str,
         block: &TextBlock,
         translation: &str,
+        style: Option<&SampledStyle>,
     ) {
         let EventOrigin::Zone { id, .. } = origin else {
             return;
@@ -309,6 +321,7 @@ impl OverlayRouter {
             height: block.height,
             translation: translation.to_string(),
             text: block.text.clone(),
+            style: style.cloned(),
         };
         let _ = app.emit_to(label, "overlay-update", &payload);
         self.placed
