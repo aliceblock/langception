@@ -40,7 +40,10 @@ const openedAtMs = Date.now();
 
 // Rolling per-stage stats since the window opened. Capture counts every
 // pass (it runs even on unchanged ticks — it can be the slow stage on a
-// large zone); ocr/translate/fused count only the passes where they ran.
+// large zone); ocr/translate/fused count only the passes where they ran —
+// the backend reports null on passes where a stage never ran (ticket 50),
+// and a translate min of 0ms is honest: a Glossary-pinned fire genuinely
+// costs ~nothing.
 const stats = {
   capture: freshStats(),
   ocr: freshStats(),

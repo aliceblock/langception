@@ -4029,7 +4029,9 @@ async fn an_unchanged_tick_emits_a_timing_event_with_zero_blocks() {
 
     // Pixel-identical screen: the fast path — no OCR, no translation, but
     // still a timing row (capture can be the slow stage on a large zone),
-    // reporting zero blocks instead of being silently dropped.
+    // reporting zero blocks instead of being silently dropped. No fire was
+    // attempted, so the translate stage never ran (ticket 50): `None`, not
+    // `Some(0)` — a no-fire pass must not count into the summary's stats.
     feed_unchanged(&h, 1, hello.clone()).await;
     orch.tick().await;
     match next_timing(&mut h.events).await {
@@ -4044,9 +4046,11 @@ async fn an_unchanged_tick_emits_a_timing_event_with_zero_blocks() {
         } => {
             assert_eq!(capture_ms, 5);
             assert_eq!(ocr_ms, None);
-            assert_eq!(translate_ms, Some(0));
+            assert_eq!(translate_ms, None);
             assert_eq!(fused_ms, None);
             assert_eq!(blocks_translated, 0);
+            // The pass total is capture only — the stage durations plus the
+            // pass's own bookkeeping sum to it.
             assert_eq!(total_ms, 5);
         }
         other => panic!("expected Timing, got {other:?}"),
@@ -4114,7 +4118,9 @@ async fn a_fast_path_fire_charges_its_translate_time_to_its_own_pass() {
         } => {
             assert_eq!(capture_ms, 5);
             assert_eq!(ocr_ms, Some(40));
-            assert_eq!(translate_ms, Some(0));
+            // The stability window holds the fire: the translate stage
+            // never ran this pass (ticket 50), so it reports `None`.
+            assert_eq!(translate_ms, None);
             assert_eq!(blocks_translated, 0);
         }
         other => panic!("expected Timing, got {other:?}"),
@@ -4212,7 +4218,9 @@ async fn a_failed_capture_still_emits_a_timing_event() {
         } => {
             assert_eq!(capture_ms, 5);
             assert_eq!(ocr_ms, None);
-            assert_eq!(translate_ms, Some(0));
+            // The pass died in capture: no read, no fire, no translate
+            // stage (ticket 50) — `None`, not `Some(0)`.
+            assert_eq!(translate_ms, None);
             assert_eq!(fused_ms, None);
             assert_eq!(blocks_translated, 0);
             assert_eq!(total_ms, 5);
@@ -4246,6 +4254,160 @@ async fn translate_time_accumulates_across_a_pass_blocks() {
         }
         other => panic!("expected Timing, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn a_read_pass_where_nothing_fires_reports_no_translate_stage() {
+    // Ticket 50: a classic pass whose read produced only blocks that drop
+    // out before the fire — unchanged, excluded, empty — never entered the
+    // Translate stage. Its timing row reports `translate_ms: None` so the
+    // debug window's translate stats count real stage passes only.
+    let (mut h, mut orch) = harness().await;
+    h.pin_stage_costs(5, 40, 30);
+    let hello = block(100, 200, "Hello"); // fires in pass 1, unchanged in pass 2
+    let blank = block(100, 300, "   "); // trims to nothing
+    let skipped = block(100, 400, "Skipped"); // under the exclusion below
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 500, 100, 20)])
+        .unwrap();
+
+    // Pass 1 fires Hello through the engine; the other two drop out.
+    // The stage ran once.
+    feed_tick(&h, 1, vec![hello.clone(), blank.clone(), skipped.clone()]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { via, .. } => assert_eq!(via, Via::Engine),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            ocr_ms,
+            translate_ms,
+            blocks_translated,
+            total_ms,
+            ..
+        } => {
+            assert_eq!(ocr_ms, Some(40));
+            assert_eq!(translate_ms, Some(30));
+            assert_eq!(blocks_translated, 1);
+            assert_eq!(total_ms, 75);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+
+    // Pass 2: the frame changed only at a corner (OCR re-runs), but every
+    // block drops out again — Hello's pixels match its shown translation
+    // (unchanged), the other two are excluded/empty. No fire was attempted.
+    let frame = frame_animated(&[hello.clone()], 1, text_mark("Hello"));
+    feed(
+        &h,
+        1,
+        &frame,
+        Some(vec![hello.clone(), blank.clone(), skipped.clone()]),
+    )
+    .await;
+    orch.tick().await;
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            ocr_ms,
+            translate_ms,
+            blocks_translated,
+            total_ms,
+            ..
+        } => {
+            assert_eq!(ocr_ms, Some(40), "this pass read the frame");
+            assert_eq!(translate_ms, None, "no fire, no translate stage");
+            assert_eq!(blocks_translated, 0);
+            // The pass total is capture + read only.
+            assert_eq!(total_ms, 45);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_glossary_only_fire_reports_an_honest_some_zero() {
+    // Ticket 50's honest zero: a Glossary-pinned fire genuinely costs ~0ms
+    // — the stage RAN and answered from the pinned table without the
+    // engine — so `Some(0)` is the true reading and this min-0 stays.
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("VERTIN".to_string(), "เวอร์ติน".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, false).await;
+    h.pin_stage_costs(5, 40, 30);
+    let blocks = vec![block(0, 0, "  vertin  ")];
+
+    feed_tick(&h, 1, blocks.clone()).await;
+    orch.tick().await;
+
+    assert!(
+        h.translate.calls().is_empty(),
+        "glossary match must short-circuit the engine, calls were: {:?}",
+        h.translate.calls()
+    );
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { via, .. } => assert_eq!(via, Via::Glossary),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            blocks_translated,
+            total_ms,
+            ..
+        } => {
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, Some(40));
+            // The stage ran (Glossary short-circuit) and cost no fake-clock
+            // time: an honest `Some(0)`, counted into the summary like any
+            // other fire.
+            assert_eq!(translate_ms, Some(0));
+            assert_eq!(blocks_translated, 1);
+            assert_eq!(total_ms, 45);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_one_shot_pass_where_nothing_fires_reports_no_translate_stage() {
+    // Ticket 50: one-shot passes follow the same rule — every block dropped
+    // out before the fire (excluded / empty), so no translate stage ran and
+    // the timing row reports `None`.
+    let (mut h, orch) = harness().await;
+    h.pin_stage_costs(5, 40, 30);
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 300, 100, 20)])
+        .unwrap();
+    let lines = vec![block(100, 200, "Hello"), block(100, 400, "   ")];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+
+    orch.capture_once(REGION).await;
+
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            origin,
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            fused_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(origin, EventOrigin::OneShot);
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, Some(40), "this pass read the frame");
+            assert_eq!(translate_ms, None, "no fire, no translate stage");
+            assert_eq!(fused_ms, None);
+            assert_eq!(blocks_translated, 0);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+    assert_no_event(&mut h.events, "no block fired, so nothing is shown").await;
 }
 
 // ---- Per-pass read trace (ticket 48) ----

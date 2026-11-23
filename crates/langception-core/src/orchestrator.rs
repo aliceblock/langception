@@ -244,8 +244,12 @@ pub enum LoopEvent {
         /// Time spent producing translations during this pass — Translate
         /// Engine calls and their Glossary short-circuits, matured
         /// fast-path fires included (their engine time is this pass's
-        /// cost). `None` on the fused path: the translation rides the
-        /// fused call's answer, so the stage never runs.
+        /// cost). `None` when the stage never ran: the fused path (the
+        /// translation rides the fused call's answer) and classic passes
+        /// where no fire was attempted (ticket 50) alike — so the debug
+        /// window's rolling summary counts real translate-stage passes
+        /// only. `Some(0)` is honest: a Glossary-pinned fire ran and
+        /// genuinely cost ~nothing.
         translate_ms: Option<u64>,
         /// The fused vision call (ticket 12); `None` on the classic path.
         fused_ms: Option<u64>,
@@ -459,6 +463,12 @@ struct PassTimings {
     ocr_ms: Option<u64>,
     fused_ms: Option<u64>,
     translate_ms: u64,
+    /// The stage ran this pass: at least one fire attempt entered
+    /// [`Self::translate_and_emit`] — an engine call or a Glossary
+    /// short-circuit (ticket 50). A pass with zero fire attempts keeps it
+    /// false, so `emit_timing` reports `translate_ms: None` instead of a
+    /// lying `Some(0)`.
+    translate_ran: bool,
     blocks_translated: u32,
     /// The fast path sets this instead of reading (ticket 48).
     read_skipped: bool,
@@ -1339,7 +1349,10 @@ impl Orchestrator {
     /// translation still counts as handled (the caller records the change)
     /// so a dead engine is not hammered every tick. The whole
     /// translation-production time (Glossary lookup, engine call, scrub)
-    /// accumulates into the pass's translate stage (ticket 47).
+    /// accumulates into the pass's translate stage (ticket 47), and
+    /// entering here IS the stage running — the one place both the
+    /// accumulator and the stage-ran flag (ticket 50) are set, so a pass
+    /// that never fired reports no translate stage at all.
     #[allow(clippy::too_many_arguments)]
     async fn translate_and_emit(
         &self,
@@ -1352,6 +1365,7 @@ impl Orchestrator {
         style: Option<SampledStyle>,
         timings: &mut PassTimings,
     ) -> Option<(String, Via)> {
+        timings.translate_ran = true;
         let translate_started = self.clock.now_ms();
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
@@ -1466,10 +1480,12 @@ impl Orchestrator {
     /// Ships one pass's [`PassTimings`] as a [`LoopEvent::Timing`]
     /// (tickets 47/48). `total_ms` is measured pass start → pass end, so
     /// the stage durations plus the pass's own hashing and bookkeeping sum
-    /// to it within rounding. `classic` decides the translate stage's
-    /// presence: on the fused path the stage never runs (the translation
-    /// rides the fused call's answer), so it reports `None` even though the
-    /// accumulator stays at zero.
+    /// to it within rounding. The translate stage's presence needs both
+    /// conditions (ticket 50): `classic` — on the fused path the stage
+    /// never runs, the translation rides the fused call's answer — and
+    /// `translate_ran` — a classic pass where no fire was attempted never
+    /// entered it either. Both report `None`; a Glossary-pinned fire's
+    /// `Some(0)` is the honest zero.
     fn emit_timing(
         &self,
         origin: EventOrigin,
@@ -1483,7 +1499,7 @@ impl Orchestrator {
                 origin,
                 capture_ms: timings.capture_ms,
                 ocr_ms: timings.ocr_ms,
-                translate_ms: classic.then_some(timings.translate_ms),
+                translate_ms: (classic && timings.translate_ran).then_some(timings.translate_ms),
                 fused_ms: timings.fused_ms,
                 total_ms: now.saturating_sub(started_ms),
                 blocks_translated: timings.blocks_translated,
