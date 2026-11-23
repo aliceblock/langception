@@ -7,6 +7,8 @@
 // Ticket 39: the per-tab Save buttons are gone — one sticky bottom-right
 // Save footer shows only while some explicit-save field is dirty, and
 // closing the window warns before discarding unsaved edits.
+// Ticket 51: a rejected save reverts the tab's fields to that same
+// snapshot — the form never keeps showing values the config refused.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -548,6 +550,10 @@ async function saveEngines() {
     toast("Engines saved");
     return true;
   } catch (e) {
+    // Ticket 51: the save was refused, so the config still holds the old
+    // values — put the form back to them instead of leaving a rejected
+    // switch (say, LM Studio with no model picked) looking applied.
+    revertEnginesFields();
     toast(String(e), "error");
     return false;
   }
@@ -556,11 +562,11 @@ async function saveEngines() {
 // "Reset to default" (ticket 37): clear the field AND save right away —
 // empty means the built-in prompt applies again, so the reset is complete
 // in one step (same save path and validation as Save engines). A rejected
-// save (validation) puts the typed prompt back, so the field never lies
-// about what is stored.
+// save (validation) reverts the whole engines form to the snapshot
+// (ticket 51) — including the typed prompt this path cleared, so nothing
+// on the tab shows values the config refused.
 async function resetPromptToDefault(field, button) {
   const hadContent = field.value.trim() !== "";
-  const previous = field.value;
   button.disabled = true;
   try {
     field.value = "";
@@ -574,7 +580,7 @@ async function resetPromptToDefault(field, button) {
     updateSaveFooter();
     toast(hadContent ? "Prompt reset — the built-in default applies again" : "Already using the built-in default");
   } catch (e) {
-    field.value = previous;
+    revertEnginesFields();
     toast(String(e), "error");
   } finally {
     button.disabled = false;
@@ -737,6 +743,9 @@ async function saveGeneral() {
     toast("General settings saved");
     return true;
   } catch (e) {
+    // Ticket 51: refused save — the form goes back to the stored values.
+    restoreFields(TRACKED_GENERAL);
+    updateSaveFooter();
     toast(String(e), "error");
     return false;
   }
@@ -1201,6 +1210,17 @@ async function saveProfile() {
     await renderProfileGlossary();
     return true;
   } catch (e) {
+    // Ticket 51: refused save — revert the editor to the saved profile.
+    // The exe select is the one restore that plain assignment can fail
+    // silently: if the saved app has closed since the snapshot, its
+    // option is gone and `value =` lands on no-selection. So re-point the
+    // picker's bookkeeping (dataset.chosen) at the snapshot and rebuild
+    // the options the way populateEditor does — a saved-but-not-running
+    // app keeps its saved-ness instead of vanishing.
+    restoreFields(TRACKED_PROFILE);
+    profileExe.dataset.chosen = savedSnapshot.get(profileExe) ?? "";
+    renderExeOptions();
+    updateSaveFooter();
     toast(String(e), "error");
     return false;
   }
@@ -1543,6 +1563,15 @@ function scheduleStyleSave() {
       snapshotFields(TRACKED_STYLE);
       updateSaveFooter();
     } catch (e) {
+      // Ticket 51: the debounced save was refused — the controls go back to
+      // the stored style, and the derived UI follows them (the color
+      // field's disabled state, the alignment row, the preview that reads
+      // these very fields).
+      restoreFields(TRACKED_STYLE);
+      styleColor.disabled = styleAutoColors.checked;
+      updateAlignmentRowVisibility();
+      updateStylePreview();
+      updateSaveFooter();
       toast(String(e), "error");
     }
   }, 250);
@@ -1633,6 +1662,10 @@ async function saveHotkeys() {
     toast("Hotkeys saved and re-registered");
     return true;
   } catch (e) {
+    // Ticket 51: refused registration — the fields snap back to the
+    // bindings the system actually holds.
+    restoreFields(TRACKED_HOTKEYS);
+    updateSaveFooter();
     toast(String(e), "error");
     return false;
   }
@@ -1721,6 +1754,45 @@ function snapshotFields(fields) {
   for (const el of fields) savedSnapshot.set(el, fieldValue(el));
 }
 
+// Ticket 51: the restore half of the pair — after a rejected save, put the
+// fields back to the snapshot so the form never keeps showing values the
+// config refused (the toast explains why; the snap-back makes the
+// rejection unmistakable). The snapshot stores each field's string, which
+// is enough for plain inputs, selects and checkboxes; the LM Studio model
+// dropdown is the one exception needing a rebuild — assigning a value
+// with no matching option silently no-ops, so its options are rebuilt
+// around the saved model first (renderLmStudioModels([], saved), the
+// load-time precedent). Other dynamic-options selects stay restorable by
+// plain assignment because their renderers never leave the value
+// optionless. Callers add the derived-UI refreshes their fields drive —
+// the footer at minimum, since programmatic writes fire no input/change
+// events.
+function restoreFields(fields) {
+  for (const el of fields) {
+    const saved = savedSnapshot.get(el);
+    if (saved === undefined) continue;
+    if (el === enginesLmStudioModel) {
+      renderLmStudioModels([], saved);
+    } else if (el.type === "checkbox") {
+      el.checked = saved === "true";
+    } else {
+      el.value = saved;
+    }
+  }
+}
+
+// The engines revert's derived-UI steps, shared by the Settings form's
+// failed set_engines paths (per-tab Save, footer Save-all, prompt reset —
+// the wizard's upgrade deliberately does not revert: its payload is built
+// from saved values and its fields are its own): the fused-reading
+// warning follows the restored select, the footer follows the restored
+// fields.
+function revertEnginesFields() {
+  restoreFields(TRACKED_ENGINES);
+  enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
+  updateSaveFooter();
+}
+
 function fieldsDirty(fields) {
   return fields.some((el) => savedSnapshot.get(el) !== fieldValue(el));
 }
@@ -1756,8 +1828,8 @@ for (const el of [
 // reusing the per-area saves verbatim (validation included). Areas that
 // already match are skipped, so a retry after a failed area does not re-save
 // — and re-toast success for — the ones that went through; saved areas stay
-// saved and a failed area keeps its edits (the footer remains until
-// everything is clean again).
+// saved and a failed area reverts to its snapshot (ticket 51), so the
+// footer only ever asks about genuinely unsaved edits.
 async function saveAll() {
   for (const [fields, save] of [
     [TRACKED_ENGINES, saveEngines],
