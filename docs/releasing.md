@@ -7,17 +7,60 @@ How the public repo is published, and how a release is cut.
 The GitHub repo is created by a human (it is an outward-facing action under
 their account; `gh` may not be installed locally):
 
-1. Create a **public** repo on GitHub (e.g. `<user>/langception`), empty —
+1. **Strip the local issue tracker from history** (decision 2026-11-23:
+   `.scratch/` never goes public). The tracker has been committed since
+   the very first commit, so a `.gitignore` entry alone would still
+   expose all of it in the early public history. This must happen
+   **before** the first push — afterwards the history is public and
+   effectively frozen. Commit all pending work first (`git filter-repo`
+   discards uncommitted changes), and back the tracker up out of the
+   worktree (the rewrite's `reset --hard` deletes tracked files that the
+   rewritten history no longer contains):
+
+   ```sh
+   pip install git-filter-repo
+   cp -r .scratch ../langception-tracker-backup
+   git filter-repo --force --invert-paths --path .scratch
+   ```
+
+   Repair the tracker's internal commit citations — filter-repo rewrites
+   every SHA, and its map (`.git/filter-repo/commit-map`, one
+   `<old-sha> <new-sha>` per line) drives the fixup. Commits that only
+   touched the tracker are pruned from public history and map to
+   all-zeros — skip those; their old citations simply dangle:
+
+   ```sh
+   while read -r old new; do
+     case "$new" in 0000*) continue ;; esac
+     sed -i "s/${old:0:7}/${new:0:7}/g" ../langception-tracker-backup/langception/issues/*.md
+   done < .git/filter-repo/commit-map
+   ```
+
+   Re-land the tracker as untracked and keep it out forever:
+
+   ```sh
+   mv ../langception-tracker-backup .scratch
+   echo ".scratch/" >> .gitignore
+   git add .gitignore
+   git commit -m "Keep the local issue tracker out of the public repo"
+   ```
+
+2. Create a **public** repo on GitHub (e.g. `<user>/langception`), empty —
    no README/LICENSE init, so this history pushes cleanly.
-2. Add the remote and push the full history:
+3. Add the remote and push the full history:
 
    ```sh
    git remote add origin git@github.com:<user>/langception.git
    git push -u origin main
    ```
 
-3. Confirm the Actions tab shows the CI workflow green on `main`.
-4. Optional: add a CI badge to the README top with the real repo URL, and a
+   If the version-check endpoint goes live with this push (ticket 28 /
+   `docs/update-check-endpoint.md`), follow that doc's § Publishing steps
+   in the same move: `latest.json` at the repo root, and the one-line
+   `DEFAULT_UPDATE_URL` flip.
+
+4. Confirm the Actions tab shows the CI workflow green on `main`.
+5. Optional: add a CI badge to the README top with the real repo URL, and a
    `repository` field in both `Cargo.toml` files. Also enable
    Settings → Actions → General → allow read/write for the release job's
    GITHUB_TOKEN (default on for new repos unless restricted by org policy).

@@ -2,6 +2,12 @@
 
 Issues and specs for this repo live as markdown files in `.scratch/`.
 
+The tracker is **local-only**: until the repo goes public it stays
+tracked (commit tracker updates like any other file), but
+`docs/releasing.md` § One-time — the mandatory first step of publishing —
+strips `.scratch/` from the history and gitignores it in the same move.
+Public readers never see it.
+
 ## Conventions
 
 - One feature per directory: `.scratch/<feature-slug>/`

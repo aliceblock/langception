@@ -97,3 +97,9 @@ _Avoid_: prompt template, style preset, persona
 **Translation Context**:
 A translation-loop setting that appends the most recent successful translations of the same Capture Zone to the prompt, keeping consecutive text consistent in tone and naming. 0 (default) disables it.
 _Avoid_: history, memory, cache
+
+### App
+
+**Update Check**:
+A Settings button and an optional on-launch fetch that compare the running version against the maintainer's published app list, reporting a newer version with a download link. Informational only — never downloads or installs.
+_Avoid_: auto-update, updater, version monitor
