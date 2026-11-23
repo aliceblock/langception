@@ -17,7 +17,7 @@ their account; `gh` may not be installed locally):
    worktree (the rewrite's `reset --hard` deletes tracked files that the
    rewritten history no longer contains):
 
-   ```sh
+   ```bash
    pip install git-filter-repo
    cp -r .scratch ../langception-tracker-backup
    git filter-repo --force --invert-paths --path .scratch
@@ -29,7 +29,7 @@ their account; `gh` may not be installed locally):
    touched the tracker are pruned from public history and map to
    all-zeros — skip those; their old citations simply dangle:
 
-   ```sh
+   ```bash
    while read -r old new; do
      case "$new" in 0000*) continue ;; esac
      sed -i "s/${old:0:7}/${new:0:7}/g" ../langception-tracker-backup/langception/issues/*.md
@@ -54,10 +54,13 @@ their account; `gh` may not be installed locally):
    git push -u origin main
    ```
 
-   If the version-check endpoint goes live with this push (ticket 28 /
-   `docs/update-check-endpoint.md`), follow that doc's § Publishing steps
-   in the same move: `latest.json` at the repo root, and the one-line
-   `DEFAULT_UPDATE_URL` flip.
+   This push also puts ticket 28's version-check endpoint live (decided
+   2026-11-23): follow `docs/update-check-endpoint.md`'s § Publishing
+   steps in the same move — `latest.json` at the repo root, and the
+   `DEFAULT_UPDATE_URL` flip (two lines: the const in
+   `crates/langception-core/src/update.rs` plus the matching `url` line
+   in the config template, kept honest by the
+   `template_url_tracks_the_default_const` test).
 
 4. Confirm the Actions tab shows the CI workflow green on `main`.
 5. Optional: add a CI badge to the README top with the real repo URL, and a

@@ -81,8 +81,12 @@ ticket.
    One-time).
 2. Add `latest.json` at the repo root (payload above, `version` set to
    the release number, `download_url` at the Releases page).
-3. Flip the client's `DEFAULT_UPDATE_URL` const (empty until now) to the
-   raw URL — one line, in the same change. Release builds then check for
+3. Flip the client's default URL (empty until now) to the raw URL — in
+   the same change: the `DEFAULT_UPDATE_URL` const in
+   `crates/langception-core/src/update.rs` **and** the matching `url`
+   line in `AppConfig::DEFAULT_TEMPLATE` (`crates/langception-core/src/
+   config.rs`); the `template_url_tracks_the_default_const` test fails
+   if either moves without the other. Release builds then check for
    updates with zero per-user setup; development builds simply report
    "update check unavailable" until then.
 4. Verify:
