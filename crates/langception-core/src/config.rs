@@ -754,6 +754,10 @@ pub struct AppConfig {
     /// → General). The overlay and picker are not configurable here.
     #[serde(default)]
     pub windows: WindowSettings,
+    /// The Update Check (ticket 28, CONTEXT.md): the published app-list
+    /// URL and the opt-in launch-time check. See [`crate::update`].
+    #[serde(default)]
+    pub update: crate::update::UpdateSettings,
     /// Custom base instructions for the two LLM system prompts (ticket
     /// 37, Settings → Engines → Prompts); empty fields keep the built-in
     /// templates. Applies to the LLM engines only.
@@ -1179,6 +1183,21 @@ one_shot_capture = "Alt+Q"
 results_on_top = true
 settings_on_top = false
 
+[update]
+# Update Check (CONTEXT.md): where "Check for new version" (Settings →
+# About) fetches its app list — the maintainer's published latest.json; the
+# payload shape lives in docs/update-check-endpoint.md. Empty = the check
+# is disabled: the button reports "update check unavailable" and nothing
+# is ever fetched (release builds bake the maintainer's URL in as the
+# default). Point it at any HTTPS URL serving the same shape to use a
+# different source. Check-only — the app never downloads or installs
+# anything from here.
+url = ""
+# Check automatically at every launch (Settings → About's toggle). Off by
+# default — opt-in, since it contacts the URL without being asked. A
+# launch-time check never blocks startup and its failures stay silent.
+check_on_launch = false
+
 [prompts]
 # The System Prompt Preset in use (Settings → Engines): "general" (the
 # built-in defaults), "game", "novel" or "manga" (built-in wordings tuned
@@ -1314,6 +1333,58 @@ mod tests {
         assert!(config.region.is_none());
         assert_eq!(config.hotkeys, HotkeySettings::default());
         assert!(!config.genderless);
+        assert_eq!(config.update, crate::update::UpdateSettings::default());
+    }
+
+    // ---- Update Check (ticket 28) ----
+
+    #[test]
+    fn update_defaults_for_configs_written_before_it() {
+        // A pre-ticket-28 config has no [update] section; the container
+        // default (URL empty, launch check off) must fill it in rather
+        // than reject the file — the feature simply stays dormant.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !(trimmed.starts_with("url = ") || trimmed.starts_with("check_on_launch"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.update, crate::update::UpdateSettings::default());
+        assert_eq!(config.update.url, crate::update::DEFAULT_UPDATE_URL);
+        assert!(!config.update.check_on_launch);
+    }
+
+    #[test]
+    fn update_roundtrips_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("url = \"\"", "url = \"https://example.com/latest.json\"")
+            .replace("check_on_launch = false", "check_on_launch = true");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(
+            config.update,
+            crate::update::UpdateSettings {
+                url: "https://example.com/latest.json".into(),
+                check_on_launch: true,
+            }
+        );
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn template_url_tracks_the_default_const() {
+        // Ticket 13's go-public step flips DEFAULT_UPDATE_URL to the raw
+        // latest.json URL; the template's url line must flip in the same
+        // change or release builds would stay dormant while the const says
+        // otherwise (and vice versa). This test keeps the two honest.
+        let expected = format!("url = \"{}\"", crate::update::DEFAULT_UPDATE_URL);
+        assert!(
+            AppConfig::DEFAULT_TEMPLATE.contains(&expected),
+            "the template's [update] url line must equal DEFAULT_UPDATE_URL (expected: {expected})"
+        );
     }
 
     #[test]

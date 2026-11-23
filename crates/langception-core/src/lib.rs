@@ -21,5 +21,6 @@ pub mod profile;
 pub mod sample;
 pub mod prompt;
 pub mod prompt_preset;
+pub mod update;
 #[cfg(test)]
 pub(crate) mod test_support;

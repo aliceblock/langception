@@ -124,6 +124,12 @@ pub struct Status {
     /// Settings → General). The overlay and picker are not configurable.
     pub settings_on_top: bool,
     pub results_on_top: bool,
+    /// The Update Check's launch toggle (ticket 28, Settings → About) and
+    /// the last completed check's outcome — the page shows the latter on
+    /// open, so a launch-time check that finished while the window was
+    /// closed still surfaces.
+    pub update_check_on_launch: bool,
+    pub last_update_check: Option<langception_core::update::UpdateCheckOutcome>,
     /// The per-app Profiles (ticket 07), with an `active` flag on each.
     pub profiles: Vec<ProfileStatus>,
     /// The id of the Profile currently matched to the foreground app, or
@@ -358,6 +364,10 @@ pub(crate) struct AppState {
     /// The last engine-error tray notification (message + unix ms), for the
     /// throttle that keeps a dead engine from spamming toasts every tick.
     engine_notify: Mutex<Option<(String, u64)>>,
+    /// The last completed Update Check (ticket 28; manual or launch-time).
+    /// The Settings page reads it on open, so a launch check that finished
+    /// while the window was closed still surfaces.
+    pub(crate) last_update_check: Mutex<Option<langception_core::update::UpdateCheckOutcome>>,
 }
 
 pub fn run() {
@@ -427,6 +437,7 @@ pub fn run() {
             active_profile: Mutex::new(None),
             active_window: Mutex::new(None),
             engine_notify: Mutex::new(None),
+            last_update_check: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
@@ -463,6 +474,9 @@ pub fn run() {
             crate::settings::delete_prompt_preset,
             crate::settings::set_general,
             crate::settings::set_start_with_windows,
+            crate::settings::check_for_updates,
+            crate::settings::set_update_check_on_launch,
+            crate::settings::open_update_page,
             crate::settings::set_hotkeys,
             crate::settings::list_glossary,
             crate::settings::add_glossary_entry,
@@ -551,6 +565,11 @@ pub fn run() {
             build_tray(&handle)?;
             install_hotkeys(&handle)?;
             spawn_profile_watcher(&handle);
+
+            // The opt-in launch-time Update Check (ticket 28): spawned, not
+            // awaited — startup never waits on the network; the function
+            // owns the enablement decision (off or empty URL = silent skip).
+            crate::settings::spawn_launch_update_check(&handle);
 
             if let Some(window) = handle.get_webview_window(RESULTS_LABEL) {
                 // Langception's own windows are never translation sources
@@ -1108,6 +1127,19 @@ fn status_for(app: &AppHandle) -> Status {
         Some(Err(_)) | None => WindowSettings::default(),
     };
 
+    // The Update Check slice (ticket 28): the launch toggle plus the last
+    // completed check. A broken or not-yet-loaded config falls back to the
+    // shipped defaults (off, no result on record).
+    let update_check_on_launch = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
+        Some(Ok(config)) => config.update.check_on_launch,
+        Some(Err(_)) | None => false,
+    };
+    let last_update_check = state
+        .last_update_check
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+
     Status {
         running,
         paused,
@@ -1141,6 +1173,8 @@ fn status_for(app: &AppHandle) -> Status {
         start_with_windows,
         settings_on_top: windows.settings_on_top,
         results_on_top: windows.results_on_top,
+        update_check_on_launch,
+        last_update_check,
         profiles,
         active_profile_id,
     }

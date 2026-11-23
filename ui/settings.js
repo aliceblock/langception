@@ -1803,6 +1803,104 @@ window.__TAURI__.webviewWindow
   .getCurrentWebviewWindow()
   .listen("settings-request-close", handleSettingsCloseRequest);
 
+// Update Check (ticket 28, CONTEXT.md) ---------------------------------------
+// The About tab's check-only version check: a manual button, an opt-in
+// launch-time check, and — for a newer version — a link to its download
+// page. Every outcome renders gently in the result area; the launch-time
+// check arrives as an event (while the page is open) or rides the boot
+// status (it finished earlier), so it surfaces exactly as a manual check.
+
+const aboutCheckUpdates = document.getElementById("about-check-updates");
+const aboutUpdateOnLaunch = document.getElementById("about-update-on-launch");
+const aboutUpdateResult = document.getElementById("about-update-result");
+const aboutUpdateDownloadRow = document.getElementById("about-update-download-row");
+const aboutUpdateDownload = document.getElementById("about-update-download");
+
+// The download URL of the newest reported result; only a "new-version"
+// outcome carrying one shows the action, and only its URL ever opens.
+let updateDownloadUrl = null;
+
+function renderUpdateCheck(outcome) {
+  aboutUpdateResult.classList.remove("hidden");
+  aboutUpdateDownloadRow.classList.add("hidden");
+  updateDownloadUrl = null;
+  switch (outcome.kind) {
+    case "up-to-date":
+      aboutUpdateResult.textContent = "You are on the latest version.";
+      break;
+    case "new-version": {
+      const parts = [`New version available: ${outcome.version}`];
+      if (outcome.released) parts.push(`Released: ${outcome.released}`);
+      aboutUpdateResult.textContent = parts.join(" · ");
+      if (outcome.downloadUrl) {
+        updateDownloadUrl = outcome.downloadUrl;
+        aboutUpdateDownloadRow.classList.remove("hidden");
+      }
+      break;
+    }
+    case "not-listed":
+      aboutUpdateResult.textContent =
+        "The update server answered, but no update information for Langception is published there yet.";
+      break;
+    case "unavailable":
+      aboutUpdateResult.textContent =
+        "Update check unavailable — no update URL is configured (the feature is disabled).";
+      break;
+    case "error":
+      aboutUpdateResult.textContent = `Update check unavailable — ${outcome.message}`;
+      break;
+    default:
+      aboutUpdateResult.textContent = "";
+  }
+}
+
+aboutCheckUpdates.addEventListener("click", async () => {
+  aboutCheckUpdates.disabled = true;
+  aboutUpdateResult.classList.remove("hidden");
+  aboutUpdateDownloadRow.classList.add("hidden");
+  aboutUpdateResult.textContent = "Checking…";
+  try {
+    renderUpdateCheck(await invoke("check_for_updates"));
+  } catch (e) {
+    aboutUpdateResult.textContent = "";
+    toast(String(e), "error");
+  } finally {
+    aboutCheckUpdates.disabled = false;
+  }
+});
+
+// The toggle persists immediately (like Start-with-Windows) so the
+// checkbox never lies about what the next launch will do; a failed save
+// reverts it.
+aboutUpdateOnLaunch.addEventListener("change", async () => {
+  const wanted = aboutUpdateOnLaunch.checked;
+  aboutUpdateOnLaunch.disabled = true;
+  try {
+    await invoke("set_update_check_on_launch", { enabled: wanted });
+    toast(wanted
+      ? "Langception will check for a new version at launch"
+      : "Launch-time update checks disabled");
+  } catch (e) {
+    aboutUpdateOnLaunch.checked = !wanted; // revert
+    toast(String(e), "error");
+  } finally {
+    aboutUpdateOnLaunch.disabled = false;
+  }
+});
+
+aboutUpdateDownload.addEventListener("click", () => {
+  if (!updateDownloadUrl) return;
+  invoke("open_update_page", { url: updateDownloadUrl }).catch((e) =>
+    toast(String(e), "error")
+  );
+});
+
+// The launch-time check's live surface: same rendering as a manual check,
+// never a toast — failures stay silent.
+listen("update-check-result", (event) => renderUpdateCheck(event.payload)).catch((e) =>
+  toast(String(e), "error")
+);
+
 // About ----------------------------------------------------------------------
 
 async function loadAbout() {
@@ -1847,6 +1945,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   renderProfiles(status);
   loadAbout();
   updateChips(status);
+  // Update Check (ticket 28): the saved launch toggle plus whatever check
+  // already ran (a launch-time one that finished before this page opened).
+  aboutUpdateOnLaunch.checked = Boolean(status.updateCheckOnLaunch);
+  if (status.lastUpdateCheck) renderUpdateCheck(status.lastUpdateCheck);
 
   // Ticket 39: the page just loaded, so everything shown is the saved state
   // — baseline the tracker from it. Engines re-baselines when its lazy load

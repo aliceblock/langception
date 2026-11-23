@@ -6,7 +6,9 @@
 //! management + JSON import/export), Profiles (ticket 07: per-app
 //! configuration, each with its own Glossary layer — entry editing plus
 //! the same JSON import/export as the global Glossary, ticket 33), Text
-//! Style, Hotkeys (rebinds apply live), About.
+//! Style, Hotkeys (rebinds apply live), About (with the Update Check,
+//! ticket 28: the manual check button, the opt-in launch-time check, and
+//! the download-page action).
 //!
 //! The wizard is a view inside this window: on the first launch (no config
 //! file when the app started) the shell opens it automatically and the page
@@ -27,8 +29,9 @@ use langception_core::ports::{SourceLanguage, TARGET_LANGUAGE};
 use langception_core::profile::{GenderlessOverride, Profile};
 use langception_core::prompt::{BuiltinPreset, PromptTexts};
 use langception_core::prompt_preset::{ActivePromptPreset, EffectivePrompts};
+use langception_core::update::UpdateCheckOutcome;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::Shortcut;
 
@@ -776,6 +779,103 @@ pub(crate) async fn set_start_with_windows(app: AppHandle, enabled: bool) -> Res
             .map_err(|e| format!("cannot query start-with-Windows: {e}"))
     })
     .await
+}
+
+// ---- Update Check (ticket 28, CONTEXT.md) ----
+
+/// The About tab's "Check for new version" (ticket 28): fetches the
+/// maintainer's app list from the configured URL, finds Langception's
+/// entry, and compares it against the running version. Every verdict —
+/// including every failure — comes back as an [`UpdateCheckOutcome`] the
+/// page reports gently; the command itself only errors when the config is
+/// broken. Pure HTTP on the async runtime (nothing here touches windows or
+/// the main thread), check-only by construction: no download, no install.
+#[tauri::command]
+pub(crate) async fn check_for_updates(app: AppHandle) -> Result<UpdateCheckOutcome, String> {
+    let config = current_config(&app)?;
+    let current = app.package_info().version.to_string();
+    let outcome =
+        langception_core::update::check_for_updates(&config.update.url, &current).await;
+    record_update_check(&app, outcome.clone());
+    Ok(outcome)
+}
+
+/// Remembers the last completed check (manual or launch-time) so the
+/// Settings page can show it on open — a launch check that finished while
+/// the window was closed still surfaces — and pushes it to a live settings
+/// window through the same event the page listens for.
+pub(crate) fn record_update_check(app: &AppHandle, outcome: UpdateCheckOutcome) {
+    *app.state::<AppState>()
+        .last_update_check
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(outcome.clone());
+    // No settings window open = nothing listening; the stored copy serves
+    // the next open instead.
+    let _ = app.emit_to(SETTINGS_LABEL, "update-check-result", outcome);
+}
+
+/// The launch-time auto-check (ticket 28): spawned by the shell's setup
+/// after the config loads, so it never blocks startup. Owns the whole
+/// enablement decision — a disabled toggle or an empty URL (the feature
+/// dormant) skips silently, and failures stay silent too: they land in
+/// the recorded outcome and show wherever the Settings page shows checks,
+/// never as a toast or warning.
+pub(crate) fn spawn_launch_update_check(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let (url, check_on_launch) = match &*app
+            .state::<AppState>()
+            .config
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+        {
+            Some(Ok(config)) => (config.update.url.clone(), config.update.check_on_launch),
+            _ => return,
+        };
+        if !check_on_launch || url.trim().is_empty() {
+            return;
+        }
+        let current = app.package_info().version.to_string();
+        let outcome = langception_core::update::check_for_updates(&url, &current).await;
+        record_update_check(&app, outcome);
+    });
+}
+
+/// The About tab's "check on launch" toggle (ticket 28): persists
+/// immediately, like Start-with-Windows, so the checkbox never lies about
+/// what the next launch will do.
+#[tauri::command]
+pub(crate) async fn set_update_check_on_launch(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    run_off_main(app, move |app| {
+        with_config_mut(app, |config| {
+            config.update.check_on_launch = enabled;
+            Ok(())
+        })
+    })
+    .await
+}
+
+/// The new-version result's "Open download page" action (ticket 28): opens
+/// the payload's URL in the system browser on the user's click — the app
+/// itself never fetches it. A webview window must never become a general
+/// URL opener (the open_engine_link rule): HTTPS passes; plain HTTP only
+/// for a loopback host, so a dev/mock endpoint's link still opens.
+#[tauri::command]
+pub(crate) fn open_update_page(url: String) -> Result<(), String> {
+    let url = url.trim();
+    let openable = url.to_ascii_lowercase().starts_with("https://")
+        || langception_core::openai::is_local_url(url);
+    if !openable {
+        return Err(format!("\"{url}\" is not an HTTPS download page — not opening it"));
+    }
+    std::process::Command::new("explorer")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("cannot open the link: {e}"))?;
+    Ok(())
 }
 
 // ---- Hotkeys tab (rebinds apply immediately) ----

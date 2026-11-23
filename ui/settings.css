@@ -442,6 +442,19 @@ input[type="color"] {
    instead of overflowing the label column at the window minimum. */
 .about-grid .mono { overflow-wrap: anywhere; }
 
+/* Update Check (ticket 28): the About tab's inline launch-check toggle,
+   sitting beside the check button in a plain flex row (a .form-row's
+   180px label grid would be dead weight here). */
+.inline-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.inline-toggle input { cursor: pointer; }
+
 /* ---- Sticky Save footer (tickets 39 + 41) ---- */
 
 /* One Save for every explicit-save tab, pinned to the window bottom (body

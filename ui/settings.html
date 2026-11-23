@@ -741,6 +741,35 @@
           there automatically.
         </p>
         </div>
+
+        <!-- Update Check (ticket 28, CONTEXT.md): check-only — the app
+             never downloads or installs anything. The button reports
+             gently (up to date / new version / no information /
+             unavailable), the launch toggle persists immediately, and the
+             result area doubles as the launch-time check's surface (the
+             outcome arrives as an event or rides the page's boot status). -->
+        <div class="settings-section">
+        <h3>Updates</h3>
+        <div class="row">
+          <button id="about-check-updates" class="btn small">Check for new version</button>
+          <label class="inline-toggle" title="Check automatically every time Langception starts. Off by default — nothing is fetched at launch unless you turn this on; a launch check never blocks startup and fails silently.">
+            <input id="about-update-on-launch" type="checkbox" />
+            <span>Check on launch</span>
+          </label>
+        </div>
+        <div id="about-update-result" class="hint hidden"></div>
+        <div id="about-update-download-row" class="row hidden">
+          <button id="about-update-download" class="btn small">Open download page</button>
+        </div>
+        <p class="hint">
+          Check-only: Langception never downloads or installs anything — a
+          new version is reported with a link to its download page, opened
+          in your browser only when you click it. Without a configured
+          update URL the button reports “update check unavailable” and
+          nothing is ever fetched. The check sends nothing beyond the
+          fetch itself.
+        </p>
+        </div>
       </section>
     </main>
 
