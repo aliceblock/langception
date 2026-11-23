@@ -34,7 +34,7 @@ fn system_font_families() -> Vec<String> {
         Err(_) => return Vec::new(),
     };
     let mut collection = None;
-    if let Err(_) = unsafe { factory.GetSystemFontCollection(&mut collection, false) } {
+    if unsafe { factory.GetSystemFontCollection(&mut collection, false) }.is_err() {
         return Vec::new();
     }
     let Some(collection) = collection else {
