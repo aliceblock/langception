@@ -150,6 +150,12 @@ pub(crate) fn get_about(app: AppHandle) -> About {
 
 // ---- Engines tab (tickets 09 + 10 + 11) ----
 
+/// Matches the config's paddle default for a page that (somehow) sends no
+/// ocrEngine field — always the config-side default, never an error.
+fn default_ocr_engine_dto() -> String {
+    langception_core::config::DEFAULT_OCR_ENGINE.to_string()
+}
+
 /// The Engines tab's editing surface: the global default engine, every
 /// configurable engine's settings, and the reading mode (ticket 12: classic
 /// OCR vs the fused vision call). Keys and URLs round-trip to the page so
@@ -160,6 +166,10 @@ pub(crate) fn get_about(app: AppHandle) -> About {
 #[serde(rename_all = "camelCase")]
 pub struct EnginesDto {
     pub default_engine: String,
+    /// "paddle" | "windows" (ticket 31): which engine reads on-screen
+    /// text. Defaults to the bundled PaddleOCR sidecar.
+    #[serde(default = "default_ocr_engine_dto")]
+    pub ocr_engine: String,
     /// "ocr" | "fused" (ticket 12).
     pub reading: String,
     pub azure: AzureEngineDto,
@@ -221,6 +231,7 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
     match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => Ok(EnginesDto {
             default_engine: config.engine.clone(),
+            ocr_engine: config.ocr.engine.clone(),
             reading: config.reading.code().to_string(),
             azure: AzureEngineDto {
                 key: config.engines.azure.key.clone(),
@@ -260,6 +271,16 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
         return Err(format!(
             "unknown engine \"{default_engine}\" — engines: {}",
             langception_core::config::TRANSLATE_ENGINES.join(", ")
+        ));
+    }
+    // The OCR engine (ticket 31): the config spelling is enforced here;
+    // whether the bundled sidecar actually runs is the loop's business
+    // (its Windows-OCR fallback covers a broken bundle per pass).
+    let ocr_engine = engines.ocr_engine.trim().to_lowercase();
+    if !langception_core::config::OCR_ENGINES.contains(&ocr_engine.as_str()) {
+        return Err(format!(
+            "unknown OCR engine \"{ocr_engine}\" — engines: {}",
+            langception_core::config::OCR_ENGINES.join(", ")
         ));
     }
     let azure_key = engines.azure.key.trim().to_string();
@@ -347,6 +368,9 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
     run_off_main(app, move |app| {
         with_config_mut(app, |config| {
             config.engine = default_engine.clone();
+            // The OCR engine is read when the loop starts; the restart
+            // below applies a switch live (ticket 31) — no app restart.
+            config.ocr.engine = ocr_engine.clone();
             config.reading = reading;
             config.engines.azure.key = azure_key.clone();
             config.engines.azure.region = azure_region.clone();

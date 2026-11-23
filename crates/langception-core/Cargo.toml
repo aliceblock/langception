@@ -17,7 +17,9 @@ serde_json = "1"
 toml = "0.9"
 thiserror = "2"
 reqwest = { version = "0.13", features = ["query"] }
-tokio = { version = "1", features = ["sync"] }
+# "process" + "io-util" + "time" drive the PaddleOCR-json sidecar (ticket
+# 31): piped stdin/stdout, line reads and writes, init/request timeouts.
+tokio = { version = "1", features = ["sync", "process", "io-util", "time"] }
 
 [dev-dependencies]
 # "net" + "io-util" drive the fake HTTP engine of the prompt-seam tests

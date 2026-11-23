@@ -20,6 +20,7 @@ use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
 use langception_core::openai::{GENERIC_LABEL, LM_STUDIO_LABEL, OpenAiCompatibleEngine};
 use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, Stage, SystemClock};
+use langception_core::paddle::PaddleOcrEngine;
 use langception_core::ports::{
     ExcludedBlock, FusedEngine, Region, SourceLanguage, TranslateEngine, Zone, TARGET_LANGUAGE,
 };
@@ -1195,15 +1196,30 @@ struct Pipeline {
     glossary: Glossary,
     capture: Arc<dyn langception_core::ports::CaptureSource>,
     ocr: Arc<dyn langception_core::ports::OcrEngine>,
+    /// The configured OCR engine's name, for the launch summary log line.
+    /// What ACTUALLY ran can differ (the paddle sidecar falls back to
+    /// Windows OCR per pass — the fallback notice says so); this is the
+    /// choice the loop started with.
+    ocr_name: &'static str,
     translate: Arc<dyn langception_core::ports::TranslateEngine>,
     fused: Option<Arc<dyn FusedEngine>>,
 }
 
-fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeline, String> {
+fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeline, String> {
     let fused = match config.reading {
         ReadingMode::Fused => Some(build_fused_engine(config, target.engine.as_deref())?),
         ReadingMode::Ocr => None,
     };
+    // The fallback notice (ticket 31) lands in the status warnings and the
+    // app log — the same surface the loop's engine errors use.
+    let notify: crate::ocr_fallback::Notify = {
+        let app = app.clone();
+        Arc::new(move |message| {
+            let state = app.state::<AppState>();
+            push_warning(&state, message);
+        })
+    };
+    let (ocr, ocr_name) = build_ocr_engine(app, config, target, notify)?;
     Ok(Pipeline {
         config: LoopConfig {
             source_language: target.language,
@@ -1224,9 +1240,100 @@ fn build_pipeline(config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeli
         },
         glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
-        ocr: Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)),
+        ocr,
+        ocr_name,
         translate: build_translate_engine(config, target.engine.as_deref())?,
         fused,
+    })
+}
+
+/// Builds the OCR Engine for the config's choice (ticket 31): "paddle"
+/// (the bundled sidecar, wrapped in the Windows-OCR fallback) or
+/// "windows". Unknown names are a start-time error — config validation
+/// keeps them out, so this fails loudly rather than falling back.
+///
+/// "paddle" never fails at start: a missing or broken bundle is discovered
+/// on the first pass, covered per-pass by the fallback wrapper (which
+/// names the cause in a status notice), because a packaging problem must
+/// not stop the app from reading text entirely. With no bundle found the
+/// primary is built against the bare sidecar name, so its spawn error says
+/// the file was not found instead of pointing at a wrong path.
+fn build_ocr_engine(
+    app: &AppHandle,
+    config: &AppConfig,
+    target: &EffectiveTarget,
+    notify: crate::ocr_fallback::Notify,
+) -> Result<(Arc<dyn langception_core::ports::OcrEngine>, &'static str), String> {
+    match config.ocr.engine.as_str() {
+        "paddle" => {
+            // An unexpected sidecar death healed between passes is worth
+            // one app-log line (ticket 31: crashes surface, never silently
+            // heal); a failure that degrades a pass is the fallback
+            // wrapper's warning instead.
+            let notice: langception_core::paddle::RestartNotice = Arc::new(move |message| {
+                crate::logging::log("ocr", message);
+            });
+            let paddle: Arc<dyn langception_core::ports::OcrEngine> = match resolve_paddleocr(app)
+            {
+                Some((program, models)) => Arc::new(
+                    PaddleOcrEngine::new(program, models).with_restart_notice(notice),
+                ),
+                None => Arc::new(
+                    PaddleOcrEngine::new(
+                        PathBuf::from(langception_core::paddle::SIDECAR_EXE),
+                        PathBuf::from(langception_core::paddle::MODELS_DIR),
+                    )
+                    .with_restart_notice(notice),
+                ),
+            };
+            let windows = Arc::new(crate::ocr::WindowsOcrEngine::new(target.language));
+            Ok((
+                Arc::new(crate::ocr_fallback::FallbackOcrEngine::new(
+                    paddle,
+                    "PaddleOCR",
+                    windows,
+                    "Windows OCR",
+                    notify,
+                )),
+                "paddle",
+            ))
+        }
+        "windows" => Ok((Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)), "windows")),
+        other => Err(format!(
+            "unknown OCR engine \"{other}\" — engines: {}",
+            langception_core::config::OCR_ENGINES.join(", ")
+        )),
+    }
+}
+
+/// Locates the bundled PaddleOCR sidecar directory (containing
+/// [`langception_core::paddle::SIDECAR_EXE`] and its `models/`). Order:
+/// the `LANGCEPTION_PADDLEOCR_DIR` override (development/manual smoke),
+/// the installer's resource directory, then the executable's surroundings
+/// (cargo dev layout and a resources-beside-exe portable layout).
+fn resolve_paddleocr(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("LANGCEPTION_PADDLEOCR_DIR") {
+        candidates.push(PathBuf::from(dir));
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        // bundle.resources preserves the `resources/` prefix (array form).
+        candidates.push(resource_dir.join("resources").join("paddleocr"));
+        candidates.push(resource_dir.join("paddleocr"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            // Dev run out of target/debug: the repo layout is
+            // <repo>/src-tauri/resources/paddleocr.
+            candidates.push(exe_dir.join("../../src-tauri/resources/paddleocr"));
+            candidates.push(exe_dir.join("resources").join("paddleocr"));
+            candidates.push(exe_dir.join("paddleocr"));
+        }
+    }
+    candidates.into_iter().find_map(|dir| {
+        let program = dir.join(langception_core::paddle::SIDECAR_EXE);
+        let models = dir.join(langception_core::paddle::MODELS_DIR);
+        (program.is_file() && models.is_dir()).then_some((program, models))
     })
 }
 
@@ -1558,7 +1665,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     let excluded_rx = state.exclusions_tx.subscribe();
     let _ = state.paused_tx.send(false);
     *state.paused.lock().unwrap_or_else(|p| p.into_inner()) = false;
-    let pipeline = match build_pipeline(&config, &target) {
+    let pipeline = match build_pipeline(app, &config, &target) {
         Ok(pipeline) => pipeline,
         Err(message) => {
             crate::logging::log("loop", format!("failed to start: {message}"));
@@ -1626,9 +1733,10 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     crate::logging::log(
         "loop",
         format!(
-            "started — reading={} engine={} source={} zones={zone_count}{}",
+            "started — reading={} engine={} ocr={} source={} zones={zone_count}{}",
             config.reading.code(),
             loop_engine,
+            pipeline.ocr_name,
             target.language.code(),
             profile_note,
         ),
@@ -2697,7 +2805,7 @@ fn commit_picked_region(
                 None => return Err("config not loaded yet".into()),
             };
             let target = effective_target(app, &config);
-            let pipeline = build_pipeline(&config, &target)?;
+            let pipeline = build_pipeline(app, &config, &target)?;
             let exclusions = target.exclusions;
             close_picker(app);
             run_one_shot(app, pipeline, region, exclusions);

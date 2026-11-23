@@ -471,6 +471,43 @@ fn default_engine() -> String {
     "google".to_string()
 }
 
+/// The OCR Engines this build offers, by config name — the accepted values
+/// for the `[ocr] engine` setting (ticket 31). "paddle" is the bundled
+/// PaddleOCR sidecar (offline, works without OS language packs) and the
+/// default; "windows" is Windows OCR (needs an installed language pack for
+/// the Source Language). Same rule as [`TRANSLATE_ENGINES`]: an unknown
+/// name in a hand-edited config must be a visible validation error, never
+/// a silent fallback.
+pub const OCR_ENGINES: [&str; 2] = ["paddle", "windows"];
+
+/// The OCR engine a fresh (or pre-ticket-31) config gets: the bundled
+/// PaddleOCR sidecar.
+pub const DEFAULT_OCR_ENGINE: &str = "paddle";
+
+fn default_ocr_engine() -> String {
+    DEFAULT_OCR_ENGINE.to_string()
+}
+
+/// Which engine reads on-screen text (ticket 31). Only the engine name so
+/// far — the PaddleOCR sidecar's tunables (models dir, timeouts) are
+/// deliberately not config: the bundled layout is fixed, and the fallback
+/// to Windows OCR covers a broken bundle. An `[ocr]` section missing from
+/// a config written before this feature parses as the paddle default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OcrSettings {
+    /// One of [`OCR_ENGINES`].
+    pub engine: String,
+}
+
+impl Default for OcrSettings {
+    fn default() -> Self {
+        Self {
+            engine: default_ocr_engine(),
+        }
+    }
+}
+
 /// API keys and endpoints for the non-default Translate Engines (ticket 09
 /// added the keyed cloud pair, ticket 10 the OpenAI-compatible pair,
 /// ticket 11 Gemini). Config.toml is the app's only persistence surface and
@@ -641,6 +678,12 @@ pub struct AppConfig {
     /// A Profile's engine override drives the fused call in its app.
     #[serde(default)]
     pub reading: ReadingMode,
+    /// Which engine reads on-screen text (ticket 31): the bundled
+    /// PaddleOCR sidecar ("paddle", the default) or Windows OCR
+    /// ("windows"). Read when the loop starts, so Settings switches apply
+    /// on the next (re)start without an app restart.
+    #[serde(default)]
+    pub ocr: OcrSettings,
     /// API keys for the keyed engines; see [`EnginesSettings`].
     #[serde(default)]
     pub engines: EnginesSettings,
@@ -725,6 +768,13 @@ impl AppConfig {
                 "engine \"{engine}\" is unknown — engines: {list}",
                 engine = self.engine,
                 list = TRANSLATE_ENGINES.join(", ")
+            )));
+        }
+        if !OCR_ENGINES.contains(&self.ocr.engine.as_str()) {
+            return Err(ConfigError::Validation(format!(
+                "[ocr] engine \"{engine}\" is unknown — engines: {list}",
+                engine = self.ocr.engine,
+                list = OCR_ENGINES.join(", ")
             )));
         }
         // The LLM engines' endpoint settings are structural (valid even
@@ -923,6 +973,18 @@ engine = "google"
 # change detection still gates the calls: an unchanged screen costs
 # nothing. A Profile's engine choice drives the fused call in its app.
 reading = "ocr"
+
+[ocr]
+# Which engine reads on-screen text (Settings → Engines): "paddle" is the
+# bundled PaddleOCR sidecar — offline like everything else here, needs no
+# Windows language packs, and follows each Profile's Source Language
+# (EN/JA/ZH/KO models all ship). If it cannot start or dies mid-pass, the
+# pass falls back to Windows OCR automatically and a notice says so.
+# "windows" is Windows OCR — lighter, but it needs an installed OCR
+# language pack for the Source Language (the first-run wizard probes
+# them). Read when the loop starts; switching applies without an app
+# restart.
+engine = "paddle"
 
 [engines.azure]
 # Azure AI Translator, F0 free tier (2M chars/month). Paste the resource's
@@ -1552,6 +1614,32 @@ language = "ko"
         assert!(config.glossary.0.is_empty());
         assert!(config.zones.is_empty());
         assert!(config.region.is_none());
+    }
+
+    #[test]
+    fn ocr_defaults_to_the_bundled_paddle_engine() {
+        // The default template says so...
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.ocr.engine, "paddle");
+        // ...and a config written before the feature existed (no [ocr]
+        // section at all) picks it up without errors.
+        let old = AppConfig::from_toml_str("[source]\nlanguage = \"en\"\n").unwrap();
+        assert_eq!(old.ocr.engine, "paddle");
+    }
+
+    #[test]
+    fn ocr_engine_roundtrips_and_unknown_names_are_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"paddle\"", "engine = \"windows\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.ocr.engine, "windows");
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+
+        let bad = AppConfig::from_toml_str("[source]\nlanguage = \"en\"\n\n[ocr]\nengine = \"tesseract\"\n");
+        let error = format!("{}", bad.unwrap_err());
+        assert!(error.contains("[ocr]"), "names the section: {error}");
+        assert!(error.contains("tesseract"), "names the value: {error}");
+        assert!(error.contains("paddle, windows"), "lists the accepted engines: {error}");
     }
 
     #[test]

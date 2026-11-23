@@ -149,6 +149,7 @@ const DEEPL_API_URL = "https://www.deepl.com/en/pro-api";
 const GEMINI_CREATE_KEY_URL = "https://aistudio.google.com/apikey";
 
 const enginesDefault = document.getElementById("engines-default");
+const enginesOcr = document.getElementById("engines-ocr");
 const enginesReading = document.getElementById("engines-reading");
 const enginesReadingWarning = document.getElementById("engines-reading-warning");
 const enginesAzureKey = document.getElementById("engines-azure-key");
@@ -210,6 +211,7 @@ async function loadEngines() {
     savedEngines = await invoke("get_engines");
     enginesLoaded = true;
     enginesDefault.value = savedEngines.defaultEngine;
+    enginesOcr.value = savedEngines.ocrEngine || "paddle";
     enginesReading.value = savedEngines.reading || "ocr";
     enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
     enginesAzureKey.value = savedEngines.azure.key;
@@ -243,6 +245,7 @@ async function loadEngines() {
 function collectEngines(defaultEngine) {
   return {
     defaultEngine,
+    ocrEngine: enginesOcr.value,
     reading: enginesReading.value,
     azure: {
       key: enginesAzureKey.value.trim(),
@@ -1324,6 +1327,7 @@ const TRACKED_GENERAL = [
 ];
 const TRACKED_ENGINES = [
   enginesDefault,
+  enginesOcr,
   enginesReading,
   enginesAzureKey,
   enginesAzureRegion,

@@ -59,6 +59,67 @@ fn capture_and_ocr_smoke() {
     }
 }
 
+/// PaddleOCR sidecar smoke (ticket 31). The real sidecar is deliberately
+/// outside the automated suite (spec: Testing Decisions) — its protocol
+/// logic is stub-tested offline. Point `LANGCEPTION_PADDLEOCR_DIR` at a
+/// directory containing `PaddleOCR-json.exe` + `models/` (e.g. an
+/// extracted release archive) to prove the whole chain: spawn, handshake,
+/// PNG task, reply parse. Same region handling as `capture_and_ocr_smoke`.
+#[test]
+#[ignore]
+#[cfg(windows)]
+fn paddle_ocr_smoke() {
+    use std::path::Path;
+
+    let dir = std::env::var("LANGCEPTION_PADDLEOCR_DIR").unwrap_or_else(|_| {
+        // Default: the fetched-into-repo bundle the app itself resolves.
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest.join("resources").join("paddleocr").display().to_string()
+    });
+    let program = Path::new(&dir).join(langception_core::paddle::SIDECAR_EXE);
+    let models = Path::new(&dir).join(langception_core::paddle::MODELS_DIR);
+    assert!(program.is_file(), "sidecar exe missing: {}", program.display());
+    assert!(models.is_dir(), "models dir missing: {}", models.display());
+
+    let region = std::env::var("LANGCEPTION_SMOKE_REGION")
+        .ok()
+        .and_then(|text| parse_region(&text))
+        .unwrap_or(Region {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 300,
+        });
+
+    // ONE runtime for capture + every pass, matching how the app drives
+    // the engine (the orchestrator task runs on Tauri's long-lived async
+    // runtime). The sidecar's piped IO is registered with the runtime's
+    // driver — creating a throwaway runtime per call leaves it registered
+    // on a dropped driver and stalls passes.
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let image = runtime
+        .block_on(langception::capture::GdiCaptureSource::new().capture(region))
+        .expect("GDI capture should work in a desktop session");
+
+    let ocr = langception_core::paddle::PaddleOcrEngine::new(program, models);
+    // Two passes: the second must reuse the live sidecar (no respawn),
+    // which is also why the timings matter — a respawn would re-init.
+    for pass in 1..=2 {
+        let started = std::time::Instant::now();
+        let blocks = runtime
+            .block_on(ocr.recognize(&image, SourceLanguage::En))
+            .expect("the sidecar should recognize a live desktop capture");
+        println!(
+            "pass {pass}: {} blocks in {:?} (0 is fine — depends what is on screen)",
+            blocks.len(),
+            started.elapsed()
+        );
+        for block in &blocks {
+            println!("  {:?} at {},{}", block.text, block.x, block.y);
+        }
+    }
+}
+
 fn parse_region(text: &str) -> Option<Region> {
     let parts: Vec<i32> = text
         .split(',')

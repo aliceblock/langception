@@ -8,6 +8,8 @@ pub mod logging;
 pub mod ocr;
 #[cfg(windows)]
 pub mod ocr_detect;
+#[cfg(windows)]
+pub mod ocr_fallback;
 mod overlay;
 pub mod settings;
 mod shell;

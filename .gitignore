@@ -3,6 +3,14 @@
 dist/
 src-tauri/gen/
 
+# The bundled PaddleOCR-json sidecar + models (ticket 31) — ~300 MB,
+# fetched from the release archive by packaging/fetch-paddleocr.ps1;
+# never committed. The license attribution file IS committed: it satisfies
+# tauri's bundle.resources glob (tauri-build rejects an empty match) and
+# rides along in the installer, as bundled Apache-2.0 code requires.
+/src-tauri/resources/paddleocr/*
+!/src-tauri/resources/paddleocr/LICENSE-PaddleOCR-json.txt
+
 # Node (Tauri frontend build)
 node_modules/
 
