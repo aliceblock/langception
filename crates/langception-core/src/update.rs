@@ -20,15 +20,13 @@ use std::time::Duration;
 /// it case-insensitively so `Langception` and `LANGCEPTION` both find it.
 pub const APP_NAME: &str = "langception";
 
-/// The update URL release builds check by default — empty until the public
-/// repo exists, so **no placeholder URL ever ships** and the feature stays
-/// dormant ("update check unavailable"). Ticket 13's go-public step flips
-/// this to the raw `latest.json` URL (see
-/// `docs/update-check-endpoint.md` § Publishing steps); the config
-/// template's `url` line must flip in the same change (a unit test pins
-/// the two together), so release builds then work with zero per-user
-/// setup.
-pub const DEFAULT_UPDATE_URL: &str = "";
+/// The update URL release builds check by default — the raw `latest.json`
+/// at the root of the public repo, flipped at go-public (tickets 13/28) so
+/// release builds work with zero per-user setup. The payload shape lives
+/// in `docs/update-check-endpoint.md` § The payload; the config template's
+/// `url` line must match this (a unit test pins the two together).
+pub const DEFAULT_UPDATE_URL: &str =
+    "https://raw.githubusercontent.com/aliceblock/langception/main/latest.json";
 
 /// The `[update]` config section: where to check, and whether launches
 /// check by themselves. Both keys predate the feature for configs written

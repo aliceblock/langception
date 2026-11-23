@@ -1192,7 +1192,7 @@ settings_on_top = false
 # default). Point it at any HTTPS URL serving the same shape to use a
 # different source. Check-only — the app never downloads or installs
 # anything from here.
-url = ""
+url = "https://raw.githubusercontent.com/aliceblock/langception/main/latest.json"
 # Check automatically at every launch (Settings → About's toggle). Off by
 # default — opt-in, since it contacts the URL without being asked. A
 # launch-time check never blocks startup and its failures stay silent.
@@ -1359,9 +1359,24 @@ mod tests {
 
     #[test]
     fn update_roundtrips_through_toml() {
+        // Override the template's two [update] lines by line-prefix match,
+        // not by the exact `url` value — the default URL legitimately
+        // changes (it flipped at go-public and may flip again, e.g. to
+        // GitHub Pages), and a value-matched replace would silently no-op.
         let text = AppConfig::DEFAULT_TEMPLATE
-            .replace("url = \"\"", "url = \"https://example.com/latest.json\"")
-            .replace("check_on_launch = false", "check_on_launch = true");
+            .lines()
+            .map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("url = ") {
+                    "url = \"https://example.com/latest.json\"".to_string()
+                } else if trimmed.starts_with("check_on_launch") {
+                    "check_on_launch = true".to_string()
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(
             config.update,
