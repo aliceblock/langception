@@ -22,3 +22,6 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# Local issue tracker — stripped from history at go-public (docs/releasing.md § One-time)
+.scratch/
