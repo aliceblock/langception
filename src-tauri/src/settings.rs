@@ -21,10 +21,12 @@ use crate::shell::{
     apply_always_on_top_from_config, apply_state, current_config, profile_edited, push_warning,
     restart_loop_if_running, run_off_main, with_config_mut, AppState, HotkeyStatus,
 };
-use langception_core::config::HotkeySettings;
+use langception_core::config::{AppConfig, HotkeySettings, PromptSettings};
 use langception_core::glossary::Glossary;
 use langception_core::ports::{SourceLanguage, TARGET_LANGUAGE};
 use langception_core::profile::{GenderlessOverride, Profile};
+use langception_core::prompt::{BuiltinPreset, PromptTexts};
+use langception_core::prompt_preset::ActivePromptPreset;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt as _;
@@ -159,9 +161,10 @@ fn default_ocr_engine_dto() -> String {
 /// The Engines tab's editing surface: the global default engine, every
 /// configurable engine's settings, and the reading mode (ticket 12: classic
 /// OCR vs the fused vision call). Keys and URLs round-trip to the page so
-/// edits prefill; the window is local-only. The custom LLM prompt base
-/// instructions (ticket 37) ride here too — they live on the same tab and
-/// apply with the same save.
+/// edits prefill; the window is local-only. The LLM prompt base
+/// instructions (ticket 37) and the System Prompt Preset selection (ticket
+/// 42) ride here too — they live on the same tab and apply with the same
+/// save.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnginesDto {
@@ -186,6 +189,14 @@ pub struct EnginesDto {
     /// Custom base instruction for the fused screen-reading prompt
     /// (ticket 37; empty = the built-in default).
     pub screen_reading_prompt: String,
+    /// The System Prompt Preset selection (ticket 42): a built-in's code, a
+    /// saved preset's name, or "custom". Read back, it is the selection the
+    /// config actually holds. Sent, it applies the selection together with
+    /// the two texts above (which may be an edited preset's — the config
+    /// then stores "custom"); absent, the prompts are left untouched — the
+    /// wizard's Azure upgrade passes through that way.
+    #[serde(default)]
+    pub prompt_preset: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,14 +269,18 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
             },
             translation_prompt: config.prompts.translation.clone(),
             screen_reading_prompt: config.prompts.screen_reading.clone(),
+            prompt_preset: Some(active_prompt_preset_code(config)),
         }),
         Some(Err(message)) => Err(message.clone()),
         None => Err("config not loaded yet".into()),
     }
 }
 
+/// Saves the Engines tab. On success returns the System Prompt Preset
+/// selection the config holds after the save (ticket 42) — the page shows
+/// that, not what it asked for: an edited preset is stored as "custom".
 #[tauri::command]
-pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(), String> {
+pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<String, String> {
     let default_engine = engines.default_engine.trim().to_lowercase();
     if !langception_core::config::TRANSLATE_ENGINES.contains(&default_engine.as_str()) {
         return Err(format!(
@@ -321,12 +336,14 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
     let gemini_key = engines.gemini.api_key.trim().to_string();
     let gemini_model = engines.gemini.model.trim().to_string();
     let gemini_temperature = engines.gemini.temperature;
-    // The custom LLM prompt base instructions (ticket 37): free text, no
-    // shape to validate — empty is the built-in default, and the prompt
-    // module treats a whitespace-only text as empty too. Trimmed so a
-    // stray paste of blank lines does not persist.
-    let translation_prompt = engines.translation_prompt.trim().to_string();
-    let screen_reading_prompt = engines.screen_reading_prompt.trim().to_string();
+    // The LLM prompts (tickets 37 + 42): free text, no shape to validate
+    // here. With a preset selection the config's own rule decides what the
+    // texts amount to (it trims them, and stores "custom" when they are not
+    // the preset's verbatim wording); without one the prompts are not
+    // touched at all.
+    let translation_prompt = engines.translation_prompt;
+    let screen_reading_prompt = engines.screen_reading_prompt;
+    let prompt_preset = engines.prompt_preset;
     for (label, temperature) in [
         ("OpenAI-compatible", openai_temperature),
         ("LM Studio", lmstudio_temperature),
@@ -366,7 +383,7 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
         }
     }
     run_off_main(app, move |app| {
-        with_config_mut(app, |config| {
+        let active_preset = with_config_mut(app, |config| {
             config.engine = default_engine.clone();
             // The OCR engine is read when the loop starts; the restart
             // below applies a switch live (ticket 31) — no app restart.
@@ -385,15 +402,23 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<(
             config.engines.gemini.api_key = gemini_key.clone();
             config.engines.gemini.model = gemini_model.clone();
             config.engines.gemini.temperature = gemini_temperature;
-            config.prompts.translation = translation_prompt.clone();
-            config.prompts.screen_reading = screen_reading_prompt.clone();
-            Ok(())
+            if let Some(name) = &prompt_preset {
+                config.select_prompt_preset(
+                    name,
+                    PromptTexts {
+                        translation: translation_prompt.clone(),
+                        screen_reading: screen_reading_prompt.clone(),
+                    },
+                )?;
+            }
+            // The selection the config holds once the texts are stored.
+            Ok(active_prompt_preset_code(config))
         })?;
-        // The engine, its endpoint settings, and the prompt overrides are
-        // read when the loop starts: restart so the change visibly applies.
+        // The engine, its endpoint settings, and the prompts are read when
+        // the loop starts: restart so the change visibly applies.
         restart_loop_if_running(app);
         apply_state(app);
-        Ok(())
+        Ok(active_preset)
     })
     .await
 }
@@ -493,6 +518,140 @@ pub(crate) fn open_engine_link(url: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("cannot open the link: {e}"))?;
     Ok(())
+}
+
+// ---- System Prompt Presets (ticket 42) ----
+
+/// The selection code the config holds — what `set_engines` and the preset
+/// commands return, so the page shows reality, not what it asked for: an
+/// edited preset is stored as "custom", a deleted selected one as
+/// "general".
+fn active_prompt_preset_code(config: &AppConfig) -> String {
+    config.active_prompt_preset().code().to_string()
+}
+
+/// One System Prompt Preset as the Engines tab lists it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptPresetDto {
+    /// The selector's value: a built-in's code or a saved preset's name.
+    pub name: String,
+    /// The selector's label: a built-in's display name ("Game"), or a
+    /// saved preset's name as typed.
+    pub label: String,
+    /// Built-ins cannot be renamed, deleted, or overwritten by save-as.
+    pub builtin: bool,
+    pub translation: String,
+    pub screen_reading: String,
+}
+
+/// Every System Prompt Preset, in selector order: the four built-ins, then
+/// the saved ones in config order. The texts let the page show a preset's
+/// wording the moment it is picked, before anything is saved.
+#[tauri::command]
+pub(crate) fn list_prompt_presets(app: AppHandle) -> Result<Vec<PromptPresetDto>, String> {
+    let config = current_config(&app)?;
+    let mut presets: Vec<PromptPresetDto> = BuiltinPreset::ALL
+        .iter()
+        .map(|builtin| {
+            let texts = builtin.texts();
+            PromptPresetDto {
+                name: builtin.code().to_string(),
+                label: builtin.name().to_string(),
+                builtin: true,
+                translation: texts.translation,
+                screen_reading: texts.screen_reading,
+            }
+        })
+        .collect();
+    presets.extend(config.prompt_presets.iter().map(|preset| PromptPresetDto {
+        label: preset.name.clone(),
+        name: preset.name.clone(),
+        builtin: false,
+        translation: preset.translation.clone(),
+        screen_reading: preset.screen_reading.clone(),
+    }));
+    Ok(presets)
+}
+
+/// The prompts a loop sends, for deciding whether an edit needs a restart:
+/// the two texts and the preset the version tag names.
+fn prompts_in_force(config: &AppConfig) -> (PromptSettings, String) {
+    (config.prompts.clone(), active_prompt_preset_code(config))
+}
+
+/// Runs one System Prompt Preset edit against the config and applies it:
+/// returns the selection the config holds afterwards. The loop restarts
+/// only when the prompts in force changed — renaming or deleting a preset
+/// that is not selected leaves them alone, and a restart would reset
+/// tracking and re-translate whatever is on screen.
+fn edit_prompt_presets(
+    app: &AppHandle,
+    edit: impl FnOnce(&mut AppConfig) -> Result<ActivePromptPreset, String>,
+) -> Result<String, String> {
+    let (changed, active) = with_config_mut(app, |config| {
+        let before = prompts_in_force(config);
+        edit(config)?;
+        Ok((
+            before != prompts_in_force(config),
+            active_prompt_preset_code(config),
+        ))
+    })?;
+    if changed {
+        restart_loop_if_running(app);
+    }
+    apply_state(app);
+    Ok(active)
+}
+
+/// "Save as preset": stores the two prompts as displayed under `name` and
+/// selects it. A saved preset of that name is replaced only with
+/// `overwrite` — the page asks first; a built-in's name is never taken.
+#[tauri::command]
+pub(crate) async fn save_prompt_preset(
+    app: AppHandle,
+    name: String,
+    translation: String,
+    screen_reading: String,
+    overwrite: bool,
+) -> Result<String, String> {
+    run_off_main(app, move |app| {
+        edit_prompt_presets(app, |config| {
+            config.save_prompt_preset(
+                &name,
+                PromptTexts {
+                    translation,
+                    screen_reading,
+                },
+                overwrite,
+            )
+        })
+    })
+    .await
+}
+
+/// Renames a saved preset; the selection follows it.
+#[tauri::command]
+pub(crate) async fn rename_prompt_preset(
+    app: AppHandle,
+    name: String,
+    new_name: String,
+) -> Result<String, String> {
+    run_off_main(app, move |app| {
+        edit_prompt_presets(app, |config| config.rename_prompt_preset(&name, &new_name))
+    })
+    .await
+}
+
+/// Deletes a saved preset. Deleting the selected one returns the selection
+/// to General and clears both prompts — the returned "general" tells the
+/// page to clear its fields.
+#[tauri::command]
+pub(crate) async fn delete_prompt_preset(app: AppHandle, name: String) -> Result<String, String> {
+    run_off_main(app, move |app| {
+        edit_prompt_presets(app, |config| config.delete_prompt_preset(&name))
+    })
+    .await
 }
 
 // ---- General tab ----

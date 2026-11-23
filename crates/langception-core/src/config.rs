@@ -6,6 +6,7 @@
 use crate::glossary::Glossary;
 use crate::ports::{ExcludedBlock, Region, SourceLanguage, Zone};
 use crate::profile::Profile;
+use crate::prompt_preset::PromptPreset;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use thiserror::Error;
@@ -437,19 +438,27 @@ impl Default for WindowSettings {
     }
 }
 
-/// Custom base instructions for the two LLM system prompts (ticket 37,
-/// Settings → Engines → Prompts). Empty (the default) means the built-in
-/// templates, byte-for-byte. A custom text replaces only that prompt's
-/// base instruction — `{source}`/`{target}` substitute to the language
-/// names exactly as the defaults do, and the automatic appendices (the
-/// Glossary entries, the Genderless instruction, the fused reply
-/// contract, the version tag) still attach. The LLM engines (Gemini,
+/// The prompts of the two LLM system prompts (ticket 37, Settings →
+/// Engines → Prompts): which System Prompt Preset is selected, and the two
+/// base-instruction texts in force. Empty texts (the General preset, the
+/// default) mean the built-in templates, byte-for-byte. A text replaces
+/// only that prompt's base instruction — `{source}`/`{target}` substitute
+/// to the language names exactly as the defaults do, and the automatic
+/// appendices (the Glossary entries, the Genderless instruction, the fused
+/// reply contract, the version tag) still attach. The LLM engines (Gemini,
 /// OpenAI-compatible, LM Studio) are the only consumers: keyed/MT engines
-/// (Google, Azure, DeepL) never see prompts, so these fields are inert
-/// for them. Global, not per-Profile.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// (Google, Azure, DeepL) never see prompts, so these fields are inert for
+/// them. Global, not per-Profile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PromptSettings {
+    /// The selected System Prompt Preset (CONTEXT.md, ticket 42): a
+    /// built-in's code — [`DEFAULT_PROMPT_PRESET`] ("general"), "game",
+    /// "novel", "manga" — the name of a saved preset
+    /// (`[[prompt_presets]]`), or "custom" for hand-written texts.
+    /// Selecting a preset copies its two texts into the keys below; the
+    /// selection holds only while they stay its verbatim wording.
+    pub preset: String,
     /// Replaces the per-block translation prompt's base instruction.
     /// Whitespace-only is treated as empty (the built-in default) by the
     /// prompt module.
@@ -459,6 +468,27 @@ pub struct PromptSettings {
     /// re-appended automatically — a custom text cannot break the loop's
     /// mechanical parsing.
     pub screen_reading: String,
+}
+
+/// The System Prompt Preset a fresh (or pre-ticket-42) config selects: the
+/// built-in defaults.
+pub const DEFAULT_PROMPT_PRESET: &str = "general";
+
+/// The `[prompts] preset` value for hand-written prompt texts — no preset
+/// in force (ticket 42).
+pub const CUSTOM_PROMPT_PRESET: &str = "custom";
+
+// The default selects General explicitly ("preset = \"general\"" reads
+// better in the file than an empty value), so the impl is manual — like
+// WindowSettings.
+impl Default for PromptSettings {
+    fn default() -> Self {
+        Self {
+            preset: DEFAULT_PROMPT_PRESET.to_string(),
+            translation: String::new(),
+            screen_reading: String::new(),
+        }
+    }
 }
 
 /// The Translate Engines this build offers, by config name — the accepted
@@ -726,6 +756,11 @@ pub struct AppConfig {
     /// fallback when none matches.
     #[serde(default)]
     pub profiles: Vec<Profile>,
+    /// The System Prompt Presets the user saved (ticket 42, Settings →
+    /// Engines → "Save as preset"). The built-ins are not stored here —
+    /// their wordings live in the app.
+    #[serde(default)]
+    pub prompt_presets: Vec<PromptPreset>,
 }
 
 impl AppConfig {
@@ -811,6 +846,7 @@ impl AppConfig {
             ));
         }
         self.text_style.validate()?;
+        crate::prompt_preset::validate(self)?;
         for (action, key) in [
             ("toggle_translation", &self.hotkeys.toggle_translation),
             ("new_zone", &self.hotkeys.new_zone),
@@ -1109,15 +1145,24 @@ results_on_top = true
 settings_on_top = false
 
 [prompts]
-# Custom base instructions for the two LLM system prompts (Settings →
-# Engines → Prompts). Empty = the built-in defaults. A custom text
-# replaces ONLY that prompt's base instruction: {source} and {target}
-# are replaced with the language names, and the app still appends the
-# Glossary entries, the Genderless instruction, and the prompt's version
-# tag (marked "custom", so a recorded request shows what produced it).
-# Only LLM engines (Gemini, OpenAI-compatible, LM Studio) receive prompts;
-# Google, Azure and DeepL ignore these fields entirely. Whitespace-only
-# counts as empty.
+# The System Prompt Preset in use (Settings → Engines): "general" (the
+# built-in defaults), "game", "novel" or "manga" (built-in wordings tuned
+# for game UI and dialogue, narrative prose, and manga), the name of a
+# preset you saved in Settings → Engines (they are listed under
+# [[prompt_presets]] at the end of this file), or "custom" for hand-written
+# instructions. Selecting a preset copies its two texts into the keys
+# below, so this file always shows exactly what is sent. The selection
+# holds only while the texts stay that preset's verbatim wording — edit a
+# copied text and it becomes "custom".
+preset = "general"
+# Base instructions for the two LLM system prompts; empty = the built-in
+# default. A text replaces ONLY that prompt's base instruction: {source}
+# and {target} are replaced with the language names, and the app still
+# appends the Glossary entries, the Genderless instruction, and the prompt's
+# version tag (it names the preset, or says "custom", so a recorded request
+# shows what produced it). Only LLM engines (Gemini, OpenAI-compatible, LM
+# Studio) receive prompts; Google, Azure and DeepL ignore these keys
+# entirely. Whitespace-only counts as empty.
 # The per-block translation instruction (classic OCR reading).
 translation = ""
 # The fused screen-reading instruction (Screen reading = "Vision model").
@@ -1189,6 +1234,16 @@ screen_reading = ""
 # y = 600
 # width = 400
 # height = 120
+
+# System Prompt Presets you save in Settings → Engines ("Save as preset")
+# are appended here automatically: a name plus the two prompt texts it
+# holds (multi-line texts are written between triple quotes). A preset name
+# is unique, and is never a built-in's ("general", "game", "novel",
+# "manga") nor "custom".
+# [[prompt_presets]]
+# name = "My JRPG"
+# translation = "Translate game dialogue casually and keep item names short."
+# screen_reading = "Read the {source} screen as one image and answer in {target}."
 "##;
 }
 
@@ -2586,5 +2641,153 @@ language = "en"
         let reparsed =
             AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
+    }
+
+    // ---- System Prompt Presets (ticket 42) ----
+
+    #[test]
+    fn default_template_selects_general_and_saves_no_presets() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.prompts.preset, "general");
+        assert!(config.prompt_presets.is_empty());
+    }
+
+    #[test]
+    fn ticket37_config_without_a_preset_selection_gets_general() {
+        // A config written before ticket 42 has no `preset` key in
+        // [prompts] — the container default must fill it in rather than
+        // reject the file.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("preset = "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.prompts.preset, "general");
+        assert_eq!(config.prompts, PromptSettings::default());
+    }
+
+    /// The default template with one saved preset, selected — its two
+    /// texts sit in `[prompts]` too, the way selecting a preset stores them.
+    fn template_with_saved_preset() -> String {
+        let translation = "Translate politely.\nKeep names as written.";
+        let screen_reading = "Read the {source} screen.\nAnswer in {target}.";
+        let entry = "\n[[prompt_presets]]\nname = \"My JRPG\"\n".to_string()
+            + &format!("translation = \"\"\"{translation}\"\"\"\n")
+            + &format!("screen_reading = \"\"\"{screen_reading}\"\"\"\n");
+        AppConfig::DEFAULT_TEMPLATE
+            .replace("preset = \"general\"", "preset = \"My JRPG\"")
+            .replace(
+                "translation = \"\"",
+                &format!("translation = \"\"\"{translation}\"\"\""),
+            )
+            .replace(
+                "screen_reading = \"\"",
+                &format!("screen_reading = \"\"\"{screen_reading}\"\"\""),
+            )
+            + &entry
+    }
+
+    fn saved_preset(name: &str, translation: &str, screen_reading: &str) -> PromptPreset {
+        PromptPreset {
+            name: name.into(),
+            translation: translation.into(),
+            screen_reading: screen_reading.into(),
+        }
+    }
+
+    #[test]
+    fn a_saved_preset_and_its_selection_roundtrip_through_toml() {
+        let config = AppConfig::from_toml_str(&template_with_saved_preset()).unwrap();
+        assert_eq!(config.prompts.preset, "My JRPG");
+        assert_eq!(
+            config.prompt_presets,
+            vec![saved_preset(
+                "My JRPG",
+                "Translate politely.\nKeep names as written.",
+                "Read the {source} screen.\nAnswer in {target}.",
+            )]
+        );
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn a_built_in_selection_roundtrips_through_toml() {
+        let game = crate::prompt::BuiltinPreset::Game.texts();
+        let mut config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        config.prompts.preset = "game".into();
+        config.prompts.translation = game.translation.clone();
+        config.prompts.screen_reading = game.screen_reading.clone();
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(reparsed, config);
+    }
+
+    #[test]
+    fn an_unknown_preset_selection_is_rejected_and_the_error_lists_the_names() {
+        let text =
+            template_with_saved_preset().replace("preset = \"My JRPG\"", "preset = \"babelfish\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("[prompts] preset \"babelfish\" is unknown"),
+            "was: {message}"
+        );
+        // The way out is in the message: every accepted name, the user's
+        // own saved preset included.
+        for accepted in ["general", "game", "novel", "manga", "custom", "My JRPG"] {
+            assert!(
+                message.contains(accepted),
+                "{accepted} must be listed, was: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_case_variant_hand_edited_selection_names_the_saved_preset() {
+        // Names match case-insensitively, like zones and profiles: a
+        // hand-edited "my jrpg" selects the saved "My JRPG" instead of
+        // being rejected as unknown.
+        let text =
+            template_with_saved_preset().replace("preset = \"My JRPG\"", "preset = \"my jrpg\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(
+            config.active_prompt_preset(),
+            crate::prompt_preset::ActivePromptPreset::Named("my jrpg".into())
+        );
+    }
+
+    #[test]
+    fn a_saved_preset_needs_a_usable_unique_name_and_a_text() {
+        let with_preset = |name: &str, translation: &str, screen_reading: &str| {
+            let entry = format!("\n[[prompt_presets]]\nname = \"{name}\"\n")
+                + &format!("translation = \"{translation}\"\n")
+                + &format!("screen_reading = \"{screen_reading}\"\n");
+            AppConfig::DEFAULT_TEMPLATE.to_string() + &entry
+        };
+        for (text, expected) in [
+            (with_preset("", "Be brief.", ""), "non-empty name"),
+            (with_preset("   ", "Be brief.", ""), "non-empty name"),
+            // Case-insensitive, like every other name in the config.
+            (with_preset("Game", "Be brief.", ""), "reserved name"),
+            (with_preset("custom", "Be brief.", ""), "reserved name"),
+            (
+                with_preset("Empty", "  ", " \t "),
+                "needs a translation or a screen-reading text",
+            ),
+            (
+                template_with_saved_preset()
+                    + "\n[[prompt_presets]]\nname = \"my jrpg\"\ntranslation = \"Be brief.\"\n"
+                    + "screen_reading = \"\"\n",
+                "two prompt presets are named \"my jrpg\" — preset names must be unique",
+            ),
+        ] {
+            let err = AppConfig::from_toml_str(&text)
+                .err()
+                .unwrap_or_else(|| panic!("must be rejected: {text}"));
+            assert!(err.to_string().contains(expected), "was: {err}");
+        }
     }
 }

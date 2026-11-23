@@ -13,5 +13,6 @@ pub(crate) fn guided(entries: &[(&str, &str)], genderless: bool) -> TranslationG
             .collect(),
         genderless,
         custom_base: None,
+        preset: None,
     }
 }

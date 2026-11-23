@@ -170,6 +170,13 @@ const enginesNote = document.getElementById("engines-note");
 // The custom LLM prompt fields (ticket 37): empty = the built-in default.
 const enginesPromptTranslation = document.getElementById("engines-prompt-translation");
 const enginesPromptScreenReading = document.getElementById("engines-prompt-screen-reading");
+// The System Prompt Preset selector and its save/rename/delete row (ticket
+// 42): a preset loads its two texts into the two prompt fields.
+const enginesPreset = document.getElementById("engines-preset");
+const enginesPresetName = document.getElementById("engines-preset-name");
+const enginesPresetSave = document.getElementById("engines-preset-save");
+const enginesPresetRename = document.getElementById("engines-preset-rename");
+const enginesPresetDelete = document.getElementById("engines-preset-delete");
 const wizardAzureKey = document.getElementById("wizard-azure-key");
 const wizardAzureRegion = document.getElementById("wizard-azure-region");
 const wizardAzureNote = document.getElementById("wizard-azure-note");
@@ -229,6 +236,8 @@ async function loadEngines() {
     enginesGeminiTemperature.value = savedEngines.gemini.temperature;
     enginesPromptTranslation.value = savedEngines.translationPrompt || "";
     enginesPromptScreenReading.value = savedEngines.screenReadingPrompt || "";
+    await loadPromptPresets();
+    applyPromptSelection(savedEngines.promptPreset || GENERAL_PRESET);
     // The wizard's fields prefill too, so a half-finished setup survives
     // re-running the wizard.
     wizardAzureKey.value = savedEngines.azure.key;
@@ -241,6 +250,247 @@ async function loadEngines() {
     toast(String(e), "error");
   }
 }
+
+// System Prompt Presets (ticket 42). The two prompt fields stay exactly what
+// gets sent: picking a preset loads its texts into them, and typing turns
+// the selection into Custom. The Rust side decides what a save amounted to
+// and reports the selection the config holds — an edited preset is stored
+// as "custom", a deleted selected one as "general" — and the page shows
+// that instead of guessing.
+const CUSTOM_PRESET = "custom";
+const GENERAL_PRESET = "general";
+let promptPresets = []; // the last list confirmed by list_prompt_presets
+let activePromptPreset = GENERAL_PRESET; // the selection the config holds
+// The hand-written texts, remembered while a preset's wording is on show,
+// so trying presets never loses them.
+let customPrompts = { translation: "", screenReading: "" };
+
+function promptFields() {
+  return {
+    translation: enginesPromptTranslation.value,
+    screenReading: enginesPromptScreenReading.value,
+  };
+}
+
+// Under the custom selection the fields ARE the hand-written texts.
+function syncCustomPrompts(active) {
+  if (active === CUSTOM_PRESET) customPrompts = promptFields();
+}
+
+function findPromptPreset(name) {
+  return promptPresets.find((preset) => preset.name === name);
+}
+
+async function loadPromptPresets() {
+  promptPresets = (await invoke("list_prompt_presets")) || [];
+}
+
+// Rebuilt only when the option set changed, so a refresh never slams shut a
+// dropdown the user has open (same rule as the Profiles select).
+function renderPresetOptions() {
+  const signature = promptPresets.map((preset) => `${preset.name}\u0001${preset.builtin}`).join("\u0000");
+  if (enginesPreset.dataset.sig === signature) return;
+  enginesPreset.dataset.sig = signature;
+  const builtins = document.createElement("optgroup");
+  builtins.label = "Built-in presets";
+  const saved = document.createElement("optgroup");
+  saved.label = "Your presets";
+  for (const preset of promptPresets) {
+    const option = document.createElement("option");
+    option.value = preset.name;
+    option.textContent = preset.label;
+    (preset.builtin ? builtins : saved).append(option);
+  }
+  const custom = document.createElement("option");
+  custom.value = CUSTOM_PRESET;
+  custom.textContent = "Custom — no preset";
+  enginesPreset.replaceChildren(builtins);
+  if (saved.childElementCount > 0) enginesPreset.append(saved);
+  enginesPreset.append(custom);
+  enginesPreset.value = activePromptPreset;
+}
+
+// Rename and Delete manage the STORED preset the dropdown shows — not
+// merely the one in force (an unselected preset needs no detour through
+// Save to be renamed or deleted). Built-ins are fixed, and General/Custom
+// are not presets to manage.
+function updatePresetControls() {
+  const picked = findPromptPreset(enginesPreset.value);
+  const manageable = Boolean(picked && !picked.builtin);
+  enginesPresetRename.disabled = !manageable;
+  enginesPresetDelete.disabled = !manageable;
+}
+
+// Reflects the selection the config holds. "general" means the Rust side
+// cleared both prompts (a deleted selected preset) — mirror that; a named
+// preset means its wording is in force — show it. Custom leaves the fields
+// alone: they ARE the hand-written texts.
+function showPromptPreset(active) {
+  activePromptPreset = active;
+  renderPresetOptions();
+  enginesPreset.value = active;
+  if (active === GENERAL_PRESET) {
+    enginesPromptTranslation.value = "";
+    enginesPromptScreenReading.value = "";
+  } else if (active !== CUSTOM_PRESET) {
+    const inForce = findPromptPreset(active);
+    if (inForce) {
+      enginesPromptTranslation.value = inForce.translation;
+      enginesPromptScreenReading.value = inForce.screenReading;
+    }
+  }
+  updatePresetControls();
+}
+
+// The one "the config's answer landed" step, shared by every preset save
+// path: record the hand-written texts under Custom, then reflect.
+function applyPromptSelection(active) {
+  syncCustomPrompts(active);
+  showPromptPreset(active);
+}
+
+// The preset commands store the two prompts as displayed: re-baseline only
+// the prompt controls, never the whole Engines form — its other fields may
+// hold unsaved edits the footer must keep asking about.
+function promptControlsSaved() {
+  snapshotFields([enginesPreset, enginesPromptTranslation, enginesPromptScreenReading]);
+  updateSaveFooter();
+}
+
+async function confirmDialog(message) {
+  try {
+    return await askDialog(message, { title: "Langception — Settings", kind: "warning" });
+  } catch (e) {
+    // A failed dialog must not strand the action silently.
+    toast(String(e), "error");
+    return false;
+  }
+}
+
+async function refreshAfterPromptPresetEdit(active, message) {
+  await loadPromptPresets();
+  showPromptPreset(active);
+  promptControlsSaved();
+  toast(message);
+}
+
+enginesPreset.addEventListener("change", () => {
+  if (enginesPreset.value === CUSTOM_PRESET) {
+    // Back to the hand-written texts that were on show before a preset.
+    enginesPromptTranslation.value = customPrompts.translation;
+    enginesPromptScreenReading.value = customPrompts.screenReading;
+  } else {
+    const preset = findPromptPreset(enginesPreset.value);
+    enginesPromptTranslation.value = preset ? preset.translation : "";
+    enginesPromptScreenReading.value = preset ? preset.screenReading : "";
+  }
+  // The name box doubles as the Rename target, so under a saved preset it
+  // holds that preset's name. Nothing else touches it: a name typed for a
+  // new preset must survive picking a starting wording.
+  const picked = findPromptPreset(enginesPreset.value);
+  if (picked && !picked.builtin) enginesPresetName.value = picked.name;
+  updatePresetControls();
+});
+
+for (const field of [enginesPromptTranslation, enginesPromptScreenReading]) {
+  field.addEventListener("input", () => {
+    // Typing leaves whatever preset was loaded: the texts are the user's.
+    customPrompts = promptFields();
+    enginesPreset.value = CUSTOM_PRESET;
+    updatePresetControls();
+  });
+}
+
+enginesPresetSave.addEventListener("click", async () => {
+  const name = enginesPresetName.value.trim();
+  if (!name) {
+    toast("Type a name for the preset first", "error");
+    enginesPresetName.focus();
+    return;
+  }
+  const { translation, screenReading } = promptFields();
+  if (!translation.trim() && !screenReading.trim()) {
+    toast("Nothing to save — both prompts are empty, which is the General preset", "error");
+    return;
+  }
+  // Saving over a saved preset replaces it, so ask first (the Rust side
+  // refuses without the flag); a built-in's name is simply refused there.
+  const existing = promptPresets.find(
+    (preset) => !preset.builtin && preset.name.toLowerCase() === name.toLowerCase()
+  );
+  if (existing) {
+    const replace = await confirmDialog(
+      `A preset named "${existing.name}" already exists. Replace it with the prompts as they read now?`
+    );
+    if (!replace) return;
+  }
+  try {
+    const active = await invoke("save_prompt_preset", {
+      name,
+      translation,
+      screenReading,
+      overwrite: Boolean(existing),
+    });
+    await refreshAfterPromptPresetEdit(active, `Preset "${active}" saved and selected`);
+    // The new preset is the selection in force; its name stays as the
+    // Rename target, the way the config spells it.
+    enginesPresetName.value = active;
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+enginesPresetName.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") enginesPresetSave.click();
+});
+
+enginesPresetRename.addEventListener("click", async () => {
+  const from = findPromptPreset(enginesPreset.value);
+  if (!from || from.builtin) {
+    toast("Pick one of your saved presets to rename", "error");
+    return;
+  }
+  const to = enginesPresetName.value.trim();
+  if (!to) {
+    toast("Type the new name first", "error");
+    enginesPresetName.focus();
+    return;
+  }
+  if (to === from.name) {
+    toast("That is already its name");
+    return;
+  }
+  try {
+    const active = await invoke("rename_prompt_preset", { name: from.name, newName: to });
+    await refreshAfterPromptPresetEdit(active, `Preset renamed to "${to}"`);
+    enginesPresetName.value = to;
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
+enginesPresetDelete.addEventListener("click", async () => {
+  const target = findPromptPreset(enginesPreset.value);
+  if (!target || target.builtin) {
+    toast("Pick one of your saved presets to delete", "error");
+    return;
+  }
+  // Deleting the one in force returns the config to General and clears both
+  // prompts; deleting another one leaves the selection alone.
+  const inUse = target.name === activePromptPreset;
+  const sure = await confirmDialog(
+    inUse
+      ? `Delete the preset "${target.name}"? It is in use, so both prompts return to the General default.`
+      : `Delete the preset "${target.name}"?`
+  );
+  if (!sure) return;
+  try {
+    const active = await invoke("delete_prompt_preset", { name: target.name });
+    await refreshAfterPromptPresetEdit(active, `Preset "${target.name}" deleted`);
+    enginesPresetName.value = "";
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
 
 function collectEngines(defaultEngine) {
   return {
@@ -271,9 +521,12 @@ function collectEngines(defaultEngine) {
       temperature: Number(enginesGeminiTemperature.value) || 0,
     },
     // The prompt fields pass through un-trimmed: the Rust side trims and
-    // treats a whitespace-only text as empty (the built-in default).
+    // treats a whitespace-only text as empty (the built-in default). The
+    // preset selection rides with them: the Rust side keeps it only while
+    // the texts stay that preset's wording.
     translationPrompt: enginesPromptTranslation.value,
     screenReadingPrompt: enginesPromptScreenReading.value,
+    promptPreset: enginesPreset.value,
   };
 }
 
@@ -282,7 +535,8 @@ function collectEngines(defaultEngine) {
 // tells the footer whether the save went through.
 async function saveEngines() {
   try {
-    await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
+    const active = await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
+    applyPromptSelection(active);
     toast("Engines saved");
     return true;
   } catch (e) {
@@ -302,7 +556,10 @@ async function resetPromptToDefault(field, button) {
   button.disabled = true;
   try {
     field.value = "";
-    await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
+    const active = await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
+    // A cleared field under a preset leaves the preset: the config says
+    // "custom" now, and the texts on show are the hand-written ones.
+    applyPromptSelection(active);
     // Ticket 39: this saved the whole engines form as displayed, so the
     // engines baseline moves with it.
     snapshotFields(TRACKED_ENGINES);
@@ -1344,6 +1601,7 @@ const TRACKED_ENGINES = [
   enginesGeminiTemperature,
   enginesPromptTranslation,
   enginesPromptScreenReading,
+  enginesPreset,
 ];
 const TRACKED_PROFILE = [profileName, profileExe, profileLanguage, profileEngine, profileGenderless];
 const TRACKED_HOTKEYS = [

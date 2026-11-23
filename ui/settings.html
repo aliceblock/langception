@@ -343,16 +343,46 @@
         <h3>Prompts (advanced)</h3>
         <p class="hint">
           The system prompts Langception sends to the LLM engines (Gemini,
-          OpenAI-compatible, LM Studio) with every translation. Leave a field
-          empty to use the built-in instruction; <code>{source}</code> and
-          <code>{target}</code> in a custom text are replaced with the
-          language names. The app always appends by itself — the Glossary
-          entries relevant to the text, the Genderless Mode instruction when
-          enabled, the screen-reading reply contract (a fixed JSON shape, so
-          a custom prompt cannot break parsing), and the prompt's version tag
-          (marked "custom" so a recorded request shows what produced it).
-          Google, Azure and DeepL never see prompts. Applies with
-          <em>Save engines</em>.
+          OpenAI-compatible, LM Studio) with every translation. A System
+          Prompt Preset fills both prompts below with one saved wording —
+          four built-ins ship with the app, and you can save your own.
+          <code>{source}</code> and <code>{target}</code> in a prompt are
+          replaced with the language names. The app always appends by itself —
+          the Glossary entries relevant to the text, the Genderless Mode
+          instruction when enabled, the screen-reading reply contract (a fixed
+          JSON shape, so a custom prompt cannot break parsing), and the
+          prompt's version tag (it names the preset, or says "custom", so a
+          recorded request shows what produced it). Google, Azure and DeepL
+          never see prompts. Applies with <em>Save engines</em>.
+        </p>
+        <div class="form-grid">
+          <label class="form-row">
+            <span>System Prompt Preset</span>
+            <!-- Filled from the config: the built-ins, the saved presets, then Custom. -->
+            <select id="engines-preset"></select>
+          </label>
+        </div>
+        <p class="hint">
+          Picking a preset loads its two prompts below — <strong>General</strong>
+          clears both (the built-in default). Editing a loaded prompt turns the
+          selection into <strong>Custom</strong>: your edited text is what gets
+          sent.
+        </p>
+        <div class="row glossary-add">
+          <input id="engines-preset-name" type="text" maxlength="80" placeholder="Preset name" spellcheck="false" />
+          <button id="engines-preset-save" class="btn small" title="Store the two prompts below under this name and select the new preset">
+            Save as preset…
+          </button>
+          <button id="engines-preset-rename" class="btn small" title="Rename the selected saved preset to the name typed here">
+            Rename
+          </button>
+          <button id="engines-preset-delete" class="btn small" title="Delete the selected saved preset">
+            Delete
+          </button>
+        </div>
+        <p class="hint">
+          <em>Save as preset</em> stores the two prompts as they read right now.
+          Saved presets can be renamed and deleted; the built-ins cannot.
         </p>
         <div class="prompt-field">
           <div class="row prompt-head">

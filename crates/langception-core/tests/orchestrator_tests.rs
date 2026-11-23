@@ -19,6 +19,7 @@ use langception_core::ports::{
     FusedError, OcrEngine, OcrError, Region, SourceLanguage, TextBlock, TranslateEngine,
     TranslateError, Zone,
 };
+use langception_core::prompt::BuiltinPreset;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex, Notify};
@@ -45,6 +46,7 @@ fn config() -> LoopConfig {
         auto_colors: false,
         translation_prompt_override: None,
         fused_prompt_override: None,
+        prompt_preset: None,
     }
 }
 
@@ -236,6 +238,7 @@ struct GuidedCall {
     glossary: Vec<(String, String)>,
     genderless: bool,
     custom_base: Option<String>,
+    preset: Option<String>,
 }
 
 impl FakeTranslate {
@@ -296,6 +299,7 @@ impl TranslateEngine for FakeTranslate {
             glossary: guidance.glossary.clone(),
             genderless: guidance.genderless,
             custom_base: guidance.custom_base.clone(),
+            preset: guidance.preset.clone(),
         });
         self.answer(text).await
     }
@@ -354,6 +358,7 @@ struct FusedCallRecord {
     glossary: Vec<(String, String)>,
     genderless: bool,
     custom_base: Option<String>,
+    preset: Option<String>,
     target: String,
 }
 
@@ -389,6 +394,7 @@ impl FusedEngine for FakeFused {
             glossary: guidance.glossary.clone(),
             genderless: guidance.genderless,
             custom_base: guidance.custom_base.clone(),
+            preset: guidance.preset.clone(),
             target: target.to_string(),
         });
         let mut rx = self.responses.lock().await;
@@ -433,6 +439,28 @@ async fn harness_inner(
     translation_prompt_override: Option<String>,
     fused_prompt_override: Option<String>,
 ) -> (Harness, Orchestrator) {
+    harness_with_config(
+        glossary,
+        fused,
+        LoopConfig {
+            stability,
+            genderless,
+            auto_colors,
+            translation_prompt_override,
+            fused_prompt_override,
+            ..config()
+        },
+    )
+    .await
+}
+
+/// The harness around a loop config given wholesale, for inputs that have
+/// no parameter of their own above (the prompt preset, ticket 42).
+async fn harness_with_config(
+    glossary: Glossary,
+    fused: bool,
+    config: LoopConfig,
+) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
     let (ocr_tx, ocr) = FakeOcr::new();
@@ -447,14 +475,6 @@ async fn harness_inner(
     let (paused_tx, paused_rx) = watch::channel(false);
     let (excluded_tx, excluded_rx) = watch::channel(Vec::new());
 
-    let config = LoopConfig {
-        stability,
-        genderless,
-        auto_colors,
-        translation_prompt_override,
-        fused_prompt_override,
-        ..config()
-    };
     let orchestrator = Orchestrator::new(
         Arc::new(capture),
         Arc::new(ocr),
@@ -2041,6 +2061,7 @@ async fn glossary_entries_appearing_in_the_block_ride_in_the_engine_guidance() {
             glossary: vec![("Vertin".into(), "เวอร์ติน".into())],
             genderless: false,
             custom_base: None,
+            preset: None,
         }],
         "exactly the in-sentence glossary entry must reach the engine"
     );
@@ -2072,6 +2093,7 @@ async fn blocks_without_glossary_terms_carry_empty_guidance() {
             glossary: Vec::new(),
             genderless: false,
             custom_base: None,
+            preset: None,
         }],
         "no relevant term → an empty glossary injection"
     );
@@ -2092,6 +2114,7 @@ async fn genderless_mode_rides_in_the_engine_guidance() {
             glossary: Vec::new(),
             genderless: true,
             custom_base: None,
+            preset: None,
         }],
         "the mode-on flag must reach the LLM prompt path"
     );
@@ -2186,6 +2209,7 @@ async fn the_translation_prompt_override_rides_in_the_engine_guidance() {
             glossary: Vec::new(),
             genderless: false,
             custom_base: Some("Translate {source} speech casually.".into()),
+            preset: None,
         }],
         "the custom translation base must reach the LLM prompt path"
     );
@@ -2228,6 +2252,60 @@ async fn the_screen_reading_override_rides_in_the_fused_guidance_not_the_transla
     // The classic path never ran: no OCR, no translate engine call.
     assert!(h.translate.calls().is_empty());
     assert_eq!(*h.ocr_calls.lock().unwrap(), 0);
+}
+
+// ---- System Prompt Presets (ticket 42) ----
+//
+// The shell resolves the config into the two prompt texts AND the name of
+// the preset they are the wording of; both ride in LoopConfig next to each
+// other. The orchestrator only hands the name through — the prompt module
+// turns it into the version tag.
+
+#[tokio::test]
+async fn the_prompt_preset_rides_in_the_translation_engine_guidance() {
+    let (mut h, mut orch) = harness_with_config(
+        Glossary::default(),
+        false,
+        LoopConfig {
+            translation_prompt_override: Some(BuiltinPreset::Game.texts().translation),
+            prompt_preset: Some("game".into()),
+            ..config()
+        },
+    )
+    .await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+
+    assert_eq!(
+        h.translate.guided_calls()[0].preset.as_deref(),
+        Some("game"),
+        "the LLM engine must be told which preset its prompt is the wording of"
+    );
+    let _ = next_event(&mut h.events).await;
+}
+
+#[tokio::test]
+async fn the_prompt_preset_rides_in_the_fused_guidance() {
+    let (h, mut orch) = harness_with_config(
+        Glossary::default(),
+        true,
+        LoopConfig {
+            fused_prompt_override: Some(BuiltinPreset::Manga.texts().screen_reading),
+            prompt_preset: Some("manga".into()),
+            ..config()
+        },
+    )
+    .await;
+
+    feed_fused(&h, &frame_for(&[block(0, 0, "Hello")]), Ok(vec![])).await;
+    orch.tick().await;
+
+    assert_eq!(
+        h.fused.calls()[0].preset.as_deref(),
+        Some("manga"),
+        "the fused engine must be told which preset its prompt is the wording of"
+    );
 }
 
 // ---- Prompt construction through the pipeline seam, fake HTTP engine (ticket 11) ----
@@ -2467,6 +2545,114 @@ async fn pipeline_tick_sends_a_custom_prompt_to_the_http_engine() {
     assert_eq!(body["messages"][1]["content"], "Vertin picks up the case");
 
     // The loop completed with the engine's answer from the golden body.
+    match next_event(&mut events).await {
+        LoopEvent::Translated { via, .. } => assert_eq!(via, Via::Engine),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+/// One pipeline tick through the REAL OpenAI-compatible adapter against
+/// the fake HTTP engine, translating one block of `text`: the recorded
+/// request bodies and the loop's event receiver.
+async fn http_pipeline_tick(
+    config: LoopConfig,
+    glossary: Glossary,
+    text: &str,
+) -> (Arc<Mutex<Vec<String>>>, mpsc::UnboundedReceiver<LoopEvent>) {
+    let (url, bodies) = fake_http_engine(include_str!("../fixtures/openai/success.json")).await;
+    let engine = langception_core::openai::OpenAiCompatibleEngine::new(
+        &url,
+        "test-key",
+        "test-model",
+        0.2,
+        langception_core::openai::GENERIC_LABEL,
+    )
+    .unwrap();
+
+    let (images_tx, capture) = FakeCapture::new();
+    let (ocr_tx, ocr) = FakeOcr::new();
+    let (events_tx, events) = mpsc::unbounded_channel();
+    let (_zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
+    let (_paused_tx, paused_rx) = watch::channel(false);
+    let (_excluded_tx, excluded_rx) = watch::channel(Vec::new());
+
+    let mut orchestrator = Orchestrator::new(
+        Arc::new(capture),
+        Arc::new(ocr),
+        Arc::new(engine),
+        Arc::new(langception_core::orchestrator::SystemClock),
+        config,
+        glossary,
+        zones_rx,
+        paused_rx,
+        excluded_rx,
+        events_tx,
+    );
+
+    let blocks = vec![block(0, 0, text)];
+    images_tx.send(frame_for(&blocks)).await.unwrap();
+    ocr_tx.send(Ok(blocks)).await.unwrap();
+
+    // The tick awaits the full HTTP round trip — when it returns, the
+    // request has been captured and the response parsed.
+    tokio::time::timeout(Duration::from_secs(5), orchestrator.tick())
+        .await
+        .expect("the pipeline tick (with its HTTP call) should finish within 5s");
+    (bodies, events)
+}
+
+#[tokio::test]
+async fn pipeline_tick_sends_a_preset_prompt_to_the_http_engine() {
+    // Ticket 42 rendered end to end: the Game preset's wording reaches the
+    // real adapter's request in place of the built-in default, tagged with
+    // the preset's name, with the appendices still attached.
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("Vertin".to_string(), "เวอร์ติน".to_string());
+    let game = BuiltinPreset::Game.texts();
+
+    let (bodies, mut events) = http_pipeline_tick(
+        LoopConfig {
+            genderless: true,
+            translation_prompt_override: Some(game.translation),
+            prompt_preset: Some("game".into()),
+            ..config()
+        },
+        glossary,
+        "Vertin picks up the case",
+    )
+    .await;
+
+    let captured = {
+        let recorded = bodies.lock().unwrap();
+        assert_eq!(recorded.len(), 1, "one tick = one engine call");
+        recorded[0].clone()
+    };
+    let body: serde_json::Value = serde_json::from_str(&captured).unwrap();
+    let system = body["messages"][0]["content"].as_str().unwrap();
+    // The Game wording, placeholders substituted, not the default's...
+    assert!(
+        system.starts_with(
+            "You are a translation engine for a video game. Translate the user's text from \
+             English to Thai."
+        ),
+        "was: {system}"
+    );
+    assert!(system.contains("single-word label"), "was: {system}");
+    assert!(
+        !system.contains("You are a translation engine. Translate the user's text"),
+        "the built-in default base must be gone, was: {system}"
+    );
+    // ...every appendix attached...
+    assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
+    assert!(system.contains("Genderless Mode"), "was: {system}");
+    // ...and the tag names the preset that produced it.
+    assert!(
+        system.ends_with("(translation-prompt v1 preset:game)"),
+        "was: {system}"
+    );
+
     match next_event(&mut events).await {
         LoopEvent::Translated { via, .. } => assert_eq!(via, Via::Engine),
         other => panic!("expected Translated, got {other:?}"),

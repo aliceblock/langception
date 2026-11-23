@@ -4,15 +4,16 @@
 //! its Glossary injection, and its Genderless instruction can never drift
 //! between them. Shaped by [`TranslationGuidance`], which the orchestrator
 //! computes per Text Block (relevant Glossary entries + the Genderless
-//! flag + the user's optional custom base, ticket 37); prompt
-//! *construction* itself is pure and tested offline here, and
-//! end to end through the pipeline seam with a fake engine standing in for
-//! the HTTP LLM (`orchestrator_tests.rs`).
+//! flag + the user's optional custom base, ticket 37, and the System Prompt
+//! Preset it is the wording of, ticket 42); prompt *construction* itself is
+//! pure and tested offline here, and end to end through the pipeline seam
+//! with a fake engine standing in for the HTTP LLM (`orchestrator_tests.rs`).
 //!
 //! Versioning: every wording change bumps [`PROMPT_VERSION`] and lands in
 //! this module only — the version tag rides at the end of the prompt itself,
 //! so a recorded request always shows which template produced it (a custom
-//! base is tagged `custom`, ticket 37).
+//! base is tagged `custom`, ticket 37; a preset's wording is tagged with the
+//! preset's name, ticket 42).
 
 use crate::ports::{SourceLanguage, TranslationGuidance};
 
@@ -25,12 +26,26 @@ pub const PROMPT_VERSION: &str = "1";
 /// for different reasons.
 pub const FUSED_PROMPT_VERSION: &str = "1";
 
-/// The base translation instruction (unchanged since ticket 10's
-/// OpenAI-compatible prompt — the contract models actually follow).
-const BASE_INSTRUCTION: &str = "You are a translation engine. Translate the user's text from \
-     {source} to {target}. Reply with ONLY the translation — no explanations, no quotes around \
-     it, no notes. Preserve line breaks and surrounding whitespace. If the text is already in \
-     {target}, repeat it unchanged.";
+/// The built-in default's tuning — what to translate (unchanged since
+/// ticket 10's OpenAI-compatible prompt). [`base_instruction`] appends the
+/// output contract.
+const DEFAULT_TRANSLATION_TUNING: &str = "You are a translation engine. Translate the user's text \
+     from {source} to {target}.";
+
+/// What every per-block translation prompt asks the model to reply with —
+/// the contract models actually follow. The loop shows the engine's reply
+/// verbatim, so the built-in default AND every built-in System Prompt
+/// Preset's translation text (ticket 42) ends with this: a preset's tuning
+/// can never drop the rules that keep the reply bare.
+const TRANSLATION_OUTPUT_CONTRACT: &str = "Reply with ONLY the translation — no explanations, no \
+     quotes around it, no notes. Preserve line breaks and surrounding whitespace. If the text is \
+     already in {target}, repeat it unchanged.";
+
+/// The base translation instruction for a tuning: the tuning, then the
+/// output contract.
+fn base_instruction(tuning: &str) -> String {
+    format!("{tuning} {TRANSLATION_OUTPUT_CONTRACT}")
+}
 
 /// The fused vision call's base instruction (ticket 12): read every Text
 /// Block in the attached screen capture and translate each one from
@@ -65,6 +80,137 @@ const FUSED_REPLY_CONTRACT: &str = "\n\
 const FUSED_CUSTOM_CONTRACT_PREAMBLE: &str = "The reply format below is fixed and applies \
      regardless of the instruction above — reply with ONLY this JSON array, one object per text \
      block:";
+
+/// A System Prompt Preset's pair of base instructions (CONTEXT.md): exactly
+/// ticket 37's two override texts, `{source}`/`{target}` placeholders
+/// included. Empty fields mean the built-in default, as in the config.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PromptTexts {
+    /// Replaces the per-block translation prompt's base instruction.
+    pub translation: String,
+    /// Replaces the fused screen-reading prompt's base instruction. The
+    /// pinned JSON reply contract still appends outside of it.
+    pub screen_reading: String,
+}
+
+/// The built-in System Prompt Presets (ticket 42, CONTEXT.md), in selector
+/// order. They ship with the app and cannot be deleted or edited in place:
+/// selecting one copies its [`texts`](Self::texts) into ticket 37's two
+/// override fields, and editing the copy leaves the preset (the selection
+/// becomes custom). Their wordings live here like every other prompt — a
+/// change to one bumps the same prompt version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinPreset {
+    /// The app's default: no override texts, the built-in templates.
+    General,
+    /// Game UI and dialogue: terse strings read as natural Thai UI text.
+    Game,
+    /// Narrative prose: literary, flowing Thai.
+    Novel,
+    /// Manga pages: dialogue and sound effects.
+    Manga,
+}
+
+impl BuiltinPreset {
+    /// Every built-in, in selector order.
+    pub const ALL: [Self; 4] = [Self::General, Self::Game, Self::Novel, Self::Manga];
+
+    /// The config-file / settings-surface spelling.
+    pub fn code(self) -> &'static str {
+        match self {
+            BuiltinPreset::General => "general",
+            BuiltinPreset::Game => "game",
+            BuiltinPreset::Novel => "novel",
+            BuiltinPreset::Manga => "manga",
+        }
+    }
+
+    /// Parses [`Self::code`] output; `None` for anything else (a saved
+    /// preset's name, "custom", a typo).
+    pub fn from_code(code: &str) -> Option<Self> {
+        BuiltinPreset::ALL
+            .into_iter()
+            .find(|preset| preset.code() == code)
+    }
+
+    /// The selector label.
+    pub fn name(self) -> &'static str {
+        match self {
+            BuiltinPreset::General => "General",
+            BuiltinPreset::Game => "Game",
+            BuiltinPreset::Novel => "Novel",
+            BuiltinPreset::Manga => "Manga",
+        }
+    }
+
+    /// The preset's base instructions. General has none — it IS the built-in
+    /// default — so both its fields are empty, like an unconfigured config.
+    pub fn texts(self) -> PromptTexts {
+        let (translation, screen_reading) = match self {
+            BuiltinPreset::General => return PromptTexts::default(),
+            BuiltinPreset::Game => (GAME_TUNING, GAME_SCREEN_READING),
+            BuiltinPreset::Novel => (NOVEL_TUNING, NOVEL_SCREEN_READING),
+            BuiltinPreset::Manga => (MANGA_TUNING, MANGA_SCREEN_READING),
+        };
+        PromptTexts {
+            translation: base_instruction(translation),
+            screen_reading: screen_reading.to_string(),
+        }
+    }
+}
+
+/// Game — translation tuning: game UI and dialogue. Terse strings must read
+/// as natural Thai UI text (concise, an imperative stays imperative, a
+/// single-word label stays a single word), proper nouns stay consistent,
+/// in-world terms stay stable, symbols and placeholders survive.
+const GAME_TUNING: &str = "You are a translation engine for a video game. Translate the user's \
+     text from {source} to {target}. The text is game content — menu items, button labels, item \
+     and skill names, tooltips, system messages, or character dialogue — so read terse strings as \
+     natural Thai UI text: stay concise, keep an imperative an imperative, and keep a single-word \
+     label a single word. Render proper nouns and in-world terms (places, factions, items, \
+     skills) the way they are usually written in Thai, and the same way throughout the text. \
+     Leave symbols and placeholders (★, ♥, ×2, %s, {0}) exactly as written.";
+
+const GAME_SCREEN_READING: &str = "You are a screen-reading translation engine for a video game. \
+     The attached image is a capture of the user's screen showing {source} game content — menu \
+     items, button labels, item and skill names, tooltips, system messages, or character \
+     dialogue. Read every visible text block and translate each one from {source} to {target}. \
+     Read terse strings as natural Thai UI text: stay concise, keep an imperative an imperative, \
+     and keep a single-word label a single word. Render proper nouns and in-world terms (places, \
+     factions, items, skills) the way they are usually written in Thai. Leave symbols and \
+     placeholders (★, ♥, ×2, %s, {0}) exactly as written.";
+
+/// Novel — translation tuning: narrative prose. Literary, flowing Thai;
+/// paragraph breaks preserved; the register stays consistent across
+/// consecutive text.
+const NOVEL_TUNING: &str = "You are a literary translation engine. Translate the user's text from \
+     {source} to {target}. The text is narrative prose, so write literary, flowing Thai that \
+     reads as if the story had been written in Thai: preserve paragraph breaks, keep the register \
+     (person and tense) consistent across consecutive passages, and keep character and place \
+     names consistent.";
+
+const NOVEL_SCREEN_READING: &str = "You are a screen-reading literary translation engine. The \
+     attached image is a capture of the user's screen showing {source} narrative prose. Read \
+     every visible text block and translate each one from {source} to {target} as literary, \
+     flowing Thai that reads as if the story had been written in Thai: preserve paragraph breaks, \
+     keep the register (person and tense) consistent across consecutive passages, and keep \
+     character and place names consistent.";
+
+/// Manga — translation tuning: dialogue- and SFX-heavy pages. Conversational
+/// Thai with per-speaker voice consistency; short punchy lines stay punchy;
+/// sound effects follow common Thai manga conventions.
+const MANGA_TUNING: &str = "You are a manga translation engine. Translate the user's text from \
+     {source} to {target}. The text comes from manga or comic pages — speech bubbles, narration \
+     boxes, and sound effects — so write conversational Thai that fits a speaker talking: keep \
+     each speaker's voice and level of politeness consistent, keep short punchy lines short and \
+     punchy, and render sound effects the way Thai manga usually does.";
+
+const MANGA_SCREEN_READING: &str = "You are a screen-reading manga translation engine. The \
+     attached image is a capture of the user's screen showing {source} manga or comic text — \
+     speech bubbles, narration boxes, and sound effects. Read every visible text block and \
+     translate each one from {source} to {target} in conversational Thai that fits a speaker \
+     talking: keep each speaker's voice and level of politeness consistent, keep short punchy \
+     lines short and punchy, and render sound effects the way Thai manga usually does.";
 
 /// The Genderless Mode instruction (ticket 08's rule at prompt level):
 /// particles drop, first person goes neutral. Worded as a directive — models
@@ -114,11 +260,48 @@ fn custom_base(guidance: &TranslationGuidance) -> Option<&str> {
     (!text.is_empty()).then_some(text)
 }
 
+/// How much of a preset's name the version tag carries: the tag rides in
+/// every request, and a saved preset's name is the user's free text.
+const PRESET_TAG_LABEL_MAX_CHARS: usize = 40;
+
+/// A preset name as the version tag spells it: one line, without the
+/// parentheses that would end the tag early, at most
+/// [`PRESET_TAG_LABEL_MAX_CHARS`] characters. A name with nothing left
+/// still reads as a label.
+fn preset_tag_label(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .filter(|c| {
+            // Whitespace controls (\n, \t) stay for the collapse below;
+            // every other control character drops.
+            !matches!(c, '(' | ')') && (!c.is_control() || c.is_whitespace())
+        })
+        .collect();
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = collapsed.chars().take(PRESET_TAG_LABEL_MAX_CHARS).collect();
+    if cut.trim().is_empty() {
+        "unnamed".to_string()
+    } else {
+        cut.trim().to_string()
+    }
+}
+
 /// Appends the version tag — marked `custom` when a user base is in
 /// effect, so a recorded request always shows what produced it (ticket
-/// 37). Shared by both builders so the tag's shape can never drift.
-fn push_version_tag(prompt: &mut String, custom: bool, version: &str, kind: &str) {
-    let marker = if custom { " custom" } else { "" };
+/// 37); when that base is a System Prompt Preset's verbatim wording the
+/// tag names the preset instead (ticket 42). Shared by both builders so
+/// the tag's shape can never drift.
+fn push_version_tag(
+    prompt: &mut String,
+    guidance: &TranslationGuidance,
+    version: &str,
+    kind: &str,
+) {
+    let marker = match (custom_base(guidance).is_some(), guidance.preset.as_deref()) {
+        (false, _) => String::new(),
+        (true, Some(preset)) => format!(" preset:{}", preset_tag_label(preset)),
+        (true, None) => " custom".to_string(),
+    };
     prompt.push_str(&format!("\n\n({kind} v{version}{marker})"));
 }
 
@@ -136,7 +319,7 @@ pub fn system_prompt(
     let custom = custom_base(guidance);
     let mut prompt = match custom {
         Some(text) => text.to_string(),
-        None => BASE_INSTRUCTION.to_string(),
+        None => base_instruction(DEFAULT_TRANSLATION_TUNING),
     }
     .replace("{source}", source_name(source))
     .replace("{target}", &target_name(target));
@@ -148,7 +331,7 @@ pub fn system_prompt(
         prompt.push_str(GENDERLESS_INSTRUCTION);
     }
 
-    push_version_tag(&mut prompt, custom.is_some(), PROMPT_VERSION, "translation-prompt");
+    push_version_tag(&mut prompt, guidance, PROMPT_VERSION, "translation-prompt");
     prompt
 }
 
@@ -182,7 +365,7 @@ pub fn fused_system_prompt(
         prompt.push_str(GENDERLESS_INSTRUCTION);
     }
 
-    push_version_tag(&mut prompt, custom.is_some(), FUSED_PROMPT_VERSION, "fused-prompt");
+    push_version_tag(&mut prompt, guidance, FUSED_PROMPT_VERSION, "fused-prompt");
     prompt
 }
 
@@ -201,6 +384,7 @@ mod tests {
                     .collect(),
                 genderless,
                 custom_base: None,
+                preset: None,
             },
         )
     }
@@ -306,6 +490,7 @@ mod tests {
                 glossary: vec![("Vertin".into(), "เวอร์ติน".into())],
                 genderless: true,
                 custom_base: None,
+                preset: None,
             },
         );
         assert!(prompt.contains("- Vertin → เวอร์ติน"), "was: {prompt}");
@@ -464,5 +649,270 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
         let prompt = fused_system_prompt(SourceLanguage::Ja, "th", &guidance);
         assert!(prompt.contains("- 勇者 → ผู้กล้า"), "was: {prompt}");
         assert!(prompt.contains("Genderless Mode"), "was: {prompt}");
+    }
+
+    // ---- System Prompt Presets (ticket 42) ----
+
+    #[test]
+    fn a_preset_base_is_tagged_with_the_preset_name() {
+        // A recorded request shows which preset produced it: the tag names
+        // the preset rather than saying "custom".
+        let mut guidance = with_custom_base("Translate like a pirate.");
+        guidance.preset = Some("game".into());
+        let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
+        assert!(
+            prompt.contains("(translation-prompt v1 preset:game)"),
+            "was: {prompt}"
+        );
+        assert!(
+            !prompt.contains("(translation-prompt v1 custom)"),
+            "a preset is not an anonymous custom prompt, was: {prompt}"
+        );
+    }
+
+    #[test]
+    fn a_preset_name_cannot_break_or_pad_the_version_tag() {
+        // A saved preset's name is the user's free text; the tag must stay
+        // one well-formed line no matter what the name contains. The
+        // parentheses go (they would end the tag early), whitespace
+        // collapses to single spaces, control characters drop, and a name
+        // with nothing left still reads as a label.
+        for (name, label) in [
+            (
+                "My  (pirate)\n\r\nspeak \t preset",
+                "My pirate speak preset",
+            ),
+            ("\0()\u{7}", "unnamed"),
+        ] {
+            let mut guidance = with_custom_base("Translate like a pirate.");
+            guidance.preset = Some(name.into());
+            let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
+            assert!(
+                prompt.ends_with(&format!("\n\n(translation-prompt v1 preset:{label})")),
+                "name {name:?}, was: {prompt}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_preset_name_is_cut_short_in_the_tag() {
+        let mut guidance = with_custom_base("Translate like a pirate.");
+        guidance.preset = Some("x".repeat(200));
+        let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
+        let tag = prompt.rfind('(').map(|at| &prompt[at..]).unwrap_or("");
+        assert_eq!(
+            tag,
+            format!("(translation-prompt v1 preset:{})", "x".repeat(40))
+        );
+    }
+
+    #[test]
+    fn a_preset_that_leaves_one_prompt_at_its_default_tags_that_prompt_plainly() {
+        // A preset may override only the screen-reading text. Its
+        // translation prompt is then exactly the built-in default, and the
+        // tag must not claim a preset produced it.
+        let guidance = TranslationGuidance {
+            custom_base: Some("  \n".into()),
+            preset: Some("novel".into()),
+            ..TranslationGuidance::plain()
+        };
+        assert_eq!(
+            system_prompt(SourceLanguage::En, "th", &guidance),
+            system_prompt(SourceLanguage::En, "th", &TranslationGuidance::plain())
+        );
+    }
+
+    // ---- Built-in System Prompt Presets (ticket 42) ----
+
+    #[test]
+    fn the_four_built_ins_are_general_game_novel_and_manga() {
+        let codes: Vec<&str> = BuiltinPreset::ALL
+            .iter()
+            .map(|preset| preset.code())
+            .collect();
+        assert_eq!(codes, ["general", "game", "novel", "manga"]);
+        for preset in BuiltinPreset::ALL {
+            assert_eq!(BuiltinPreset::from_code(preset.code()), Some(preset));
+        }
+        assert_eq!(BuiltinPreset::from_code("pirate"), None);
+    }
+
+    #[test]
+    fn general_is_the_built_in_default_and_the_tuned_built_ins_carry_both_texts() {
+        // General has no override texts — it IS the built-in default.
+        assert_eq!(BuiltinPreset::General.texts(), PromptTexts::default());
+        for preset in BuiltinPreset::ALL {
+            let texts = preset.texts();
+            for (kind, text) in [
+                ("translation", &texts.translation),
+                ("screen-reading", &texts.screen_reading),
+            ] {
+                if preset == BuiltinPreset::General {
+                    assert!(text.is_empty());
+                    continue;
+                }
+                assert!(!text.is_empty(), "{} has no {kind} text", preset.code());
+                assert!(
+                    text.contains("{source}") && text.contains("{target}"),
+                    "{} {kind} text must name both languages by placeholder: {text}",
+                    preset.code()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn each_tuned_built_in_wording_matches_its_intent() {
+        // The ticket's intents, pinned by the concepts each wording must
+        // carry — in BOTH of its texts.
+        let intents: [(BuiltinPreset, &[&str]); 3] = [
+            (
+                BuiltinPreset::Game,
+                &[
+                    "game",
+                    "concise",
+                    "imperative",
+                    "single-word label",
+                    "proper nouns",
+                    "symbols",
+                ],
+            ),
+            (
+                BuiltinPreset::Novel,
+                &["literary", "flowing Thai", "paragraph breaks", "register"],
+            ),
+            (
+                BuiltinPreset::Manga,
+                &[
+                    "conversational Thai",
+                    "speaker's voice",
+                    "punchy",
+                    "sound effects",
+                ],
+            ),
+        ];
+        for (preset, concepts) in intents {
+            let texts = preset.texts();
+            for (kind, text) in [
+                ("translation", &texts.translation),
+                ("screen-reading", &texts.screen_reading),
+            ] {
+                for concept in concepts {
+                    assert!(
+                        text.contains(concept),
+                        "{} {kind} text must cover \"{concept}\": {text}",
+                        preset.code()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_built_in_translation_text_keeps_the_output_contract() {
+        // The loop shows the engine's reply verbatim: a preset's tuning may
+        // not drop the rules that keep that reply bare.
+        for preset in BuiltinPreset::ALL {
+            let texts = preset.texts();
+            if texts.translation.is_empty() {
+                continue;
+            }
+            assert!(
+                texts.translation.ends_with(TRANSLATION_OUTPUT_CONTRACT),
+                "{} translation text must end with the output contract: {}",
+                preset.code(),
+                texts.translation
+            );
+        }
+    }
+
+    #[test]
+    fn general_renders_the_byte_identical_default_prompts() {
+        // The default state out of the box: selecting General (with or
+        // without its name on the guidance) is exactly what ticket 37's
+        // default renders — pinned to the literal bytes by the two tests
+        // above.
+        let general = BuiltinPreset::General.texts();
+        for preset in [None, Some("general")] {
+            let guidance = TranslationGuidance {
+                custom_base: Some(general.translation.clone()),
+                preset: preset.map(str::to_string),
+                ..TranslationGuidance::plain()
+            };
+            assert_eq!(
+                system_prompt(SourceLanguage::En, "th", &guidance),
+                system_prompt(SourceLanguage::En, "th", &TranslationGuidance::plain())
+            );
+            let fused = TranslationGuidance {
+                custom_base: Some(general.screen_reading.clone()),
+                preset: preset.map(str::to_string),
+                ..TranslationGuidance::plain()
+            };
+            assert_eq!(
+                fused_system_prompt(SourceLanguage::Ja, "th", &fused),
+                fused_system_prompt(SourceLanguage::Ja, "th", &TranslationGuidance::plain())
+            );
+        }
+    }
+
+    #[test]
+    fn a_built_in_preset_switches_both_prompt_wordings_with_every_appendix_attached() {
+        let texts = BuiltinPreset::Game.texts();
+        let guidance = TranslationGuidance {
+            glossary: vec![("Vertin".into(), "เวอร์ติน".into())],
+            genderless: true,
+            custom_base: Some(texts.translation.clone()),
+            preset: Some(BuiltinPreset::Game.code().into()),
+        };
+        let prompt = system_prompt(SourceLanguage::Ja, "th", &guidance);
+        // The Game wording, with the placeholders substituted...
+        assert!(
+            prompt.starts_with(
+                "You are a translation engine for a video game. Translate the user's text from \
+                 Japanese to Thai."
+            ),
+            "was: {prompt}"
+        );
+        assert!(
+            prompt.contains("single-word label"),
+            "the Game tuning must replace the default's, was: {prompt}"
+        );
+        // ...not the default's...
+        assert!(
+            !prompt.contains("You are a translation engine. Translate the user's text"),
+            "the built-in default base must be gone, was: {prompt}"
+        );
+        // ...and every automatic appendix still attached.
+        assert!(prompt.contains("- Vertin → เวอร์ติน"), "was: {prompt}");
+        assert!(prompt.contains("Genderless Mode"), "was: {prompt}");
+        assert!(
+            prompt.ends_with("(translation-prompt v1 preset:game)"),
+            "was: {prompt}"
+        );
+
+        let fused = fused_system_prompt(
+            SourceLanguage::Ja,
+            "th",
+            &TranslationGuidance {
+                custom_base: Some(texts.screen_reading.clone()),
+                ..guidance.clone()
+            },
+        );
+        assert!(fused.contains("single-word label"), "was: {fused}");
+        assert!(
+            !fused.contains("screen-reading translation engine. The attached"),
+            "the built-in fused base must be gone, was: {fused}"
+        );
+        assert!(
+            fused.contains(r#""th""#),
+            "the reply contract must attach, was: {fused}"
+        );
+        assert!(fused.contains("no readable text"), "was: {fused}");
+        assert!(fused.contains("- Vertin → เวอร์ติน"), "was: {fused}");
+        assert!(fused.contains("Genderless Mode"), "was: {fused}");
+        assert!(
+            fused.ends_with("(fused-prompt v1 preset:game)"),
+            "was: {fused}"
+        );
     }
 }

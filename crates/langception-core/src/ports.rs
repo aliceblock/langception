@@ -196,6 +196,13 @@ pub struct TranslationGuidance {
     /// fills it with the translation-prompt override on the classic path
     /// and the screen-reading one on the fused path.
     pub custom_base: Option<String>,
+    /// The System Prompt Preset (CONTEXT.md) whose verbatim wording
+    /// `custom_base` is (ticket 42): a built-in's code ("game") or a saved
+    /// preset's name. Labels only — the version tag names the preset
+    /// instead of saying `custom`, so a recorded request shows which
+    /// preset produced it. `None` for the built-in default and for
+    /// hand-written text.
+    pub preset: Option<String>,
 }
 
 impl TranslationGuidance {
@@ -327,8 +334,9 @@ mod tests {
     #[tokio::test]
     async fn a_non_llm_engine_never_sees_the_prompt_guidance() {
         // Ticket 37's "keyed/MT engines are unchanged regardless of the
-        // override text": the port's default translate_guided discards the
-        // guidance wholesale — a custom base included — so such an engine
+        // override text", a System Prompt Preset included (ticket 42): the
+        // port's default translate_guided discards the guidance wholesale —
+        // a custom base and its preset label included — so such an engine
         // is called with the bare text exactly as before.
         let engine = BareEngine {
             seen: std::sync::Mutex::new(Vec::new()),
@@ -337,6 +345,7 @@ mod tests {
             glossary: vec![("Vertin".into(), "เวอร์ติน".into())],
             genderless: true,
             custom_base: Some("Translate like a pirate.".into()),
+            preset: Some("game".into()),
         };
         let thai = engine
             .translate_guided("Vertin picks up the case", SourceLanguage::En, "th", &guidance)

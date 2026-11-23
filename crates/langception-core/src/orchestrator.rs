@@ -169,6 +169,12 @@ pub struct LoopConfig {
     /// The same override for the fused screen-reading prompt (ticket 37),
     /// handed to the fused engine's guidance.
     pub fused_prompt_override: Option<String>,
+    /// The System Prompt Preset (ticket 42) the two overrides are the
+    /// verbatim wording of — a built-in's code or a saved preset's name —
+    /// as the shell resolved it from the config. Labels only: it rides into
+    /// both guidances so the prompt module's version tag can name the
+    /// preset. `None` for the built-in default and for hand-written text.
+    pub prompt_preset: Option<String>,
 }
 
 /// A Text Block is identified by its on-screen position, quantized so
@@ -763,13 +769,15 @@ impl Orchestrator {
 
     /// The prompt guidance for a fused call (ticket 12): ALL Glossary
     /// entries — a fused call sees the image, not one block's text, so
-    /// there is nothing to filter entries by — plus the Genderless flag
-    /// and the screen-reading prompt override (ticket 37).
+    /// there is nothing to filter entries by — plus the Genderless flag,
+    /// the screen-reading prompt override (ticket 37), and the preset both
+    /// ride under (ticket 42).
     fn fused_guidance(&self) -> crate::ports::TranslationGuidance {
         crate::ports::TranslationGuidance {
             glossary: self.glossary.entries(),
             genderless: self.config.genderless,
             custom_base: self.config.fused_prompt_override.clone(),
+            preset: self.config.prompt_preset.clone(),
         }
     }
 
@@ -913,11 +921,14 @@ impl Orchestrator {
                 // engines discard the guidance (the port's default) and
                 // keep relying on the output scrub below. The custom
                 // translation-prompt override (ticket 37) rides the same
-                // way — non-LLM engines never see prompts at all.
+                // way — non-LLM engines never see prompts at all. The
+                // preset the override is the wording of (ticket 42) rides
+                // the same way.
                 let guidance = crate::ports::TranslationGuidance {
                     glossary: self.glossary.relevant_entries(text),
                     genderless: self.config.genderless,
                     custom_base: self.config.translation_prompt_override.clone(),
+                    preset: self.config.prompt_preset.clone(),
                 };
                 self.translate
                     .translate_guided(

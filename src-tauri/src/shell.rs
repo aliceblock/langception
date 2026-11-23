@@ -27,6 +27,7 @@ use langception_core::ports::{
 use langception_core::profile::{
     clamp_region_to_window, zone_in_window, GenderlessOverride, Profile, ProfileZone,
 };
+use langception_core::prompt_preset::ActivePromptPreset;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -444,6 +445,10 @@ pub fn run() {
             crate::settings::check_lmstudio,
             crate::settings::test_engine,
             crate::settings::open_engine_link,
+            crate::settings::list_prompt_presets,
+            crate::settings::save_prompt_preset,
+            crate::settings::rename_prompt_preset,
+            crate::settings::delete_prompt_preset,
             crate::settings::set_general,
             crate::settings::set_start_with_windows,
             crate::settings::set_hotkeys,
@@ -1231,12 +1236,18 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
             // when it flips so fired blocks start (or stop) carrying
             // sampled colors.
             auto_colors: config.text_style.auto_colors,
-            // The custom LLM prompt base instructions (ticket 37): the
-            // raw strings ride in — the prompt module normalizes
-            // (whitespace-only = built-in default) — and the loop restart
-            // in set_engines re-reads them when saved.
+            // The LLM prompt base instructions (tickets 37 + 42): the two
+            // stored texts — the raw strings ride in, the prompt module
+            // normalizes (whitespace-only = built-in default) — plus the
+            // System Prompt Preset they are the verbatim wording of, which
+            // only labels the version tag. The loop restart in set_engines
+            // and the preset commands re-reads them when saved.
             translation_prompt_override: Some(config.prompts.translation.clone()),
             fused_prompt_override: Some(config.prompts.screen_reading.clone()),
+            prompt_preset: match config.active_prompt_preset() {
+                ActivePromptPreset::Named(name) => Some(name),
+                _ => None,
+            },
         },
         glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
@@ -1724,6 +1735,8 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
 
     // The launch summary (ticket 27): engine switches are visible here —
     // an active Profile swaps the engine, so its name is part of the line.
+    // The System Prompt Preset (ticket 42) pairs with the version tag in
+    // the prompts this loop sends, so a log explains what produced them.
     let profile_note = target
         .profile_id
         .as_ref()
@@ -1733,12 +1746,14 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     crate::logging::log(
         "loop",
         format!(
-            "started — reading={} engine={} ocr={} source={} zones={zone_count}{}",
+            "started — reading={} engine={} ocr={} source={} zones={zone_count}{}, \
+             prompt_preset=\"{}\"",
             config.reading.code(),
             loop_engine,
             pipeline.ocr_name,
             target.language.code(),
             profile_note,
+            config.active_prompt_preset().code(),
         ),
     );
 
