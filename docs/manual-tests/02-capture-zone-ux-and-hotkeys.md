@@ -65,6 +65,28 @@ below are the ones a human must eyeball.
       (zone count unchanged).
 - [ ] Esc cancels the one-shot picker without side effects.
 
+## Capture Visibility and the picker (ticket 46, ADR-0004)
+
+The General-tab setting "Show Langception in screen captures" (default off)
+changes what the picker session looks like to OTHER capture tools:
+
+- [ ] With the setting OFF (default): while the picker is open with a loop
+      running, a screenshot (Win+Shift+S) shows the desktop WITHOUT the dim
+      — the picker is excluded from capture and the loop keeps running
+      (unchanged behavior). Closing the picker shows the pills again.
+- [ ] With the setting ON: while the picker is open, Win+Shift+S / OBS DO
+      show the dim, and the running loop neither darkens its captures (a
+      zone over unchanged text produces nothing new) nor clears existing
+      pills. Tray tooltip still reads "running" (this pause is internal —
+      it is NOT the amber user pause).
+- [ ] With the setting ON: closing the picker (Esc, drag commit, or Alt+Z
+      toggle) resumes the loop — the next text change translates again.
+- [ ] Alt+Q one-shot with the setting ON: the pass runs only after the
+      picker closes (unchanged), so the captured rectangle is clean.
+- [ ] Toggling the setting applies live: the NEXT picker open follows the
+      new mode without restarting the app (pickers are created per
+      session).
+
 ## Hotkeys rebindable via config
 
 - [ ] In config.toml set `new_zone = "F9"` under `[hotkeys]`, restart the

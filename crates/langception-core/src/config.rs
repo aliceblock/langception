@@ -431,16 +431,27 @@ pub struct WindowSettings {
     /// The Settings window behaves like a normal window (today's
     /// behavior); pinning it on top helps while tweaking mid-game.
     pub settings_on_top: bool,
+    /// Capture Visibility (ticket 46, ADR-0004): when OFF (the default)
+    /// the Settings window, Results Window, and zone picker are excluded
+    /// from every screen capture (`WDA_EXCLUDEFROMCAPTURE`, ADR-0003) —
+    /// invisible in screenshots, recordings, and remote sessions. When ON
+    /// the exclusion lifts from those three so captures show them, and
+    /// loop safety moves to pixel masking (the two ordinary windows) plus
+    /// a loop pause while the picker is open. The In-place Overlay stays
+    /// excluded unconditionally in both modes.
+    pub capture_visible: bool,
 }
 
 // Defaults preserve today's window behavior for every config written
-// before ticket 34 — serde's field-default via Default::default() would
-// pin nothing, so the impl is manual.
+// before tickets 34/46 — serde's field-default via Default::default()
+// would pin nothing and would expose Langception in captures, so the impl
+// is manual.
 impl Default for WindowSettings {
     fn default() -> Self {
         Self {
             results_on_top: true,
             settings_on_top: false,
+            capture_visible: false,
         }
     }
 }
@@ -1182,6 +1193,14 @@ one_shot_capture = "Alt+Q"
 # unconditionally: that is how they work, not a preference.
 results_on_top = true
 settings_on_top = false
+# Capture Visibility (ticket 46, "Show Langception in screen captures"):
+# off by default, Langception's windows are invisible to screenshots,
+# recordings, and remote-desktop sessions (the translation loop must never
+# read its own output, ADR-0003). Turning it on makes the Settings window,
+# Results Window, and zone picker appear in captures — the loop is then
+# protected by masking instead of exclusion (ADR-0004). The In-place
+# Overlay stays invisible in captures in both modes, unconditionally.
+capture_visible = false
 
 [update]
 # Update Check (CONTEXT.md): where "Check for new version" (Settings →
@@ -2818,6 +2837,43 @@ language = "en"
 
         let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
+    }
+
+    // ---- Capture Visibility (ticket 46) ----
+
+    #[test]
+    fn default_template_ships_capture_invisible() {
+        // Off is the default = ADR-0003's behavior byte-for-byte.
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert!(!config.windows.capture_visible);
+    }
+
+    #[test]
+    fn capture_visibility_roundtrips_through_toml() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace(
+            "capture_visible = false",
+            "capture_visible = true",
+        );
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert!(config.windows.capture_visible);
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn config_without_capture_visible_stays_excluded() {
+        // A config written before ticket 46 (or one where the key was
+        // deleted by hand) parses with the windows capture-invisible —
+        // serde's #[serde(default)] on the struct fills ADR-0003's
+        // behavior, never exposes the app in captures.
+        let legacy = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("capture_visible"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert!(!config.windows.capture_visible);
     }
 
     // ---- Custom LLM system prompts (ticket 37) ----

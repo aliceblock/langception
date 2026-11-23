@@ -52,9 +52,18 @@ browser mock. This checklist covers what only a human can see and feel.
       app is *behind* it, never of the results list itself (fixed: with the
       exclusion the results window's own Thai used to feed a translate
       loop — each new entry shifted the list into new OCR blocks).
+      With Capture Visibility ON (ticket 46) the loop stays safe the same
+      way by MASKING: a zone overlapping the visible Results Window or
+      Settings window produces no blocks sourced from their pixels (their
+      rects are filled out of every frame) and never a self-translation
+      loop. Note the trade (ADR-0004): while a window is visible, text
+      BEHIND it is a hole for the loop — exclusion used to compose
+      through.
 - [ ] **Zone picker interplay**: with translations on screen, press Alt+Z →
       the picker dims cleanly over everything (no stale Thai fighting the
-      dim); Esc → translations return.
+      dim); Esc → translations return. With Capture Visibility ON the loop
+      pauses for the session instead (see ticket 02's checklist) — pills
+      must survive the pause and translations must resume on Esc.
 - [ ] **Text Style panel (Results Window, "Text Style (overlay)")**:
   - [ ] Font size: type 30 → pills visibly grow, live, no restart.
   - [ ] Color: pick e.g. yellow → text recolors live.
@@ -85,7 +94,9 @@ browser mock. This checklist covers what only a human can see and feel.
   (ticket 04) per ADR-0001.
 - Overlays are capture-invisible everywhere (OBS, screenshots, DWM
   thumbnails) — that is the mechanism keeping the OCR loop stable
-  (ADR-0003), not a bug.
+  (ADR-0003), not a bug. This is unconditional: Capture Visibility
+  (ticket 46) applies only to the Settings window, Results Window, and
+  picker — the overlay has no toggle.
 - Zones are primary-monitor-picker-only and hotkey edits need a restart —
   carried over from ticket 02.
 - Monitor hotplug while running: overlays are (re)positioned at loop start;

@@ -692,6 +692,10 @@ const generalAutostart = document.getElementById("general-autostart");
 // the live windows immediately.
 const generalResultsOnTop = document.getElementById("general-results-on-top");
 const generalSettingsOnTop = document.getElementById("general-settings-on-top");
+// Capture Visibility (ticket 46): saved with General, applied to the live
+// windows immediately (the loop's masking reads it per capture — no
+// restart).
+const generalCaptureVisible = document.getElementById("general-capture-visible");
 let generalLoaded = false;
 
 function loadGeneral(status) {
@@ -705,6 +709,7 @@ function loadGeneral(status) {
   generalAutostart.checked = Boolean(status.startWithWindows);
   generalResultsOnTop.checked = Boolean(status.resultsOnTop);
   generalSettingsOnTop.checked = Boolean(status.settingsOnTop);
+  generalCaptureVisible.checked = Boolean(status.captureVisible);
 }
 
 // Ticket 39: the per-tab button's handler, extracted so the sticky footer's
@@ -726,6 +731,7 @@ async function saveGeneral() {
         genderless: generalGenderless.checked,
         resultsOnTop: generalResultsOnTop.checked,
         settingsOnTop: generalSettingsOnTop.checked,
+        captureVisible: generalCaptureVisible.checked,
       },
     });
     toast("General settings saved");
@@ -1650,6 +1656,7 @@ const TRACKED_GENERAL = [
   generalGenderless,
   generalResultsOnTop,
   generalSettingsOnTop,
+  generalCaptureVisible,
 ];
 const TRACKED_ENGINES = [
   enginesDefault,

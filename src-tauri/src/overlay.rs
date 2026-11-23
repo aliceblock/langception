@@ -38,7 +38,21 @@ pub fn ensure_overlays(app: &AppHandle) -> Result<Vec<(String, Monitor)>, String
     for (index, monitor) in monitors.iter().enumerate() {
         let label = format!("{OVERLAY_LABEL_PREFIX}{index}");
         let window = match app.get_webview_window(&label) {
-            Some(existing) => existing,
+            Some(existing) => {
+                // Re-assert the exclusion before this window is (re)shown
+                // (ticket 46): affinity is set only at creation and here,
+                // and an overlay whose exclusion failed — or was lost —
+                // must never be presented bare (ADR-0003). One that cannot
+                // be excluded is destroyed, not shown; the error surfaces
+                // to the caller and a later attempt recreates.
+                if let Err(message) = exclude_from_capture(&existing) {
+                    let _ = existing.destroy();
+                    return Err(format!(
+                        "cannot exclude the overlay for {label} from capture: {message}"
+                    ));
+                }
+                existing
+            }
             None => create_overlay(app, &label, monitor)?,
         };
         window
@@ -105,8 +119,14 @@ fn create_overlay(
     window
         .set_ignore_cursor_events(true)
         .map_err(|e| format!("cannot make the overlay for {monitor_name} click-through: {e}"))?;
-    exclude_from_capture(&window)
-        .map_err(|e| format!("cannot exclude the overlay for {monitor_name} from capture: {e}"))?;
+    exclude_from_capture(&window).map_err(|e| {
+        // A failed exclusion must never leave a bare window behind (ticket
+        // 46): ensure_overlays' existing-window branch would show() it on
+        // the next call, contradicting ADR-0003. Destroy on failure — the
+        // caller surfaces the error and a later attempt recreates fresh.
+        let _ = window.destroy();
+        format!("cannot exclude the overlay for {monitor_name} from capture: {e}")
+    })?;
     window
         .show()
         .map_err(|e| format!("cannot show the overlay for {monitor_name}: {e}"))?;
@@ -129,9 +149,28 @@ fn create_overlay(
 /// and still appears in captures), and plain "not layered" semantics.
 #[cfg(windows)]
 pub(crate) fn exclude_from_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
+    set_display_affinity(window, true)
+}
+
+/// Clears any capture exclusion from a Langception window (`WDA_NONE`), so
+/// every capture pipeline — screenshots, recordings, DWM thumbnails, RDP —
+/// shows it again (ticket 46, ADR-0004). Applied to the Settings window,
+/// Results Window, and zone picker when Capture Visibility is on. The
+/// In-place Overlay never takes this path: its exclusion is structural
+/// (ADR-0003), the loop would OCR its own pills.
+#[cfg(windows)]
+pub(crate) fn allow_in_capture(window: &tauri::WebviewWindow) -> Result<(), String> {
+    set_display_affinity(window, false)
+}
+
+/// One `SetWindowDisplayAffinity` call behind both directions. Safe to
+/// call again with the same value: re-asserting the current state is how
+/// existing windows get their (possibly drifted) affinity corrected.
+#[cfg(windows)]
+fn set_display_affinity(window: &tauri::WebviewWindow, exclude: bool) -> Result<(), String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+        SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE, WDA_NONE,
     };
     let hwnd = HWND(
         window
@@ -139,13 +178,23 @@ pub(crate) fn exclude_from_capture(window: &tauri::WebviewWindow) -> Result<(), 
             .map_err(|e| format!("no native window handle: {e}"))?
             .0,
     );
-    unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) }
+    let affinity = if exclude {
+        WDA_EXCLUDEFROMCAPTURE
+    } else {
+        WDA_NONE
+    };
+    unsafe { SetWindowDisplayAffinity(hwnd, affinity) }
         .map_err(|e| format!("SetWindowDisplayAffinity failed: {e}"))
 }
 
 #[cfg(not(windows))]
 pub(crate) fn exclude_from_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
     Ok(()) // no-op off Windows; the overlay recipe is Windows-first anyway
+}
+
+#[cfg(not(windows))]
+pub(crate) fn allow_in_capture(_window: &tauri::WebviewWindow) -> Result<(), String> {
+    Ok(()) // no-op off Windows; Capture Visibility is a Windows-only ADR
 }
 
 pub(crate) fn overlay_windows(app: &AppHandle) -> Vec<tauri::WebviewWindow> {

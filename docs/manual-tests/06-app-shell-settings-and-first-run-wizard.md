@@ -47,7 +47,24 @@ the Windows autostart registry behavior. Run once on a real machine.
       the tray); tray → Settings… reopens it with the same tab selected.
 - [ ] **Never a capture source**: with translation running in full-screen
       mode, the settings window's text is not translated and does not
-      trigger OCR churn (ADR-0003 exclusion).
+      trigger OCR churn (ADR-0003 exclusion; with Capture Visibility ON,
+      ticket 46, protection is masking instead — same guarantee).
+- [ ] **Capture Visibility applies live (ticket 46, ADR-0004)**: in
+      Settings → General, "Show Langception in screen captures" is OFF by
+      default. With it off, Win+Shift+S / Snipping Tool / OBS / an RDP
+      session show NO Langception window. Turn it on and Save → the same
+      tools immediately show the Settings window and Results Window (and
+      the zone picker's dim while it is open — see ticket 02's checklist;
+      the In-place Overlay stays invisible in both modes). Turn it off
+      again → windows vanish from captures just as immediately. Restart
+      the app while hidden-to-tray windows exist → each window comes back
+      with the correct mode.
+- [ ] **Cloud captures stay clean (ticket 46)**: with a fused/cloud engine
+      and Capture Visibility ON, a zone overlapping the visible Results
+      Window or Settings window produces no entries sourced from their
+      pixels — those windows' rects are masked out of every frame before
+      OCR, before the cloud upload (verify via `LANGCEPTION_SMOKE_DUMP`
+      frames if needed: the window areas are black).
 - [ ] **Results Window entry point**: the "Settings" button in the Results
       Window header opens/focuses the same window. The Results Window no
       longer has a Text Style panel (it moved to Settings → Text Style).

@@ -1,5 +1,7 @@
 # Overlay windows are capture-invisible (WDA + plain SRCCOPY)
 
+_Amended by [ADR-0004](0004-capture-visibility-setting.md): the Settings window, Results Window, and zone picker's exclusion is now conditional (**Capture Visibility**), with loop safety moved to masking. The overlay rules and capture raster-op choices below stand._
+
 The In-place Overlay (ticket 03) is a transparent, always-on-top window drawn over exactly the screen regions the translation loop watches. If the capture included it, the loop would OCR its own Thai output and re-translate the result every tick — translate-garbage loops, or render→clear→render oscillation. The feature could never stabilize.
 
 Two mechanisms combine (both verified live on Windows 11):

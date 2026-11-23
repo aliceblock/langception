@@ -18,6 +18,31 @@ pub struct Region {
     pub height: u32,
 }
 
+impl Region {
+    /// The overlap of the two rectangles, or `None` when they do not
+    /// intersect (touching edges are not an intersection). Used by the
+    /// Capture Visibility masking (ticket 46): the part of a Langception
+    /// window's screen rect that falls inside the captured region is what
+    /// gets filled out of the frame.
+    pub fn intersection(&self, other: &Region) -> Option<Region> {
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = (self.x + self.width as i32).min(other.x + other.width as i32);
+        let bottom = (self.y + self.height as i32).min(other.y + other.height as i32);
+        let width = right - left;
+        let height = bottom - top;
+        if width <= 0 || height <= 0 {
+            return None;
+        }
+        Some(Region {
+            x: left,
+            y: top,
+            width: width as u32,
+            height: height as u32,
+        })
+    }
+}
+
 /// A captured screen region as 8-bit BGRA, top-down rows, stride `width * 4`.
 #[derive(Debug, Clone)]
 pub struct CapturedImage {
@@ -412,5 +437,41 @@ mod tests {
         // The stored exclusion is bigger than the re-appearing block.
         let e = exclusion(90, 190, 200, 60);
         assert!(e.covers(&block_at(100, 200, 120, 24)));
+    }
+
+    // ---- Region::intersection (ticket 46's capture-mask geometry) ----
+
+    fn region(x: i32, y: i32, width: u32, height: u32) -> Region {
+        Region { x, y, width, height }
+    }
+
+    #[test]
+    fn intersection_of_overlapping_rects_is_the_overlap() {
+        let a = region(0, 0, 100, 100);
+        let b = region(50, 60, 200, 200);
+        assert_eq!(a.intersection(&b), Some(region(50, 60, 50, 40)));
+    }
+
+    #[test]
+    fn intersection_of_contained_rect_is_the_inner_one() {
+        let outer = region(-50, -50, 400, 400);
+        let inner = region(10, 20, 30, 40);
+        assert_eq!(outer.intersection(&inner), Some(inner));
+        assert_eq!(inner.intersection(&outer), Some(inner));
+    }
+
+    #[test]
+    fn disjoint_and_touching_rects_intersect_to_none() {
+        let a = region(0, 0, 100, 100);
+        // Fully apart.
+        assert_eq!(a.intersection(&region(200, 0, 10, 10)), None);
+        // Edge-touching is not an intersection: a mask exactly beside the
+        // captured region must fill nothing.
+        assert_eq!(a.intersection(&region(100, 0, 50, 50)), None);
+        // Negative origins compose correctly (multi-monitor).
+        assert_eq!(
+            a.intersection(&region(-50, -50, 55, 55)),
+            Some(region(0, 0, 5, 5))
+        );
     }
 }

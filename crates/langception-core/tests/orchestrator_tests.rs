@@ -471,6 +471,9 @@ struct Harness {
     clock: Arc<FakeClock>,
     zones_tx: watch::Sender<Vec<Zone>>,
     paused_tx: watch::Sender<bool>,
+    /// Picker suspension (ticket 46): tests send `true` while the (fake)
+    /// picker is open with Capture Visibility on.
+    suspended_tx: watch::Sender<bool>,
     excluded_tx: watch::Sender<Vec<ExcludedBlock>>,
     /// Translation Context window (ticket 44): tests send the live value
     /// here; 0 = off (every harness's default).
@@ -539,6 +542,7 @@ async fn harness_with_config(
     let (events_tx, events_rx) = mpsc::unbounded_channel();
     let (zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
     let (paused_tx, paused_rx) = watch::channel(false);
+    let (suspended_tx, suspended_rx) = watch::channel(false);
     let (excluded_tx, excluded_rx) = watch::channel(Vec::new());
     let (context_tx, context_rx) = watch::channel(0u32);
 
@@ -555,6 +559,7 @@ async fn harness_with_config(
         events_tx,
     )
     .with_fused(fused.then(|| Arc::clone(&fused_fake) as Arc<dyn FusedEngine>))
+    .with_suspended_rx(suspended_rx)
     .with_context_rx(context_rx);
 
     (
@@ -573,6 +578,7 @@ async fn harness_with_config(
             clock,
             zones_tx,
             paused_tx,
+            suspended_tx,
             excluded_tx,
             context_tx,
         },
@@ -1440,6 +1446,88 @@ async fn paused_loop_skips_ticks_and_keeps_dedup_across_pause() {
         h.translate.calls(),
         ["Hello"],
         "dedup must survive pause/resume"
+    );
+
+    task.abort();
+}
+
+// ---- Picker suspension (ticket 46) ----
+
+#[tokio::test]
+async fn suspended_loop_skips_ticks_and_resume_keeps_dedup() {
+    let (h, orch) = harness().await;
+    let task = tokio::spawn(orch.run());
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Translate once so there is dedup state to protect across the
+    // suspension — the picker must not cost a re-translation of the same
+    // pixels when it closes.
+    feed(&h, 1, &frame_for(&blocks), Some(blocks.clone())).await;
+    wait_until(
+        || h.translate.calls() == ["Hello"],
+        "translated before suspension",
+    )
+    .await;
+
+    // Picker open (suspension on): releases tick but no capture happens.
+    h.suspended_tx.send(true).unwrap();
+    h.clock.release_tick();
+    h.clock.release_tick();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        *h.capture_calls.lock().unwrap(),
+        1,
+        "suspended loop must not capture"
+    );
+
+    // Picker closed: the loop resumes, captures the pixel-identical frame,
+    // and the unchanged block stays deduped — no second translation.
+    h.suspended_tx.send(false).unwrap();
+    h.clock.release_tick();
+    wait_until(
+        || *h.capture_calls.lock().unwrap() >= 2,
+        "resumed tick captured",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello"],
+        "dedup must survive suspension/resume"
+    );
+
+    task.abort();
+}
+
+#[tokio::test]
+async fn suspension_holds_together_with_pause_until_both_release() {
+    let (h, orch) = harness().await;
+    let task = tokio::spawn(orch.run());
+
+    // Both flags in force: releasing EITHER one alone keeps the loop held.
+    h.paused_tx.send(true).unwrap();
+    h.suspended_tx.send(true).unwrap();
+    h.clock.release_tick();
+    h.clock.release_tick();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(*h.capture_calls.lock().unwrap(), 0, "still held");
+
+    h.paused_tx.send(false).unwrap();
+    h.clock.release_tick();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        *h.capture_calls.lock().unwrap(),
+        0,
+        "suspension still holds after the user paused-resumed"
+    );
+
+    h.suspended_tx.send(false).unwrap();
+    h.clock.release_tick();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(
+        *h.capture_calls.lock().unwrap(),
+        1,
+        "the loop ticks once both flags released"
     );
 
     task.abort();

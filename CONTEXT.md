@@ -100,6 +100,14 @@ _Avoid_: history, memory, cache
 
 ### App
 
+**Capture Visibility**:
+The setting controlling whether Langception's own windows (Settings, Results Window, zone picker) appear in captures made by other tools — screenshots, recordings, remote sessions. Off by default; the In-place Overlay is never visible to capture.
+_Avoid_: privacy mode, screenshot mode, capture exclusion
+
 **Update Check**:
 A Settings button and an optional on-launch fetch that compare the running version against the maintainer's published app list, reporting a newer version with a download link. Informational only — never downloads or installs.
 _Avoid_: auto-update, updater, version monitor
+
+**Debug Log Window**:
+A window streaming the translation loop's per-pass stage timings in real time, so a slow stage (capture, OCR, translate, fused) can be identified at a glance. Diagnostic only — it never changes loop behavior.
+_Avoid_: perf panel, profiler, timing view, live log

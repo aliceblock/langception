@@ -20,8 +20,9 @@
 //! (re)start the loop goes through [`crate::shell::run_off_main`].
 
 use crate::shell::{
-    apply_always_on_top_from_config, apply_state, current_config, profile_edited, push_warning,
-    restart_loop_if_running, run_off_main, with_config_mut, AppState, HotkeyStatus,
+    apply_always_on_top_from_config, apply_capture_visibility_from_config, apply_state,
+    current_config, profile_edited, push_warning, restart_loop_if_running, run_off_main,
+    with_config_mut, AppState, HotkeyStatus,
 };
 use langception_core::config::{AppConfig, HotkeySettings};
 use langception_core::glossary::Glossary;
@@ -72,13 +73,11 @@ pub fn open_settings(app: &AppHandle) -> Result<(), String> {
     apply_always_on_top_from_config(app);
 
     // Same rule as the Results Window (ADR-0003): Langception's own windows
-    // are never translation sources.
-    if let Err(message) = crate::overlay::exclude_from_capture(&window) {
-        push_warning(
-            &app.state::<AppState>(),
-            format!("could not exclude the settings window from capture: {message}"),
-        );
-    }
+    // are never translation sources. Capture Visibility (ticket 46) picks
+    // the protection per config — exclusion (off, the default) or masking
+    // (on) — applied to this window (and any others present) before the
+    // first show.
+    apply_capture_visibility_from_config(app);
     window
         .show()
         .map_err(|e| format!("cannot show the settings window: {e}"))?;
@@ -689,6 +688,9 @@ pub struct GeneralSettingsDto {
     /// applied to the live windows the moment this saves.
     pub results_on_top: bool,
     pub settings_on_top: bool,
+    /// Capture Visibility (ticket 46, "Show Langception in screen
+    /// captures") — applied to the live windows the moment this saves.
+    pub capture_visible: bool,
 }
 
 #[tauri::command]
@@ -729,12 +731,17 @@ pub(crate) async fn set_general(
             config.genderless = settings.genderless;
             config.windows.results_on_top = settings.results_on_top;
             config.windows.settings_on_top = settings.settings_on_top;
+            config.windows.capture_visible = settings.capture_visible;
             Ok(())
         })?;
         // The on-top flags apply to the live windows immediately (ticket
         // 34) — no relaunch, no reopen; a hidden window takes the flag
-        // for its next show.
+        // for its next show. Capture Visibility applies the same way
+        // (ticket 46): the exclusion flip is instant, and the mask
+        // provider reads the flag per capture, so the very next frame
+        // follows without a loop restart.
         apply_always_on_top_from_config(app);
+        apply_capture_visibility_from_config(app);
         // Translation Context (ticket 44) applies live: the running loop
         // reads the window per pass, so the next translation uses it —
         // with a 0 the buffer empties and the prompts return to today's

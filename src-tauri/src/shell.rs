@@ -128,6 +128,11 @@ pub struct Status {
     /// Settings → General). The overlay and picker are not configurable.
     pub settings_on_top: bool,
     pub results_on_top: bool,
+    /// Capture Visibility (ticket 46, Settings → General): when true, the
+    /// Settings window, Results Window, and zone picker appear in screen
+    /// captures — the loop is protected by masking + a picker pause
+    /// instead of exclusion (ADR-0004). The overlay is never configurable.
+    pub capture_visible: bool,
     /// The Update Check's launch toggle (ticket 28, Settings → About) and
     /// the last completed check's outcome — the page shows the latter on
     /// open, so a launch-time check that finished while the window was
@@ -331,6 +336,13 @@ pub(crate) struct AppState {
     /// full-screen mode this is one synthetic zone spanning the monitor.
     zones_tx: watch::Sender<Vec<Zone>>,
     paused_tx: watch::Sender<bool>,
+    /// The picker suspension (ticket 46): true while the Capture Zone
+    /// picker is open AND Capture Visibility is on — the loop holds still
+    /// without surfacing the user-facing paused state (ADR-0004: the
+    /// visible picker blankets the monitor, so masking it would blind the
+    /// loop). Re-sent wherever the picker or the setting changes; a fresh
+    /// loop re-sends the current value at start.
+    suspended_tx: watch::Sender<bool>,
     /// The Excluded Blocks currently in force (all of them in full-screen
     /// mode; empty in zones mode — exclusions are consulted there only).
     exclusions_tx: watch::Sender<Vec<ExcludedBlock>>,
@@ -384,6 +396,7 @@ pub fn run() {
 
     let (zones_tx, _) = watch::channel(Vec::new());
     let (paused_tx, _) = watch::channel(false);
+    let (suspended_tx, _) = watch::channel(false);
     let (exclusions_tx, _) = watch::channel(Vec::new());
     let (context_tx, _) = watch::channel(0u32);
 
@@ -426,6 +439,7 @@ pub fn run() {
             adjust_mode: Mutex::new(false),
             zones_tx,
             paused_tx,
+            suspended_tx,
             exclusions_tx,
             context_tx,
             warnings: Mutex::new(Vec::new()),
@@ -505,7 +519,8 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             // The picker overlay is ephemeral; however it dies, the session
-            // ends with it.
+            // ends with it — and its loop suspension ends too (ticket 46;
+            // a watch send only, so this stays main-thread-safe).
             if window.label() == PICKER_LABEL && matches!(event, tauri::WindowEvent::Destroyed) {
                 *window
                     .app_handle()
@@ -513,6 +528,7 @@ pub fn run() {
                     .picker_mode
                     .lock()
                     .unwrap_or_else(|p| p.into_inner()) = None;
+                apply_picker_suspension(window.app_handle());
             }
             // The frameless windows (settings, results) hide instead of
             // closing (tray-first: the app keeps running); reopening is
@@ -579,11 +595,10 @@ pub fn run() {
                 // Langception's own windows are never translation sources
                 // (ADR-0003): the Results Window displays Thai, and a zone
                 // overlapping it would translate its own entries forever.
-                if let Err(message) = crate::overlay::exclude_from_capture(&window) {
-                    state.warnings.lock().unwrap_or_else(|p| p.into_inner()).push(format!(
-                        "could not exclude the Results Window from capture: {message}"
-                    ));
-                }
+                // Capture Visibility (ticket 46) decides per config HOW the
+                // loop is protected — exclusion (off) or masking (on) —
+                // applied before the first show.
+                apply_capture_visibility_from_config(&handle);
                 // The conf ships always-on-top (today's default); config
                 // decides (ticket 34) — applied before the first show.
                 apply_always_on_top_from_config(&handle);
@@ -971,6 +986,117 @@ pub(crate) fn apply_always_on_top_from_config(app: &AppHandle) {
     }
 }
 
+/// Capture Visibility (ticket 46, Settings → General / ADR-0004): when
+/// true, the Settings window, Results Window, and zone picker appear in
+/// captures and the loop is protected by masking (the capture adapter's
+/// mask provider) plus a picker-open suspension. A broken or not-yet-loaded
+/// config keeps ADR-0003's behavior: capture-invisible windows.
+pub(crate) fn capture_visible(app: &AppHandle) -> bool {
+    match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
+        Some(Ok(config)) => config.windows.capture_visible,
+        Some(Err(_)) | None => false,
+    }
+}
+
+/// Applies the Capture Visibility mode (ticket 46) to whichever windows
+/// exist right now, mirroring [`apply_always_on_top_from_config`] (ticket
+/// 34): called at startup, when the settings window is created, when
+/// General saves, and at picker creation. OFF (the default) = ADR-0003:
+/// the Settings window, Results Window, and picker (when one exists) are
+/// excluded from capture. ON = `WDA_NONE` on those windows, so every
+/// capture pipeline shows them; the loop's protection switches to masking
+/// plus the picker suspension below. A hidden window takes the state too
+/// — it waits for its next show (the tray-first lifecycle hides instead of
+/// closing). Two windows are deliberately out of scope in BOTH modes: the
+/// per-monitor overlays (exclusion is structural, ADR-0003 — no toggle)
+/// and the Debug Log window (a support surface the masking does not cover,
+/// so it stays excluded even when visibility is on).
+pub(crate) fn apply_capture_visibility_from_config(app: &AppHandle) {
+    let visible = capture_visible(app);
+    let windows = [
+        (RESULTS_LABEL, "Results Window"),
+        (crate::settings::SETTINGS_LABEL, "Settings window"),
+        (PICKER_LABEL, "picker"),
+    ];
+    for (label, name) in windows {
+        if let Some(window) = app.get_webview_window(label) {
+            let result = if visible {
+                crate::overlay::allow_in_capture(&window)
+            } else {
+                crate::overlay::exclude_from_capture(&window)
+            };
+            if let Err(message) = result {
+                push_warning(
+                    &app.state::<AppState>(),
+                    format!("could not update capture visibility for the {name}: {message}"),
+                );
+            }
+        }
+    }
+    apply_picker_suspension(app);
+}
+
+/// Sends the picker-suspension flag the running loop should see (ticket
+/// 46): held iff Capture Visibility is on AND a picker session is open —
+/// by the `picker_mode` session flag, NOT the window registry: a
+/// `destroy()`-ed window lingers in the registry until its Destroyed
+/// event processes, and keying on that could re-suspend a loop right
+/// after its session closed. With no loop running the send has no
+/// receivers and is a harmless no-op; a fresh loop re-sends the current
+/// value at start, so the flag is always correct without coordinating
+/// loop start/stop with picker opens.
+fn apply_picker_suspension(app: &AppHandle) {
+    let session_open = app
+        .state::<AppState>()
+        .picker_mode
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some();
+    let suspended = capture_visible(app) && session_open;
+    let _ = app
+        .state::<AppState>()
+        .suspended_tx
+        .send(suspended);
+}
+
+/// The Capture Visibility mask provider (ticket 46): the CURRENT screen
+/// rects of the Results Window and the Settings window, read per capture
+/// so window moves, shows/hides, and the live toggle apply from the next
+/// frame. Empty when the setting is off — the windows are already excluded
+/// from capture, and defense in depth is free (ADR-0004). Also empty for a
+/// window that is not on screen (hidden to tray or minimized): masking its
+/// stale rect would blind a hole of the screen for nothing. The rect is
+/// filled regardless of occlusion — whether another app covers the window
+/// is not queryable reliably, and over-filling is the safe direction: the
+/// guarantee is "our pixels never reach an engine", paid for with a black
+/// rectangle wherever the visible window (or its occluder) sits (ADR-0004
+/// accepts the hole).
+fn capture_mask_provider(app: &AppHandle) -> crate::capture::MaskRectsFn {
+    let app = app.clone();
+    Box::new(move || {
+        if !capture_visible(&app) {
+            return Vec::new();
+        }
+        [RESULTS_LABEL, crate::settings::SETTINGS_LABEL]
+            .into_iter()
+            .filter_map(|label| {
+                let window = app.get_webview_window(label)?;
+                if !window.is_visible().unwrap_or(false) || window.is_minimized().unwrap_or(true) {
+                    return None;
+                }
+                let position = window.outer_position().ok()?;
+                let size = window.outer_size().ok()?;
+                Some(Region {
+                    x: position.x,
+                    y: position.y,
+                    width: size.width.max(1),
+                    height: size.height.max(1),
+                })
+            })
+            .collect()
+    })
+}
+
 fn status_for(app: &AppHandle) -> Status {
     let state = app.state::<AppState>();
     let running = state.running.lock().unwrap_or_else(|p| p.into_inner()).is_some();
@@ -1128,9 +1254,11 @@ fn status_for(app: &AppHandle) -> Status {
         Some(Err(_)) | None => Vec::new(),
     };
 
-    // The window on-top flags (ticket 34). A broken or not-yet-loaded
-    // config falls back to today's behavior: Results floats, Settings
-    // doesn't — the same defaults the WebviewWindowBuilder/conf ship.
+    // The window on-top flags (ticket 34) and Capture Visibility (ticket
+    // 46). A broken or not-yet-loaded config falls back to today's
+    // behavior: Results floats, Settings doesn't, windows are
+    // capture-invisible — the same defaults the WebviewWindowBuilder/conf
+    // ship.
     let windows = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => config.windows,
         Some(Err(_)) | None => WindowSettings::default(),
@@ -1182,6 +1310,7 @@ fn status_for(app: &AppHandle) -> Status {
         start_with_windows,
         settings_on_top: windows.settings_on_top,
         results_on_top: windows.results_on_top,
+        capture_visible: windows.capture_visible,
         update_check_on_launch,
         last_update_check,
         profiles,
@@ -1322,7 +1451,14 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
             prompt_preset: prompts.preset_label.clone(),
         },
         glossary: target.glossary.clone(),
-        capture: Arc::new(crate::capture::GdiCaptureSource::new()),
+        // The capture source carries the Capture Visibility mask provider
+        // (ticket 46): with the setting on it reports the two ordinary
+        // windows' current rects per capture, and every consumer — frame
+        // checksum, dHash, OCR, Auto Colors, the fused engines' cloud PNG —
+        // sees them filled. The loop AND a one-shot pass share this path.
+        capture: Arc::new(crate::capture::GdiCaptureSource::with_mask(
+            capture_mask_provider(app),
+        )),
         ocr,
         ocr_name,
         translate: build_translate_engine(config, target.engine.as_deref())?,
@@ -1766,6 +1902,11 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     *state.active_window.lock().unwrap_or_else(|p| p.into_inner()) = target.window;
     let zones_rx = state.zones_tx.subscribe();
     let paused_rx = state.paused_tx.subscribe();
+    // Picker suspension (ticket 46): subscribe BEFORE sending (the zones'
+    // rule) so a picker already open with Capture Visibility on suspends
+    // this fresh loop from its first tick.
+    let suspended_rx = state.suspended_tx.subscribe();
+    apply_picker_suspension(app);
     let excluded_rx = state.exclusions_tx.subscribe();
     // Translation Context (ticket 44): subscribe before sending (the
     // zones' rule) so the fresh loop's first translation already sees the
@@ -1829,6 +1970,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         events_tx,
     )
     .with_fused(pipeline.fused)
+    .with_suspended_rx(suspended_rx)
     .with_context_rx(context_rx);
     let orchestrator_task = tauri::async_runtime::spawn(orchestrator.run());
     let forwarder_task = spawn_forwarder(app, events_rx, overlays);
@@ -2356,8 +2498,12 @@ fn refresh_adjust_overlays(app: &AppHandle) {
 /// see `run_off_main`; all callers route through it or `spawn_off_main`).
 fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
     // A hotkey or menu item while the overlay is open cancels the session.
+    // Close through the shared path so the session's loop suspension (and
+    // the overlays' return) ends with it (ticket 46).
     if let Some(existing) = app.get_webview_window(PICKER_LABEL) {
+        *app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = None;
         let _ = existing.destroy();
+        apply_picker_suspension(app);
         return Ok(());
     }
 
@@ -2368,14 +2514,21 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
         set_adjust_mode(app, false);
     }
 
+    *app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
+
+    // The suspension must be in force BEFORE the screen changes (ticket
+    // 46): hiding the overlays below, and showing the dim later, must
+    // never land inside a loop tick. With Capture Visibility on this
+    // holds the loop from here; with it off the send is false and the
+    // loop keeps running (today's behavior).
+    apply_picker_suspension(app);
+
     // The dim + selection must not fight with already-rendered translations.
     crate::overlay::hide_all(app);
 
     let monitor = primary_monitor(app)?;
     let size = monitor.size();
     let origin = monitor.position();
-
-    *app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = Some(mode);
 
     let window =
         WebviewWindowBuilder::new(app, PICKER_LABEL, WebviewUrl::App("picker.html".into()))
@@ -2391,6 +2544,9 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
             .build()
             .map_err(|e| {
                 *app.state::<AppState>().picker_mode.lock().unwrap_or_else(|p| p.into_inner()) = None;
+                // The session died before its window existed: retract the
+                // suspension this open sent (ticket 46).
+                apply_picker_suspension(app);
                 format!("cannot open the capture overlay: {e}")
             })?;
 
@@ -2403,17 +2559,18 @@ fn open_picker(app: &AppHandle, mode: PickerMode) -> Result<(), String> {
         .set_size(Size::Physical(PhysicalSize::new(size.width, size.height)))
         .map_err(|e| format!("cannot size the capture overlay: {e}"))?;
     // Same rule as the Results Window: Langception's own windows are never
-    // translation sources. The dim must not darken the loop's captures, and
-    // a session must not OCR its own selection rectangle.
-    if let Err(message) = crate::overlay::exclude_from_capture(&window) {
-        app.state::<AppState>()
-            .warnings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(format!(
-                "could not exclude the picker from capture: {message}"
-            ));
-    }
+    // translation sources (ADR-0003). Capture Visibility (ticket 46)
+    // decides HOW the loop is protected during the session: with the
+    // setting off the picker is excluded from capture (the dim must not
+    // darken the loop's captures, and the session must not OCR its own
+    // selection rectangle) while the loop keeps running — today's
+    // behavior. With it on the picker blankets the whole monitor, so
+    // masking it would blind the loop (ADR-0004): the window becomes
+    // visible to captures and the loop SUSPENDS instead (sent above,
+    // before the screen changed). The helper applies the mode to the
+    // picker window and re-applies it to the others (the ticket-34
+    // pattern's call site list) — idempotent.
+    apply_capture_visibility_from_config(app);
     window
         .show()
         .map_err(|e| format!("cannot show the capture overlay: {e}"))?;
@@ -2430,6 +2587,11 @@ fn close_picker(app: &AppHandle) {
     if app.state::<AppState>().running.lock().unwrap_or_else(|p| p.into_inner()).is_some() {
         crate::overlay::show_all(app);
     }
+    // The session's loop suspension ends with the picker (ticket 46) —
+    // sent AFTER the overlays are back, so a resumed tick never runs
+    // while the pills are still hidden from the picker session. With
+    // Capture Visibility off this is a no-op false — today's behavior.
+    apply_picker_suspension(app);
 }
 
 // ---- Debug Log window (ticket 47) ----

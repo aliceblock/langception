@@ -153,6 +153,10 @@
             <span>Keep Settings window on top</span>
             <input id="general-settings-on-top" type="checkbox" />
           </label>
+          <label class="form-row" title="Capture Visibility: when checked, the Settings window, Results Window, and Capture Zone picker appear in screenshots, recordings, and remote-desktop sessions — so you can capture or share your own UI. The translation loop stays safe: it masks those two windows' pixels out of every frame and pauses while the picker is open, so Langception never translates or uploads its own output. The In-place Overlay stays invisible to captures in both modes. Applies with Save.">
+            <span>Show Langception in screen captures</span>
+            <input id="general-capture-visible" type="checkbox" />
+          </label>
         </div>
         <div class="row">
           <span class="hint">
@@ -160,8 +164,8 @@
             translation (re)starts — a running loop restarts automatically.
             Translation context applies on the very next translation, with
             no restart. Start-with-Windows applies immediately; the window
-            on-top toggles apply with Save. Per-app Profiles can override
-            Genderless Mode (Settings → Profiles).
+            on-top and capture-visibility toggles apply with Save. Per-app
+            Profiles can override Genderless Mode (Settings → Profiles).
           </span>
         </div>
         </div>

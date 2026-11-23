@@ -407,6 +407,11 @@ pub struct Orchestrator {
     glossary: Glossary,
     zones_rx: watch::Receiver<Vec<Zone>>,
     paused_rx: watch::Receiver<bool>,
+    /// The shell's picker suspension (ticket 46): true while the Capture
+    /// Zone picker is open with Capture Visibility on. Distinct from the
+    /// user pause — the tray label and Results Window state stay "running"
+    /// while it is in force; the loop just holds still like a paused one.
+    suspended_rx: watch::Receiver<bool>,
     excluded_rx: watch::Receiver<Vec<ExcludedBlock>>,
     /// Translation Context window (ticket 44): the live number of recent
     /// translations each zone's prompts carry. Read per pass, so a change
@@ -449,6 +454,9 @@ impl Orchestrator {
             glossary,
             zones_rx,
             paused_rx,
+            // Without the builder the loop parks on a private false channel:
+            // never suspended — the picker feature (ticket 46) is off.
+            suspended_rx: watch::channel(false).1,
             excluded_rx,
             context_rx: watch::channel(0u32).1,
             events,
@@ -473,6 +481,17 @@ impl Orchestrator {
     /// orchestrator parks on a private 0 channel — the feature off.
     pub fn with_context_rx(mut self, context_rx: watch::Receiver<u32>) -> Self {
         self.context_rx = context_rx;
+        self
+    }
+
+    /// Points the picker suspension (ticket 46) at a live watch channel:
+    /// the shell sends `true` when the Capture Zone picker opens with
+    /// Capture Visibility on (the picker blankets the monitor, so masking
+    /// it would blind the loop — ADR-0004) and `false` when it closes.
+    /// Without this builder the orchestrator parks on a private false
+    /// channel — the loop never suspends.
+    pub fn with_suspended_rx(mut self, suspended_rx: watch::Receiver<bool>) -> Self {
+        self.suspended_rx = suspended_rx;
         self
     }
 
@@ -1217,21 +1236,41 @@ impl Orchestrator {
     }
 
     /// Runs the loop forever, pacing ticks with the clock and holding still
-    /// (without losing tracking state) while paused. The caller stops it by
-    /// aborting the task.
+    /// (without losing tracking state) while the user paused it or while
+    /// the shell suspended it for the Capture Zone picker (ticket 46). The
+    /// caller stops it by aborting the task.
     pub async fn run(mut self) {
         loop {
-            if *self.paused_rx.borrow()
-                && self
-                    .paused_rx
-                    .wait_for(|paused| !*paused)
-                    .await
-                    .is_err()
-            {
-                return; // sender dropped: the shell is gone
+            if self.held() && self.wait_while_held().await.is_err() {
+                return; // a sender dropped: the shell is gone
             }
             self.tick().await;
             self.clock.sleep(self.config.cadence).await;
+        }
+    }
+
+    /// Whether either hold flag is in force right now: the user pause, or
+    /// the picker suspension (ticket 46).
+    fn held(&self) -> bool {
+        *self.paused_rx.borrow() || *self.suspended_rx.borrow()
+    }
+
+    /// Waits until neither hold flag is in force — the same stillness the
+    /// user pause provides, shared with the picker suspension. Each release
+    /// re-checks BOTH flags: a pause set while the suspension released (or
+    /// vice versa) keeps the loop held. Sender dropped = the shell is gone.
+    async fn wait_while_held(&mut self) -> Result<(), tokio::sync::watch::error::RecvError> {
+        loop {
+            let paused = *self.paused_rx.borrow();
+            let suspended = *self.suspended_rx.borrow();
+            if !paused && !suspended {
+                return Ok(());
+            }
+            tokio::select! {
+                res = self.paused_rx.wait_for(|paused| !*paused), if paused => { res?; }
+                res = self.suspended_rx.wait_for(|s| !*s), if suspended => { res?; }
+                else => return Ok(()),
+            }
         }
     }
 
