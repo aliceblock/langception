@@ -1,7 +1,7 @@
 //! Profiles (CONTEXT.md): a per-app configuration — which app it targets
-//! (by executable file name), the Source Language, the engine choice, the
-//! Capture Zones inside that app's window, an optional Glossary layer, and
-//! a Genderless Mode override.
+//! (by executable file name), the Source Language, the engine choice, a
+//! System Prompt Preset binding, the Capture Zones inside that app's
+//! window, an optional Glossary layer, and a Genderless Mode override.
 //!
 //! Activation is a shell concern (it needs the OS foreground window), but
 //! everything that decides what an active Profile *means* lives here and is
@@ -53,6 +53,14 @@ pub struct Profile {
     /// Genderless Mode per-Profile override.
     #[serde(default)]
     pub genderless: GenderlessOverride,
+    /// The Profile's System Prompt Preset binding (ticket 43): `None`
+    /// inherits the global selection — exactly today's behavior — and
+    /// `Some(name)` replaces it while the Profile is active (a built-in's
+    /// code or a saved preset's name; both validate against the preset
+    /// registry). Storing no binding is the "Inherit" choice, like
+    /// `engine` above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_preset: Option<String>,
     /// The Profile's Glossary layer: merged over the global Glossary while
     /// the Profile is active, with the Profile's value winning on conflict —
     /// game-specific names ("Vertin" → "เวอร์ติน") live here.
@@ -212,6 +220,7 @@ mod tests {
             language: SourceLanguage::Ja,
             engine: None,
             genderless: GenderlessOverride::Inherit,
+            prompt_preset: None,
             glossary: Glossary::default(),
             zones: Vec::new(),
         }
@@ -531,5 +540,33 @@ mod tests {
         // An unknown value is a config error, not a silent default.
         let err = toml::from_str::<Wrapper>("genderless = \"maybe\"").unwrap_err();
         assert!(err.to_string().contains("genderless"), "was: {err}");
+    }
+
+    #[test]
+    fn prompt_preset_binding_stores_a_name_and_inherit_stores_nothing() {
+        // Ticket 43: the binding follows the engine choice's storage rule —
+        // "Inherit" is the ABSENCE of the key (an existing profile's TOML is
+        // untouched by the field's arrival), a bound preset serializes as a
+        // plain string.
+        #[derive(Debug, Serialize, Deserialize)]
+        struct Wrapper {
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            prompt_preset: Option<String>,
+        }
+        assert_eq!(
+            toml::to_string(&Wrapper { prompt_preset: None }).unwrap().trim(),
+            "",
+            "inherit must store no binding"
+        );
+        // A pre-ticket-43 profile table (no key) upgrades to inherit.
+        let legacy: Wrapper = toml::from_str("").unwrap();
+        assert_eq!(legacy.prompt_preset, None);
+        let bound: Wrapper = toml::from_str("prompt_preset = \"game\"").unwrap();
+        assert_eq!(bound.prompt_preset.as_deref(), Some("game"));
+        assert_eq!(
+            toml::to_string(&bound).unwrap(),
+            "prompt_preset = \"game\"\n",
+            "the binding roundtrips as a hand-editable string"
+        );
     }
 }

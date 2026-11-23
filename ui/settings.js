@@ -62,9 +62,14 @@ for (const tab of document.querySelectorAll(".tab")) {
       loadPacks("engines");
     }
     // The Profiles tab scans the running apps the first time it is opened
-    // (its app picker only offers apps that actually have a window).
-    if (tab.dataset.tab === "profiles" && !runningAppsLoaded) {
-      loadRunningApps(false);
+    // (its app picker only offers apps that actually have a window), and
+    // loads the preset list its System Prompt Preset selector offers.
+    if (tab.dataset.tab === "profiles") {
+      if (!runningAppsLoaded) loadRunningApps(false);
+      if (!profilePresetsLoaded) {
+        profilePresetsLoaded = true;
+        loadPromptPresets().then(renderProfilePresetOptions).catch((e) => toast(String(e), "error"));
+      }
     }
     // The Engines tab loads the engine settings the first time it is opened
     // (the wizard loads them at show time — its upgrade action merges with
@@ -370,6 +375,9 @@ async function confirmDialog(message) {
 async function refreshAfterPromptPresetEdit(active, message) {
   await loadPromptPresets();
   showPromptPreset(active);
+  // The Profiles tab's binding selector offers the same list, and a
+  // rename/delete moves (or resets) the stored bindings (ticket 43).
+  renderProfilePresetOptions();
   promptControlsSaved();
   toast(message);
 }
@@ -897,6 +905,7 @@ const profileExe = document.getElementById("profile-exe");
 const profileLanguage = document.getElementById("profile-language");
 const profileEngine = document.getElementById("profile-engine");
 const profileGenderless = document.getElementById("profile-genderless");
+const profilePreset = document.getElementById("profile-preset");
 const profileGlossaryList = document.getElementById("profile-glossary-list");
 const profileGlossaryEmpty = document.getElementById("profile-glossary-empty");
 const profileGlossaryNewTerm = document.getElementById("profile-glossary-new-term");
@@ -909,6 +918,7 @@ let selectedProfileId = null;
 let populatedProfileId = null; // the id the editor inputs were last filled from
 let runningApps = [];
 let runningAppsLoaded = false;
+let profilePresetsLoaded = false; // the preset list the binding selector offers
 let deleteArmedTimer = null;
 
 async function loadRunningApps(force = false) {
@@ -952,6 +962,51 @@ function renderExeOptions() {
   }
 }
 
+// The System Prompt Preset binding selector's options (ticket 43): the
+// inherit choice plus every preset the Engines tab lists — built-ins
+// first, then the saved ones. Rebuilt only when the option set changed,
+// so a refresh never slams shut a dropdown the user has open (same rule
+// as the Engines preset select).
+function renderProfilePresetOptions() {
+  const signature = promptPresets.map((preset) => `${preset.name}\u0001${preset.builtin}`).join("\u0000");
+  if (profilePreset.dataset.sig !== signature) {
+    const before = profilePreset.value;
+    profilePreset.dataset.sig = signature;
+    const inherit = document.createElement("option");
+    inherit.value = "";
+    inherit.textContent = "Inherit global (Settings → Engines)";
+    const builtins = document.createElement("optgroup");
+    builtins.label = "Built-in presets";
+    const saved = document.createElement("optgroup");
+    saved.label = "Your presets";
+    for (const preset of promptPresets) {
+      const option = document.createElement("option");
+      option.value = preset.name;
+      option.textContent = preset.label;
+      (preset.builtin ? builtins : saved).append(option);
+    }
+    profilePreset.replaceChildren(inherit, builtins);
+    if (saved.childElementCount > 0) profilePreset.append(saved);
+    // Rebuilding resets the selection: put a still-existing choice back
+    // (an unsaved user pick survives the redraw). A choice whose preset
+    // vanished (deleted on the Engines tab mid-edit) falls back to
+    // inherit — the backend reset the stored binding to match, and the
+    // old name would only be rejected on save.
+    profilePreset.value = [...profilePreset.options].some((o) => o.value === before)
+      ? before
+      : "";
+  }
+  // Follow the stored binding while the field is clean — a preset renamed
+  // or deleted on the Engines tab moves (or resets) an untouched selector
+  // to what the config now holds; a user-chosen value stays dirty across
+  // the redraw (same rule as the exe select).
+  const selected = profiles.find((p) => p.id === selectedProfileId);
+  if (!fieldsDirty([profilePreset])) {
+    profilePreset.value = selected?.promptPreset || "";
+    snapshotFields([profilePreset]);
+  }
+}
+
 function renderProfiles(status) {
   profiles = status.profiles || [];
   if (selectedProfileId && !profiles.some((p) => p.id === selectedProfileId)) {
@@ -992,6 +1047,7 @@ function renderProfiles(status) {
   const selected = profiles.find((p) => p.id === selectedProfileId);
   profileActiveChip.classList.toggle("hidden", !selected?.active);
   renderProfileZones(selected);
+  renderProfilePresetOptions();
   // Editor inputs only refill when the selection changes (or on explicit
   // save/create) — a status event must never clobber in-progress edits.
   if (selected && populatedProfileId !== selected.id) populateEditor(selected);
@@ -1012,6 +1068,8 @@ function populateEditor(profile) {
   profileLanguage.value = profile.language;
   profileEngine.value = profile.engine || "";
   profileGenderless.value = profile.genderless || "inherit";
+  renderProfilePresetOptions();
+  profilePreset.value = profile.promptPreset || "";
   // Ticket 39: the freshly filled editor is the dirty baseline for this
   // profile — switching selection discards the previous edits (as it always
   // did), and the footer must follow.
@@ -1064,6 +1122,7 @@ profileNewBtn.addEventListener("click", async () => {
         language: document.getElementById("general-language").value,
         engine: null,
         genderless: "inherit",
+        promptPreset: null,
       },
     });
     selectedProfileId = id;
@@ -1120,6 +1179,7 @@ async function saveProfile() {
         language: profileLanguage.value,
         engine: profileEngine.value || null,
         genderless: profileGenderless.value,
+        promptPreset: profilePreset.value || null,
       },
     });
     toast("Profile saved");
@@ -1603,7 +1663,14 @@ const TRACKED_ENGINES = [
   enginesPromptScreenReading,
   enginesPreset,
 ];
-const TRACKED_PROFILE = [profileName, profileExe, profileLanguage, profileEngine, profileGenderless];
+const TRACKED_PROFILE = [
+  profileName,
+  profileExe,
+  profileLanguage,
+  profileEngine,
+  profileGenderless,
+  profilePreset,
+];
 const TRACKED_HOTKEYS = [
   hotkeyInputs.toggle,
   hotkeyInputs.newZone,

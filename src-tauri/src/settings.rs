@@ -21,12 +21,12 @@ use crate::shell::{
     apply_always_on_top_from_config, apply_state, current_config, profile_edited, push_warning,
     restart_loop_if_running, run_off_main, with_config_mut, AppState, HotkeyStatus,
 };
-use langception_core::config::{AppConfig, HotkeySettings, PromptSettings};
+use langception_core::config::{AppConfig, HotkeySettings};
 use langception_core::glossary::Glossary;
 use langception_core::ports::{SourceLanguage, TARGET_LANGUAGE};
 use langception_core::profile::{GenderlessOverride, Profile};
 use langception_core::prompt::{BuiltinPreset, PromptTexts};
-use langception_core::prompt_preset::ActivePromptPreset;
+use langception_core::prompt_preset::{ActivePromptPreset, EffectivePrompts};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt as _;
@@ -574,26 +574,41 @@ pub(crate) fn list_prompt_presets(app: AppHandle) -> Result<Vec<PromptPresetDto>
     Ok(presets)
 }
 
-/// The prompts a loop sends, for deciding whether an edit needs a restart:
-/// the two texts and the preset the version tag names.
-fn prompts_in_force(config: &AppConfig) -> (PromptSettings, String) {
-    (config.prompts.clone(), active_prompt_preset_code(config))
+/// The prompt inputs a running loop sends (ticket 43), for deciding
+/// whether a preset edit needs a restart: the active Profile's binding —
+/// the Profile the loop is currently translating under — resolved against
+/// the config, or the global texts and selection when no Profile matches
+/// or it inherits. So renaming or deleting a preset that only a bound
+/// (and active) Profile uses also counts as a change, while edits that
+/// touch nothing in force skip the restart (which would reset tracking
+/// and re-translate whatever is on screen).
+fn prompts_in_force(app: &AppHandle, config: &AppConfig) -> EffectivePrompts {
+    let active_id = app
+        .state::<AppState>()
+        .active_profile
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone();
+    let binding = config
+        .profiles
+        .iter()
+        .find(|profile| Some(&profile.id) == active_id.as_ref())
+        .and_then(|profile| profile.prompt_preset.clone());
+    config.effective_prompt_inputs(binding.as_deref())
 }
 
 /// Runs one System Prompt Preset edit against the config and applies it:
 /// returns the selection the config holds afterwards. The loop restarts
-/// only when the prompts in force changed — renaming or deleting a preset
-/// that is not selected leaves them alone, and a restart would reset
-/// tracking and re-translate whatever is on screen.
+/// only when the prompts in force changed.
 fn edit_prompt_presets(
     app: &AppHandle,
     edit: impl FnOnce(&mut AppConfig) -> Result<ActivePromptPreset, String>,
 ) -> Result<String, String> {
     let (changed, active) = with_config_mut(app, |config| {
-        let before = prompts_in_force(config);
+        let before = prompts_in_force(app, config);
         edit(config)?;
         Ok((
-            before != prompts_in_force(config),
+            before != prompts_in_force(app, config),
             active_prompt_preset_code(config),
         ))
     })?;
@@ -963,6 +978,10 @@ pub struct ProfileDto {
     pub engine: Option<String>,
     /// "inherit" | "on" | "off".
     pub genderless: String,
+    /// The Profile's System Prompt Preset binding (ticket 43); `None`/empty
+    /// = inherit the global selection.
+    #[serde(default)]
+    pub prompt_preset: Option<String>,
 }
 
 /// Runs one edit against one stored Profile. Keeps id/glossary/zones
@@ -1022,6 +1041,24 @@ fn parse_engine(engine: Option<&str>) -> Result<Option<String>, String> {
     Ok(engine)
 }
 
+/// The Profile's System Prompt Preset binding (ticket 43): trimmed, empty
+/// = `None` (inherit the global selection). Unlike the engine list, the
+/// accepted names depend on the config (the saved presets), so the check
+/// runs against it — with the same clear error the config's own validation
+/// gives, minus the misleading "config.toml is invalid" framing.
+fn parse_prompt_preset(value: Option<&str>, config: &AppConfig) -> Result<Option<String>, String> {
+    let preset = value.map(str::trim).filter(|preset| !preset.is_empty());
+    if let Some(preset) = &preset {
+        if config.prompt_preset_texts(preset).is_none() {
+            return Err(format!(
+                "unknown prompt preset \"{preset}\" — presets: {} (or choose inherit)",
+                langception_core::prompt_preset::accepted_preset_names(config).join(", ")
+            ));
+        }
+    }
+    Ok(preset.map(str::to_string))
+}
+
 fn parse_profile_dto(
     dto: ProfileDto,
 ) -> Result<
@@ -1070,6 +1107,7 @@ pub(crate) async fn list_fonts() -> Result<Vec<String>, String> {
 
 #[tauri::command]
 pub(crate) async fn create_profile(app: AppHandle, profile: ProfileDto) -> Result<String, String> {
+    let prompt_preset = profile.prompt_preset.clone();
     let (name, exe, language, engine, genderless) = parse_profile_dto(profile)?;
     run_off_main(app, move |app| {
         let id = format!(
@@ -1080,6 +1118,9 @@ pub(crate) async fn create_profile(app: AppHandle, profile: ProfileDto) -> Resul
                 .unwrap_or(0)
         );
         with_config_mut(app, |config| {
+            // The binding resolves against the config being edited (the
+            // saved presets live there).
+            let prompt_preset = parse_prompt_preset(prompt_preset.as_deref(), config)?;
             config.profiles.push(Profile {
                 id: id.clone(),
                 name,
@@ -1087,6 +1128,7 @@ pub(crate) async fn create_profile(app: AppHandle, profile: ProfileDto) -> Resul
                 language,
                 engine,
                 genderless,
+                prompt_preset,
                 glossary: Glossary::default(),
                 zones: Vec::new(),
             });
@@ -1104,18 +1146,23 @@ pub(crate) async fn update_profile(
     id: String,
     profile: ProfileDto,
 ) -> Result<(), String> {
+    let raw_preset = profile.prompt_preset.clone();
     let (name, exe, language, engine, genderless) = parse_profile_dto(profile)?;
     run_off_main(app, move |app| {
+        // The binding resolves against the current config (the saved
+        // presets live there); the edit itself cannot change that set.
+        let prompt_preset = parse_prompt_preset(raw_preset.as_deref(), &current_config(app)?)?;
         with_profile_mut(app, &id, |profile| {
             profile.name = name;
             profile.exe = exe;
             profile.language = language;
             profile.engine = engine;
             profile.genderless = genderless;
+            profile.prompt_preset = prompt_preset;
             Ok(())
         })?;
         // While the edited profile is active the loop restarts so the new
-        // language/glossary/engine apply at once.
+        // language/glossary/engine/prompt preset apply at once.
         profile_edited(app, &id);
         Ok(())
     })

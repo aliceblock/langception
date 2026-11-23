@@ -89,3 +89,7 @@ _Avoid_: dictionary, term base, custom translation
 **Genderless Mode**:
 A translation output setting that removes gendered Thai politeness particles and pronouns, so translated speech carries no speaker gender.
 _Avoid_: neutral mode, gender-free mode
+
+**System Prompt Preset**:
+A named pair of base instructions (per-block translation and screen-reading) that LLM prompts are built from, selectable globally or per Profile. Built-ins: General, Game, Novel, Manga.
+_Avoid_: prompt template, style preset, persona

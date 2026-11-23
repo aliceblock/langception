@@ -27,7 +27,6 @@ use langception_core::ports::{
 use langception_core::profile::{
     clamp_region_to_window, zone_in_window, GenderlessOverride, Profile, ProfileZone,
 };
-use langception_core::prompt_preset::ActivePromptPreset;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -171,6 +170,9 @@ pub struct ProfileStatus {
     pub engine: Option<String>,
     /// "inherit" | "on" | "off".
     pub genderless: String,
+    /// The Profile's System Prompt Preset binding (ticket 43); `None` =
+    /// inherit the global selection.
+    pub prompt_preset: Option<String>,
     pub glossary_terms: usize,
     pub zones: Vec<ProfileZoneStatus>,
     /// Whether this Profile is active right now (its app owns the
@@ -1064,6 +1066,7 @@ fn status_for(app: &AppHandle) -> Status {
                 language: profile.language.code().to_string(),
                 engine: profile.engine.clone(),
                 genderless: genderless_code(profile.genderless).to_string(),
+                prompt_preset: profile.prompt_preset.clone(),
                 glossary_terms: profile.glossary.0.len(),
                 zones: profile
                     .zones
@@ -1141,7 +1144,8 @@ fn genderless_code(override_: GenderlessOverride) -> &'static str {
 /// target when one matches the foreground window's executable, the global
 /// capture target (zones / full-screen monitor) otherwise. Everything the
 /// pipeline reads at start follows it: Source Language, Glossary layer,
-/// engine choice, Genderless override, Excluded Blocks.
+/// engine choice, Genderless override, System Prompt Preset binding,
+/// Excluded Blocks.
 struct EffectiveTarget {
     profile_id: Option<String>,
     /// The matched app's foreground window (screen px); `Some` iff a
@@ -1157,6 +1161,9 @@ struct EffectiveTarget {
     /// or the global toggle — the orchestrator's Thai scrubber consumes it
     /// via the loop config.
     genderless: bool,
+    /// The Profile's System Prompt Preset binding (ticket 43; `None` =
+    /// inherit the global selection, or no Profile matched).
+    prompt_preset: Option<String>,
 }
 
 /// Computes the target for the current foreground app against `config`.
@@ -1177,6 +1184,7 @@ fn effective_target(app: &AppHandle, config: &AppConfig) -> EffectiveTarget {
             glossary: profile.effective_glossary(&config.glossary),
             engine: profile.engine.clone(),
             genderless: profile.effective_genderless(config.genderless),
+            prompt_preset: profile.prompt_preset.clone(),
         };
     }
     EffectiveTarget {
@@ -1188,6 +1196,7 @@ fn effective_target(app: &AppHandle, config: &AppConfig) -> EffectiveTarget {
         glossary: config.glossary.clone(),
         engine: None,
         genderless: config.genderless,
+        prompt_preset: None,
     }
 }
 
@@ -1208,6 +1217,11 @@ struct Pipeline {
     ocr_name: &'static str,
     translate: Arc<dyn langception_core::ports::TranslateEngine>,
     fused: Option<Arc<dyn FusedEngine>>,
+    /// The prompt inputs the loop's guidances carry (tickets 37 + 42 +
+    /// 43), kept for the launch summary — the log names the same preset
+    /// the version tags do, derived from this one resolution rather than
+    /// recomputed.
+    prompts: langception_core::prompt_preset::EffectivePrompts,
 }
 
 fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget) -> Result<Pipeline, String> {
@@ -1225,6 +1239,12 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
         })
     };
     let (ocr, ocr_name) = build_ocr_engine(app, config, target, notify)?;
+    // The prompt inputs in force (tickets 37 + 42 + 43): the active
+    // Profile's preset binding replaces both texts wholesale when set —
+    // the bound preset's wording, tagged with its name — and inherit
+    // passes the global texts and selection through. The loop restarts in
+    // set_engines, the preset commands, and profile_edited re-read them.
+    let prompts = config.effective_prompt_inputs(target.prompt_preset.as_deref());
     Ok(Pipeline {
         config: LoopConfig {
             source_language: target.language,
@@ -1236,18 +1256,12 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
             // when it flips so fired blocks start (or stop) carrying
             // sampled colors.
             auto_colors: config.text_style.auto_colors,
-            // The LLM prompt base instructions (tickets 37 + 42): the two
-            // stored texts — the raw strings ride in, the prompt module
-            // normalizes (whitespace-only = built-in default) — plus the
-            // System Prompt Preset they are the verbatim wording of, which
-            // only labels the version tag. The loop restart in set_engines
-            // and the preset commands re-reads them when saved.
-            translation_prompt_override: Some(config.prompts.translation.clone()),
-            fused_prompt_override: Some(config.prompts.screen_reading.clone()),
-            prompt_preset: match config.active_prompt_preset() {
-                ActivePromptPreset::Named(name) => Some(name),
-                _ => None,
-            },
+            // The two raw strings ride in; the prompt module normalizes
+            // (whitespace-only = built-in default). The preset label only
+            // names the version tag.
+            translation_prompt_override: Some(prompts.translation.clone()),
+            fused_prompt_override: Some(prompts.screen_reading.clone()),
+            prompt_preset: prompts.preset_label.clone(),
         },
         glossary: target.glossary.clone(),
         capture: Arc::new(crate::capture::GdiCaptureSource::new()),
@@ -1255,6 +1269,7 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
         ocr_name,
         translate: build_translate_engine(config, target.engine.as_deref())?,
         fused,
+        prompts,
     })
 }
 
@@ -1684,13 +1699,20 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         }
     };
     // Launch summary inputs (ticket 27), captured before the pipeline and
-    // the zone list move into the orchestrator.
+    // the zone list move into the orchestrator. The preset note reads the
+    // SAME resolution the loop's prompts were built from, so the log can
+    // never name a preset the version tags do not.
     let loop_engine = pipeline
         .fused
         .as_ref()
         .map(|fused| fused.name())
         .unwrap_or_else(|| pipeline.translate.name())
         .to_string();
+    let preset_note = pipeline
+        .prompts
+        .preset_label
+        .clone()
+        .unwrap_or_else(|| config.active_prompt_preset().code().to_string());
     let zone_count = target.zones.len();
     apply_watching_nothing(&state, target.zones.is_empty());
     let _ = state.zones_tx.send(target.zones);
@@ -1736,7 +1758,9 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     // The launch summary (ticket 27): engine switches are visible here —
     // an active Profile swaps the engine, so its name is part of the line.
     // The System Prompt Preset (ticket 42) pairs with the version tag in
-    // the prompts this loop sends, so a log explains what produced them.
+    // the prompts this loop sends, so a log explains what produced them —
+    // the Profile's binding when one is in force (ticket 43), the global
+    // selection otherwise.
     let profile_note = target
         .profile_id
         .as_ref()
@@ -1753,7 +1777,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
             pipeline.ocr_name,
             target.language.code(),
             profile_note,
-            config.active_prompt_preset().code(),
+            preset_note,
         ),
     );
 

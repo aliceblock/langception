@@ -14,11 +14,19 @@
 //! is the custom selection, whatever the stored name says (a hand-edited
 //! file, or a built-in reworded by an app update). See
 //! [`AppConfig::active_prompt_preset`].
+//!
+//! Ticket 43 layers the per-Profile binding on top: a Profile may bind its
+//! own preset (`Profile::prompt_preset`, default = inherit the global
+//! selection), resolved — texts and version-tag label — by
+//! [`AppConfig::effective_prompt_inputs`]. Deleting a bound preset resets
+//! those Profiles to inherit and renaming one follows the bindings, so no
+//! stored binding can dangle.
 
 use crate::config::{
     AppConfig, ConfigError, PromptSettings, CUSTOM_PROMPT_PRESET as CUSTOM_SELECTION,
     DEFAULT_PROMPT_PRESET,
 };
+use crate::profile::Profile;
 use crate::prompt::{BuiltinPreset, PromptTexts};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -62,6 +70,26 @@ impl ActivePromptPreset {
             ActivePromptPreset::Custom => CUSTOM_SELECTION,
         }
     }
+}
+
+/// The prompt inputs a translation loop sends (ticket 43): the two
+/// base-instruction texts plus the preset label the prompt module's
+/// version tag names. The orchestrator's `LoopConfig` carries exactly
+/// these three, and the shell's preset-edit restart decision compares
+/// them — one type so both sides can never drift.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectivePrompts {
+    /// The per-block translation prompt's base instruction (raw; the
+    /// prompt module normalizes).
+    pub translation: String,
+    /// The fused screen-reading prompt's base instruction (raw).
+    pub screen_reading: String,
+    /// `Some` only when a named System Prompt Preset produced the texts —
+    /// the active Profile's binding, or the global selection while it
+    /// still names its preset's verbatim wording. `None` for the built-in
+    /// default and hand-written text: the version tag then says nothing
+    /// (or "custom", which the prompt module derives itself).
+    pub preset_label: Option<String>,
 }
 
 impl AppConfig {
@@ -146,8 +174,10 @@ impl AppConfig {
         self.commit_prompt_presets(next)
     }
 
-    /// Renames a saved preset; the selection follows it. The new name meets
-    /// the same rules as a new preset's ([`Self::save_prompt_preset`]).
+    /// Renames a saved preset; the selection follows it, and so does every
+    /// Profile bound to it (ticket 43) — the binding names the preset, not
+    /// a frozen snapshot of its spelling. The new name meets the same rules
+    /// as a new preset's ([`Self::save_prompt_preset`]).
     pub fn rename_prompt_preset(
         &mut self,
         name: &str,
@@ -158,8 +188,14 @@ impl AppConfig {
         let index = next
             .saved_prompt_preset_index(name)
             .ok_or_else(|| not_a_saved_preset(name))?;
+        let old_key = name_key(&next.prompt_presets[index].name);
         if next.selected_preset_is(&next.prompt_presets[index].name) {
             next.prompts.preset = new_name.to_string();
+        }
+        for profile in &mut next.profiles {
+            if profile.prompt_preset.as_deref().is_some_and(|b| name_key(b) == old_key) {
+                profile.prompt_preset = Some(new_name.to_string());
+            }
         }
         next.prompt_presets[index].name = new_name.to_string();
         self.commit_prompt_presets(next)
@@ -169,12 +205,23 @@ impl AppConfig {
     /// selection to General — its wording must not linger as anonymous
     /// custom text — unless the texts were edited away from the preset's
     /// wording, in which case they are the user's and stay (as the custom
-    /// selection).
+    /// selection). Every Profile bound to the deleted preset (ticket 43)
+    /// falls back to inherit — no dangling names in the config.
     pub fn delete_prompt_preset(&mut self, name: &str) -> Result<ActivePromptPreset, String> {
         let index = self
             .saved_prompt_preset_index(name)
             .ok_or_else(|| not_a_saved_preset(name))?;
         let preset = self.prompt_presets.remove(index);
+        let deleted_key = name_key(&preset.name);
+        for profile in &mut self.profiles {
+            if profile
+                .prompt_preset
+                .as_deref()
+                .is_some_and(|b| name_key(b) == deleted_key)
+            {
+                profile.prompt_preset = None;
+            }
+        }
         if self.selected_preset_is(&preset.name) {
             if texts_are_verbatim(
                 &preset.texts(),
@@ -233,6 +280,34 @@ impl AppConfig {
             .find(|preset| name_key(&preset.name) == wanted)
             .map(PromptPreset::texts)
     }
+
+    /// The prompt texts and preset label in force for a translation loop
+    /// under `binding` — the active Profile's System Prompt Preset binding,
+    /// `None` when no Profile matches or it inherits (ticket 43). A binding
+    /// replaces the global texts with its preset's and labels the version
+    /// tag with the bound name; inherit passes the config's stored texts and
+    /// selection straight through, so it follows the *current* global
+    /// preset dynamically. An unresolvable binding (impossible past
+    /// validation — deleting a bound preset resets it) falls back to the
+    /// global texts rather than translating with nothing.
+    pub fn effective_prompt_inputs(&self, binding: Option<&str>) -> EffectivePrompts {
+        let binding = binding.map(str::trim);
+        match binding.and_then(|name| self.prompt_preset_texts(name)) {
+            Some(texts) => EffectivePrompts {
+                translation: texts.translation,
+                screen_reading: texts.screen_reading,
+                preset_label: binding.map(str::to_string),
+            },
+            None => EffectivePrompts {
+                translation: self.prompts.translation.clone(),
+                screen_reading: self.prompts.screen_reading.clone(),
+                preset_label: match self.active_prompt_preset() {
+                    ActivePromptPreset::Named(name) => Some(name),
+                    _ => None,
+                },
+            },
+        }
+    }
 }
 
 impl PromptPreset {
@@ -283,6 +358,24 @@ fn not_a_saved_preset(name: &str) -> String {
     )
 }
 
+/// Every preset name a selection or a Profile binding may take: the
+/// built-ins' codes, then the saved presets' names (config order — the
+/// spelling error messages list). Public so the settings surface's
+/// binding parser can reject unknown names with the same list.
+pub fn accepted_preset_names(config: &AppConfig) -> Vec<&str> {
+    let mut accepted: Vec<&str> = BuiltinPreset::ALL
+        .iter()
+        .map(|preset| preset.code())
+        .collect();
+    accepted.extend(
+        config
+            .prompt_presets
+            .iter()
+            .map(|preset| preset.name.as_str()),
+    );
+    accepted
+}
+
 /// Shape checks for the System Prompt Presets, with `[prompts]`-prefixed
 /// messages like the rest of [`AppConfig::validate`]: the selection must
 /// name a known preset, and every saved preset needs a non-empty name that
@@ -316,23 +409,42 @@ pub(crate) fn validate(config: &AppConfig) -> Result<(), ConfigError> {
     }
     let selection = &config.prompts.preset;
     if selection != CUSTOM_SELECTION && config.prompt_preset_texts(selection).is_none() {
-        let mut accepted: Vec<&str> = BuiltinPreset::ALL
-            .iter()
-            .map(|preset| preset.code())
-            .collect();
+        let mut accepted = accepted_preset_names(config);
         accepted.push(CUSTOM_SELECTION);
-        accepted.extend(
-            config
-                .prompt_presets
-                .iter()
-                .map(|preset| preset.name.as_str()),
-        );
         return Err(ConfigError::Validation(format!(
             "[prompts] preset \"{selection}\" is unknown — presets: {}",
             accepted.join(", ")
         )));
     }
+    for profile in &config.profiles {
+        validate_profile_binding(config, profile)?;
+    }
     Ok(())
+}
+
+/// Why a Profile's System Prompt Preset binding is valid or not (ticket
+/// 43): it must name a preset through the same registry everything else
+/// reads — a built-in's code or a saved preset's name. "custom" is not a
+/// binding (it is the no-preset selection; unique wording goes through
+/// save-as-preset), and an unknown name is a config error, never a silent
+/// fallback to inherit.
+pub(crate) fn validate_profile_binding(
+    config: &AppConfig,
+    profile: &Profile,
+) -> Result<(), ConfigError> {
+    let Some(bound) = profile.prompt_preset.as_deref().map(str::trim) else {
+        return Ok(());
+    };
+    if config.prompt_preset_texts(bound).is_some() {
+        return Ok(());
+    }
+    Err(ConfigError::Validation(format!(
+        "profile \"{}\" prompt preset \"{}\" is unknown — presets: {} (or omit the key to \
+         inherit the global preset)",
+        profile.name.trim(),
+        bound,
+        accepted_preset_names(config).join(", ")
+    )))
 }
 
 #[cfg(test)]
@@ -729,5 +841,195 @@ mod tests {
             PromptSettings::default(),
             "deleting the selected preset through another casing still resets to General"
         );
+    }
+
+    // ---- Per-Profile preset binding (ticket 43) ----
+
+    use crate::ports::SourceLanguage;
+
+    fn profile_with_binding(id: &str, name: &str) -> crate::profile::Profile {
+        crate::profile::Profile {
+            id: id.into(),
+            name: format!("{id} profile"),
+            exe: format!("{id}.exe"),
+            language: SourceLanguage::Ja,
+            engine: None,
+            genderless: crate::profile::GenderlessOverride::Inherit,
+            prompt_preset: Some(name.into()),
+            glossary: crate::glossary::Glossary::default(),
+            zones: Vec::new(),
+        }
+    }
+
+    fn bound_config() -> AppConfig {
+        let mut config = config();
+        config
+            .profiles
+            .push(profile_with_binding("p1", "game"));
+        config
+    }
+
+    #[test]
+    fn inherit_sends_the_global_texts_and_selection_straight_through() {
+        // Default state: a fresh config's prompts ARE the built-in default.
+        let inputs = config().effective_prompt_inputs(None);
+        assert_eq!(inputs.translation, "");
+        assert_eq!(inputs.screen_reading, "");
+        assert_eq!(inputs.preset_label, None, "General labels nothing");
+
+        // A selected preset flows through verbatim, label included.
+        let game = BuiltinPreset::Game.texts();
+        let mut on_game = config();
+        on_game
+            .select_prompt_preset("game", game.clone())
+            .unwrap();
+        let inputs = on_game.effective_prompt_inputs(None);
+        assert_eq!(inputs.translation, game.translation);
+        assert_eq!(inputs.preset_label, Some("game".into()));
+    }
+
+    #[test]
+    fn a_binding_replaces_the_global_texts_and_labels_the_bound_preset() {
+        let mut config = bound_config();
+        config
+            .select_prompt_preset("novel", BuiltinPreset::Novel.texts())
+            .unwrap();
+
+        let inputs = config.effective_prompt_inputs(Some("game"));
+
+        let game = BuiltinPreset::Game.texts();
+        assert_eq!(inputs.translation, game.translation, "the bound preset's wording");
+        assert_eq!(inputs.screen_reading, game.screen_reading);
+        assert_eq!(
+            inputs.preset_label,
+            Some("game".into()),
+            "the version tag names the bound preset, not the global one"
+        );
+    }
+
+    #[test]
+    fn inherit_follows_the_current_global_selection_dynamically() {
+        let mut config = config();
+        assert_eq!(
+            config.effective_prompt_inputs(None).preset_label,
+            None,
+            "inherit under General is the default"
+        );
+
+        // Changing the global selection changes what inherit resolves to —
+        // without touching the Profile (its binding stays absent).
+        config
+            .select_prompt_preset("manga", BuiltinPreset::Manga.texts())
+            .unwrap();
+        let inputs = config.effective_prompt_inputs(None);
+        assert_eq!(inputs.translation, BuiltinPreset::Manga.texts().translation);
+        assert_eq!(inputs.preset_label, Some("manga".into()));
+        assert_eq!(config.profiles.len(), 0, "inherit stores no binding");
+    }
+
+    #[test]
+    fn a_saved_preset_binding_roundtrips_and_resolves_its_texts() {
+        let mut config = config();
+        config
+            .save_prompt_preset("My JRPG", texts("Be brief.", "Read everything."), false)
+            .unwrap();
+        config.profiles.push(profile_with_binding("p1", "My JRPG"));
+
+        let inputs = config.effective_prompt_inputs(Some("My JRPG"));
+        assert_eq!(inputs.translation, "Be brief.");
+        assert_eq!(inputs.screen_reading, "Read everything.");
+        assert_eq!(inputs.preset_label, Some("My JRPG".into()));
+
+        // The binding survives a restart and keeps resolving.
+        let after_restart = reloaded(&config);
+        assert_eq!(
+            after_restart.profiles[0].prompt_preset.as_deref(),
+            Some("My JRPG")
+        );
+        assert_eq!(
+            after_restart.effective_prompt_inputs(Some("My JRPG")),
+            inputs
+        );
+    }
+
+    #[test]
+    fn deleting_a_bound_preset_resets_those_profiles_to_inherit() {
+        let mut config = config();
+        config
+            .save_prompt_preset("My JRPG", texts("Be brief.", ""), false)
+            .unwrap();
+        config.profiles.push(profile_with_binding("p1", "my jrpg")); // any casing
+        config.profiles.push(profile_with_binding("p2", "game"));
+
+        config.delete_prompt_preset("My JRPG").unwrap();
+
+        assert!(
+            config.profiles[0].prompt_preset.is_none(),
+            "the bound profile resets to inherit — no dangling names"
+        );
+        assert_eq!(
+            config.profiles[1].prompt_preset.as_deref(),
+            Some("game"),
+            "other bindings are untouched"
+        );
+        assert_eq!(
+            reloaded(&config),
+            config,
+            "the reset persists exactly like any other config edit"
+        );
+    }
+
+    #[test]
+    fn renaming_a_preset_follows_its_bindings() {
+        let mut config = config();
+        config
+            .save_prompt_preset("My JRPG", texts("Be brief.", ""), false)
+            .unwrap();
+        config.profiles.push(profile_with_binding("p1", "My JRPG"));
+
+        config.rename_prompt_preset("My JRPG", "JRPG dialogue").unwrap();
+
+        assert_eq!(
+            config.profiles[0].prompt_preset.as_deref(),
+            Some("JRPG dialogue"),
+            "the binding names the preset, not a frozen spelling"
+        );
+        let inputs = config.effective_prompt_inputs(Some("JRPG dialogue"));
+        assert_eq!(inputs.translation, "Be brief.");
+        assert_eq!(inputs.preset_label, Some("JRPG dialogue".into()));
+    }
+
+    #[test]
+    fn an_unknown_binding_is_a_clear_config_error() {
+        let mut config = bound_config();
+        config.profiles[0].prompt_preset = Some("babelfish".into());
+        let err = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("profile \"p1 profile\" prompt preset \"babelfish\" is unknown"),
+            "was: {message}"
+        );
+        assert!(
+            message.contains("general, game, novel, manga"),
+            "the error lists what a binding may name: {message}"
+        );
+
+        // "custom" is the no-preset selection, not a preset to bind.
+        config.profiles[0].prompt_preset = Some(CUSTOM_SELECTION.into());
+        let err = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap_err();
+        assert!(err.to_string().contains("is unknown"), "was: {err}");
+    }
+
+    #[test]
+    fn an_unresolvable_binding_falls_back_to_the_global_texts() {
+        // Unreachable past validation (deleting a bound preset resets it),
+        // but the fallback must be inherit, never translating with nothing.
+        let mut config = bound_config();
+        config
+            .select_prompt_preset("novel", BuiltinPreset::Novel.texts())
+            .unwrap();
+        let inputs = config.effective_prompt_inputs(Some("babelfish"));
+        assert_eq!(inputs.translation, config.prompts.translation);
+        assert_eq!(inputs.preset_label, Some("novel".into()));
     }
 }

@@ -448,7 +448,9 @@ impl Default for WindowSettings {
 /// reply contract, the version tag) still attach. The LLM engines (Gemini,
 /// OpenAI-compatible, LM Studio) are the only consumers: keyed/MT engines
 /// (Google, Azure, DeepL) never see prompts, so these fields are inert for
-/// them. Global, not per-Profile.
+/// them. Global — a Profile may bind its own preset instead
+/// (`Profile::prompt_preset`, ticket 43), resolved by
+/// [`crate::prompt_preset::AppConfig::effective_prompt_inputs`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PromptSettings {
@@ -1214,7 +1216,10 @@ screen_reading = ""
 # above (the profile wins on conflict); genderless: "inherit" (follows
 # the genderless key above) | "on" | "off"; engine: "google" | "azure" |
 # "deepl" | "openai" | "lmstudio" | "gemini", or omit to inherit the global
-# engine.
+# engine; prompt_preset: a System Prompt Preset's name — a built-in's
+# ("general" | "game" | "novel" | "manga") or one under [[prompt_presets]]
+# — used for this app's prompts while it is active, or omit to inherit the
+# global selection.
 # [[profiles]]
 # id = "p1700000000000000000"
 # name = "Reverse: 1999"
@@ -2112,6 +2117,78 @@ language = "en"
             let config = AppConfig::from_toml_str(&text)
                 .unwrap_or_else(|e| panic!("{engine} should be accepted: {e}"));
             assert_eq!(config.profiles[0].engine.as_deref(), Some(engine));
+        }
+    }
+
+    // ---- Per-Profile System Prompt Preset binding (ticket 43) ----
+
+    #[test]
+    fn profile_without_a_preset_binding_inherits_and_stores_nothing() {
+        // The template's profile has no `prompt_preset` key — inherit, and
+        // a pre-ticket-43 config's profiles (no key at all) read the same.
+        let config = AppConfig::from_toml_str(&template_with_profile()).unwrap();
+        assert_eq!(config.profiles[0].prompt_preset, None);
+        assert!(
+            !config.to_toml_string().unwrap().contains("prompt_preset = \""),
+            "inherit must store no binding"
+        );
+    }
+
+    #[test]
+    fn profile_preset_binding_roundtrips_through_toml() {
+        // A built-in binding...
+        let builtin = template_with_profile().replace(
+            "genderless = \"inherit\"",
+            "genderless = \"inherit\"\nprompt_preset = \"game\"",
+        );
+        let config = AppConfig::from_toml_str(&builtin).unwrap();
+        assert_eq!(config.profiles[0].prompt_preset.as_deref(), Some("game"));
+
+        // ...and a saved preset's name, both surviving a reparse exactly.
+        let saved = builtin.replace("prompt_preset = \"game\"", "prompt_preset = \"My JRPG\"")
+            + "\n[[prompt_presets]]\nname = \"My JRPG\"\ntranslation = \"Be brief.\"\nscreen_reading = \"\"\n";
+        let config = AppConfig::from_toml_str(&saved).unwrap();
+        assert_eq!(
+            config.profiles[0].prompt_preset.as_deref(),
+            Some("My JRPG")
+        );
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn unknown_profile_preset_binding_is_rejected_with_the_accepted_names() {
+        let text = template_with_profile().replace(
+            "genderless = \"inherit\"",
+            "genderless = \"inherit\"\nprompt_preset = \"babelfish\"",
+        );
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("prompt preset \"babelfish\" is unknown"),
+            "was: {message}"
+        );
+        assert!(
+            message.contains("general, game, novel, manga"),
+            "the accepted presets must be listed: {message}"
+        );
+
+        // "custom" is the no-preset selection, not a preset to bind.
+        let text = text.replace("prompt_preset = \"babelfish\"", "prompt_preset = \"custom\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("is unknown"), "was: {err}");
+    }
+
+    #[test]
+    fn profile_preset_binding_accepts_every_built_in_code() {
+        for code in ["general", "game", "novel", "manga"] {
+            let text = template_with_profile().replace(
+                "genderless = \"inherit\"",
+                &format!("genderless = \"inherit\"\nprompt_preset = \"{code}\""),
+            );
+            let config = AppConfig::from_toml_str(&text)
+                .unwrap_or_else(|e| panic!("{code} should be accepted: {e}"));
+            assert_eq!(config.profiles[0].prompt_preset.as_deref(), Some(code));
         }
     }
 

@@ -461,9 +461,10 @@
         <p class="hint">
           A Profile binds one app (by its executable) with its own Source
           Language, engine, Capture Zones inside that app's window, a
-          Glossary layer and a Genderless Mode override. It is active while
-          the app is the foreground window; when no Profile matches, the
-          global settings above apply unchanged.
+          Glossary layer, a Genderless Mode override and a System Prompt
+          Preset binding. It is active while the app is the foreground
+          window; when no Profile matches, the global settings above apply
+          unchanged.
         </p>
         <div class="row">
           <select id="profile-select" title="Choose a profile"></select>
@@ -520,6 +521,12 @@
                 <option value="inherit">Inherit global (Settings → General)</option>
                 <option value="on">Force on</option>
                 <option value="off">Force off</option>
+              </select>
+            </label>
+            <label class="form-row">
+              <span>System prompt preset</span>
+              <select id="profile-preset" title="The System Prompt Preset the LLM prompts are built from while this profile's app is foreground (LLM engines only)">
+                <option value="">Inherit global (Settings → Engines)</option>
               </select>
             </label>
           </div>
