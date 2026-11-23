@@ -4,6 +4,7 @@
   "description": "Permissions for the Timing Debug window",
   "windows": ["debug"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-save"
   ]
 }

@@ -502,6 +502,7 @@ pub fn run() {
             crate::settings::delete_glossary_entry,
             crate::settings::import_glossary,
             crate::settings::export_glossary,
+            export_debug_log,
             crate::settings::list_running_apps,
             crate::settings::list_fonts,
             crate::settings::create_profile,
@@ -2631,6 +2632,18 @@ fn open_debug_window(app: &AppHandle) -> Result<(), String> {
     }
     let _ = window.set_focus();
     Ok(())
+}
+
+/// Writes the debug window's export (ticket 49) to the path the save
+/// dialog picked. The session text is built entirely in the window's JS;
+/// this only puts it on disk, off the main thread like every other
+/// file-writing command (see `run_off_main`).
+#[tauri::command]
+async fn export_debug_log(app: AppHandle, path: String, contents: String) -> Result<(), String> {
+    run_off_main(app, move |_app| {
+        std::fs::write(&path, contents).map_err(|e| format!("cannot write {path}: {e}"))
+    })
+    .await
 }
 
 fn primary_monitor(app: &AppHandle) -> Result<Monitor, String> {

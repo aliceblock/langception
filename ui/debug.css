@@ -12,17 +12,27 @@ body {
   font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
 }
 
-/* The rolling summary: one chip per stage, the slowest (by average)
-   highlighted. Wraps rather than scrolls so every stage stays visible. */
+/* The top bar: the rolling summary chips plus the Export… button
+   (ticket 49), pinned to the right edge. Wraps rather than scrolls so
+   every stage stays visible. */
+#topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex: none;
+}
+
 #summary {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  flex: none;
+  flex: 1;
+  min-width: 0;
 }
 
 #summary.empty {
@@ -56,6 +66,34 @@ body {
 
 .stage-chip.slow .name {
   color: var(--accent);
+}
+
+/* Export… (ticket 49): same pill shape as the read-trace toggle; the
+   transient "Saved ✓" / failure message sits beside it. */
+#export-btn {
+  margin-left: auto;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#export-btn:hover {
+  border-color: var(--accent-deep);
+}
+
+#export-status {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+#export-status.error {
+  color: var(--err);
+  word-break: break-word;
 }
 
 /* The row stream: chronological, newest at the bottom, auto-scrolled. */

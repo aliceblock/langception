@@ -9,8 +9,14 @@
   </head>
   <body>
     <!-- The "which stage is slow" answer at the top: rolling per-stage
-         averages/min/max since the window opened (ticket 47). -->
-    <header id="summary" class="empty">waiting for the first pass…</header>
+         averages/min/max since the window opened (ticket 47). Export…
+         (ticket 49) writes the whole session to a picked file; hidden
+         until the first event arrives. -->
+    <header id="topbar">
+      <div id="summary" class="empty">waiting for the first pass…</div>
+      <span id="export-status" hidden></span>
+      <button id="export-btn" type="button" hidden>Export…</button>
+    </header>
     <main id="rows"></main>
     <script src="debug.js"></script>
   </body>
