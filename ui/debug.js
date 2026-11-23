@@ -8,6 +8,8 @@
 // structured mirror of everything it showed, and an Export… button writes
 // it to a picked file as readable text — nothing is written
 // automatically, the manual export is the only file this window makes.
+// Ticket 52: Clear resets all of that in place — a fresh session without
+// reopening the window; the loop itself is untouched.
 
 const { listen } = window.__TAURI__.event;
 const { invoke } = window.__TAURI__.core;
@@ -17,7 +19,12 @@ const { getVersion } = window.__TAURI__.app;
 const summaryEl = document.getElementById("summary");
 const rowsEl = document.getElementById("rows");
 const exportBtn = document.getElementById("export-btn");
+const clearBtn = document.getElementById("clear-btn");
 const exportStatusEl = document.getElementById("export-status");
+
+// The empty state's wording — the HTML ships the same text; Clear puts it
+// back verbatim.
+const EMPTY_SUMMARY = "waiting for the first pass…";
 
 // The per-stage durations a timing event can carry (ticket 47). `total`
 // rides along everywhere but never competes for "slowest" — it only sums
@@ -25,7 +32,8 @@ const exportStatusEl = document.getElementById("export-status");
 const STAGES = ["capture", "ocr", "translate", "fused"];
 
 // A support tool left open for hours must not grind the DOM down: rows
-// beyond this drop oldest-first. The summary keeps every pass since open.
+// beyond this drop oldest-first. The summary keeps every pass since open
+// (or the last Clear).
 const MAX_ROWS = 500;
 
 // The exportable history (ticket 49): a structured mirror of everything
@@ -36,14 +44,17 @@ const MAX_ROWS = 500;
 // actually remains.
 const MAX_HISTORY = 5000;
 const history = [];
-const openedAtMs = Date.now();
+// The export header's "session started at" — the window's opening (or,
+// after a Clear — ticket 52 — the clear): a post-clear export's covered
+// range begins there.
+let openedAtMs = Date.now();
 
-// Rolling per-stage stats since the window opened. Capture counts every
-// pass (it runs even on unchanged ticks — it can be the slow stage on a
-// large zone); ocr/translate/fused count only the passes where they ran —
-// the backend reports null on passes where a stage never ran (ticket 50),
-// and a translate min of 0ms is honest: a Glossary-pinned fire genuinely
-// costs ~nothing.
+// Rolling per-stage stats since the window opened — or the last Clear.
+// Capture counts every pass (it runs even on unchanged ticks — it can be
+// the slow stage on a large zone); ocr/translate/fused count only the
+// passes where they ran — the backend reports null on passes where a
+// stage never ran (ticket 50), and a translate min of 0ms is honest: a
+// Glossary-pinned fire genuinely costs ~nothing.
 const stats = {
   capture: freshStats(),
   ocr: freshStats(),
@@ -363,7 +374,20 @@ function renderSummary() {
   }
 }
 
+// The session controls (Export…, Clear) stay hidden while the window is
+// empty — nothing to export, nothing to clear — and appear with the first
+// RENDERED event. Keying them to the two handlers (not "any event on the
+// stream") keeps the invariant airtight — buttons visible ⟺ a row and a
+// history entry exist — no matter what the loop ever forwards here
+// (today only timings and errors reach this window; ticket 52; Export's
+// rule since ticket 49, now shared).
+function showSessionControls() {
+  exportBtn.hidden = false;
+  clearBtn.hidden = false;
+}
+
 function handleTiming(event) {
+  showSessionControls();
   passCount += 1;
   record("capture", event.capture_ms);
   for (const name of STAGES.slice(1)) {
@@ -394,6 +418,7 @@ function handleTiming(event) {
 }
 
 function handleError(event) {
+  showSessionControls();
   appendRow(errorRow(event));
   recordErrorHistory(event);
 }
@@ -551,7 +576,7 @@ function buildExportText(version) {
     "Langception debug log — what the translation loop did",
     `app version: ${version}`,
     `exported at: ${stamp(Date.now())}`,
-    `window opened at: ${stamp(openedAtMs)}`,
+    `session started at: ${stamp(openedAtMs)}`,
     `passes: ${passCount}`,
     `covered range: ${clockTime(history[0].atMs)} → ` +
       `${clockTime(history[history.length - 1].atMs)} ` +
@@ -623,6 +648,37 @@ async function exportLog() {
 
 exportBtn.addEventListener("click", exportLog);
 
+// ---- Ticket 52: the Clear button --------------------------------------
+// One click resets every piece of window state the way reopening the
+// window would — rows, rolling stats, structured history, both
+// unchanged-run accumulators, the pass count, and the opened-at timestamp
+// the export header reports — so a new debugging session starts clean
+// without the reopen dance. Confirm-free by design: this is a view, not
+// config, and Export… exists for keeping a copy first. The loop is not
+// touched; events arriving during/after the clear render normally into
+// the fresh window.
+function clearAll() {
+  // Emptying the list also resets the pin-to-bottom state: the next
+  // append computes it from an empty scroll box.
+  rowsEl.replaceChildren();
+  unchangedRun = null; // a run must not continue across a clear
+  openHistoryRun = null;
+  history.length = 0;
+  openedAtMs = Date.now();
+  passCount = 0;
+  for (const name of [...STAGES, "total"]) stats[name] = freshStats();
+  summaryEl.classList.add("empty");
+  summaryEl.textContent = EMPTY_SUMMARY;
+  // Back to the empty state: nothing to export or clear until the next
+  // event renders (showSessionControls unhides them).
+  exportBtn.hidden = true;
+  clearBtn.hidden = true;
+  // The transient status doubles as the click's feedback — the minimal
+  // nicety the brief floated, reusing the export status's flash.
+  flashExportStatus("Cleared ✓", false);
+}
+clearBtn.addEventListener("click", clearAll);
+
 window.addEventListener("DOMContentLoaded", async () => {
   await listen("loop-event", (event) => {
     const payload = event.payload;
@@ -632,9 +688,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       handleError(payload);
     }
     // "translated" events stay with the Results Window; the debug view is
-    // timings + errors only.
-    // Export waits for something to export: hidden until the first event
-    // (the empty state is "waiting for the first pass…").
-    exportBtn.hidden = false;
+    // timings + errors only. The session controls appear with the first
+    // rendered event (showSessionControls, called by the two handlers).
   });
 });

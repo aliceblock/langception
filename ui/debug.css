@@ -68,10 +68,11 @@ body {
   color: var(--accent);
 }
 
-/* Export… (ticket 49): same pill shape as the read-trace toggle; the
-   transient "Saved ✓" / failure message sits beside it. */
-#export-btn {
-  margin-left: auto;
+/* Export… (ticket 49) and Clear (ticket 52): the same pill shape as the
+   read-trace toggle; the transient "Saved ✓" / "Cleared ✓" / failure
+   message sits beside them. */
+#export-btn,
+#clear-btn {
   font: inherit;
   color: var(--text);
   background: var(--panel-2);
@@ -82,7 +83,14 @@ body {
   white-space: nowrap;
 }
 
-#export-btn:hover {
+/* Only Export… pushes to the right edge — Clear follows it through the
+   bar's column gap. */
+#export-btn {
+  margin-left: auto;
+}
+
+#export-btn:hover,
+#clear-btn:hover {
   border-color: var(--accent-deep);
 }
 
