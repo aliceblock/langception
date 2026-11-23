@@ -31,6 +31,18 @@
 //! which arrive through watch channels so the shell can change them while
 //! the loop runs without losing per-block tracking state.
 //!
+//! Translation Context (ticket 44) rides the same pattern: each zone keeps
+//! a rolling buffer of its last X successful translations (source → Thai),
+//! and the buffer rides into every LLM prompt the zone fires through the
+//! same per-block guidance the Glossary uses, rendered as a "Recent
+//! translations" continuity section ([`crate::prompt`]). Only actual
+//! emissions record into it — a failed translation and a suppressed
+//! identical re-read (ticket 22) leave the buffer alone, and a Glossary-pinned
+//! display counts (it is what the user saw). The window X arrives through
+//! its own watch channel so a settings change applies on the very next
+//! translation without a loop restart; 0 (the default) records nothing and
+//! injects nothing.
+//!
 //! Change detection (ticket 05) is what makes continuous translation cheap
 //! enough to leave running. Every tick captures the region and checksums
 //! its pixels: when the checksum matches the last OCR'd frame, nothing on
@@ -272,12 +284,15 @@ struct PendingChange {
 
 /// A zone's tracking state. `last_frame` is the checksum of the last OCR'd
 /// frame; a tick whose capture checksums identically skips OCR and only
-/// matures pendings and advances removals.
+/// matures pendings and advances removals. `recent` is the Translation
+/// Context buffer (ticket 44): the zone's last successful translations,
+/// oldest first, trimmed to the live window.
 #[derive(Debug)]
 struct ZoneState {
     region: Region,
     last_frame: Option<u64>,
     blocks: HashMap<(i32, i32), BlockState>,
+    recent: Vec<(String, String)>,
 }
 
 impl ZoneState {
@@ -286,8 +301,41 @@ impl ZoneState {
             region,
             last_frame: None,
             blocks: HashMap::new(),
+            recent: Vec::new(),
         }
     }
+}
+
+/// Evicts a Translation Context buffer's oldest pairs until it holds at
+/// most `window` (ticket 44) — the one eviction invariant, shared by the
+/// record path and every read. A window of 0 empties the buffer outright:
+/// with the feature off nothing is kept, so re-enabling it later starts
+/// from what is translated next, never from a stale backlog.
+fn trim_recent(buffer: &mut Vec<(String, String)>, window: usize) {
+    if window == 0 {
+        buffer.clear();
+    } else {
+        buffer.drain(..buffer.len().saturating_sub(window));
+    }
+}
+
+/// Trims a zone's Translation Context buffer (ticket 44) to the live window
+/// and returns the pairs to inject into this pass's prompts — oldest first.
+fn recent_context(state: &mut ZoneState, window: usize) -> Vec<(String, String)> {
+    trim_recent(&mut state.recent, window);
+    state.recent.clone()
+}
+
+/// Records one displayed translation in the zone's rolling buffer (ticket
+/// 44). Only the fire path calls this, and only on a shown translation —
+/// engine failures and suppressed identical re-reads never reach it, and
+/// the recorded value is the post-scrub Thai that actually went on screen.
+fn record_recent(buffer: &mut Vec<(String, String)>, window: usize, pair: (String, String)) {
+    if window == 0 {
+        return;
+    }
+    buffer.push(pair);
+    trim_recent(buffer, window);
 }
 
 /// Runs the Auto-translate loop against injected ports and streams
@@ -306,6 +354,11 @@ pub struct Orchestrator {
     zones_rx: watch::Receiver<Vec<Zone>>,
     paused_rx: watch::Receiver<bool>,
     excluded_rx: watch::Receiver<Vec<ExcludedBlock>>,
+    /// Translation Context window (ticket 44): the live number of recent
+    /// translations each zone's prompts carry. Read per pass, so a change
+    /// applies on the next translation without a loop restart; 0 = off
+    /// (the private default channel parks there).
+    context_rx: watch::Receiver<u32>,
     events: mpsc::UnboundedSender<LoopEvent>,
     /// Zone id → its tracking state (last frame checksum + per-block dHash
     /// state). State for removed zones is pruned per tick, so a redrawn
@@ -343,6 +396,7 @@ impl Orchestrator {
             zones_rx,
             paused_rx,
             excluded_rx,
+            context_rx: watch::channel(0u32).1,
             events,
             zones: HashMap::new(),
             exclusions_seen: Vec::new(),
@@ -356,6 +410,21 @@ impl Orchestrator {
     pub fn with_fused(mut self, fused: Option<Arc<dyn FusedEngine>>) -> Self {
         self.fused = fused;
         self
+    }
+
+    /// Points Translation Context (ticket 44) at a live watch channel: the
+    /// shell sends the configured window at loop start and re-sends it on
+    /// every settings change, and the loop applies the new value on the
+    /// next translation without a restart. Without this builder the
+    /// orchestrator parks on a private 0 channel — the feature off.
+    pub fn with_context_rx(mut self, context_rx: watch::Receiver<u32>) -> Self {
+        self.context_rx = context_rx;
+        self
+    }
+
+    /// The Translation Context window in force right now (ticket 44).
+    fn context_window(&self) -> usize {
+        *self.context_rx.borrow() as usize
     }
 
     /// One pipeline pass over every active zone: capture, change detection,
@@ -418,7 +487,9 @@ impl Orchestrator {
                     &image,
                     self.config.source_language,
                     crate::ports::TARGET_LANGUAGE,
-                    &self.fused_guidance(),
+                    // A one-shot creates no Capture Zone, so there is no
+                    // per-zone buffer to continue from (ticket 44).
+                    &self.fused_guidance(Vec::new()),
                 )
                 .await
             {
@@ -478,6 +549,8 @@ impl Orchestrator {
                 &text,
                 &origin,
                 label,
+                // No zone context in a one-shot pass (ticket 44).
+                &[],
                 self.sampled_style(&image, &block),
             )
             .await;
@@ -516,6 +589,12 @@ impl Orchestrator {
             return state;
         }
 
+        // Translation Context (ticket 44): the live window, read once per
+        // pass. The fused call below injects the zone's buffer whole; each
+        // classic fire re-reads it after the previous emission, so blocks
+        // firing later in the same pass chain off the ones before them.
+        let context_window = self.context_window();
+
         // The read stage, in one of its two forms (ticket 12): a fused
         // call answers blocks WITH translations, a classic OCR pass yields
         // blocks whose translation is requested per fire. Either way each
@@ -526,7 +605,7 @@ impl Orchestrator {
                     &image,
                     self.config.source_language,
                     crate::ports::TARGET_LANGUAGE,
-                    &self.fused_guidance(),
+                    &self.fused_guidance(recent_context(&mut state, context_window)),
                 )
                 .await
             {
@@ -587,6 +666,11 @@ impl Orchestrator {
             }
 
             let hash = block_dhash(&image, quantized_region(&block));
+            // Ticket 44: the context snapshot for this block's fire —
+            // taken after any earlier emission this pass recorded, so a
+            // dialogue's next line chains off the previous one even within
+            // one frame.
+            let recent = recent_context(&mut state, context_window);
             let entry = state.blocks.entry(key).or_default();
             entry.misses = 0;
 
@@ -606,18 +690,23 @@ impl Orchestrator {
                     .since_ms;
                 if now.saturating_sub(since) >= stable_ms {
                     entry.pending = None;
-                    self.fire_read(
-                        entry,
-                        zone.region,
-                        &block,
-                        &text,
-                        hash,
-                        fused_translation.as_deref(),
-                        &origin,
-                        &label,
-                        &image,
-                    )
-                    .await;
+                    if let Some(pair) = self
+                        .fire_read(
+                            entry,
+                            zone.region,
+                            &block,
+                            &text,
+                            hash,
+                            fused_translation.as_deref(),
+                            &origin,
+                            &label,
+                            &image,
+                            &recent,
+                        )
+                        .await
+                    {
+                        record_recent(&mut state.recent, context_window, pair);
+                    }
                 } else {
                     // ...otherwise keep waiting, refreshing the cached read
                     // to this frame — the newest one a fast-path fire could
@@ -639,18 +728,23 @@ impl Orchestrator {
                 });
                 if stable_ms == 0 {
                     entry.pending = None;
-                    self.fire_read(
-                        entry,
-                        zone.region,
-                        &block,
-                        &text,
-                        hash,
-                        fused_translation.as_deref(),
-                        &origin,
-                        &label,
-                        &image,
-                    )
-                    .await;
+                    if let Some(pair) = self
+                        .fire_read(
+                            entry,
+                            zone.region,
+                            &block,
+                            &text,
+                            hash,
+                            fused_translation.as_deref(),
+                            &origin,
+                            &label,
+                            &image,
+                            &recent,
+                        )
+                        .await
+                    {
+                        record_recent(&mut state.recent, context_window, pair);
+                    }
                 }
             }
         }
@@ -695,6 +789,8 @@ impl Orchestrator {
     ) {
         let now = self.clock.now_ms();
         let stable_ms = self.config.stability.as_millis() as u64;
+        // Translation Context (ticket 44): the live window for this pass.
+        let context_window = self.context_window();
         let matured: Vec<(i32, i32)> = state
             .blocks
             .iter()
@@ -708,24 +804,32 @@ impl Orchestrator {
             .map(|(key, _)| *key)
             .collect();
         for key in matured {
+            // Ticket 44: snapshot after the previous matured fire recorded,
+            // so chains built on the fast path continue line by line.
+            let recent = recent_context(state, context_window);
             let Some(entry) = state.blocks.get_mut(&key) else {
                 continue; // unreachable: the key came from this very map
             };
             let Some(pending) = entry.pending.take() else {
                 continue; // unreachable: maturity was checked above
             };
-            self.fire_read(
-                entry,
-                region,
-                &pending.rect,
-                &pending.text,
-                pending.hash,
-                pending.translation.as_deref(),
-                origin,
-                label,
-                image,
-            )
-            .await;
+            if let Some(pair) = self
+                .fire_read(
+                    entry,
+                    region,
+                    &pending.rect,
+                    &pending.text,
+                    pending.hash,
+                    pending.translation.as_deref(),
+                    origin,
+                    label,
+                    image,
+                    &recent,
+                )
+                .await
+            {
+                record_recent(&mut state.recent, context_window, pair);
+            }
         }
     }
 
@@ -770,14 +874,19 @@ impl Orchestrator {
     /// The prompt guidance for a fused call (ticket 12): ALL Glossary
     /// entries — a fused call sees the image, not one block's text, so
     /// there is nothing to filter entries by — plus the Genderless flag,
-    /// the screen-reading prompt override (ticket 37), and the preset both
-    /// ride under (ticket 42).
-    fn fused_guidance(&self) -> crate::ports::TranslationGuidance {
+    /// the screen-reading prompt override (ticket 37), the preset both
+    /// ride under (ticket 42), and the zone's Translation Context (ticket
+    /// 44, empty for a one-shot pass).
+    fn fused_guidance(
+        &self,
+        recent: Vec<(String, String)>,
+    ) -> crate::ports::TranslationGuidance {
         crate::ports::TranslationGuidance {
             glossary: self.glossary.entries(),
             genderless: self.config.genderless,
             custom_base: self.config.fused_prompt_override.clone(),
             preset: self.config.prompt_preset.clone(),
+            recent_translations: recent,
         }
     }
 
@@ -834,6 +943,13 @@ impl Orchestrator {
     /// every tick), while `last_fired_text` records the text only when a
     /// translation was actually shown — keeping "retried when the pixels
     /// change again" true for failures.
+    ///
+    /// Returns the `(source, shown Thai)` pair on an actual emission —
+    /// exactly what Translation Context (ticket 44) records — and `None`
+    /// for a suppressed read or a failed translation, which must leave the
+    /// zone's buffer alone. Pairs are flattened onto one line: the prompt
+    /// section renders one `- source → translation` line per pair, and a
+    /// multi-line answer would break that shape.
     #[allow(clippy::too_many_arguments)]
     async fn fire_read(
         &self,
@@ -846,32 +962,31 @@ impl Orchestrator {
         origin: &EventOrigin,
         label: &str,
         image: &CapturedImage,
-    ) {
+        recent: &[(String, String)],
+    ) -> Option<(String, String)> {
         if entry.last_fired_text.as_deref() == Some(text) {
-            return; // suppressed: nothing shown, nothing recorded
+            return None; // suppressed: nothing shown, nothing recorded
         }
         let style = self.sampled_style(image, rect);
         let shown = match fused_translation {
-            Some(thai) => {
-                self.emit_fused_block(region, rect, thai, origin, style).await;
-                true
-            }
+            Some(thai) => Some(self.emit_fused_block(region, rect, thai, origin, style).await),
             None => {
-                self.translate_and_emit(region, rect, text, origin, label, style)
+                self.translate_and_emit(region, rect, text, origin, label, recent, style)
                     .await
             }
         };
         entry.fired_hash = Some(hash);
-        if shown {
-            entry.last_fired_text = Some(text.to_string());
-        }
+        let thai = shown?;
+        entry.last_fired_text = Some(text.to_string());
+        Some((one_line(text), one_line(&thai)))
     }
 
     /// Emits one fused read: the model's translation with the same output
     /// rules as the engine path — a whole-block Glossary match pins the
     /// displayed Thai (the model got every entry injected, but the pinned
     /// value is the deterministic answer), and the Genderless scrub runs
-    /// belt-and-braces over the model's own text.
+    /// belt-and-braces over the model's own text. Returns the shown Thai —
+    /// what Translation Context (ticket 44) records.
     async fn emit_fused_block(
         &self,
         region: Region,
@@ -879,7 +994,7 @@ impl Orchestrator {
         thai: &str,
         origin: &EventOrigin,
         style: Option<SampledStyle>,
-    ) {
+    ) -> String {
         let (translation, via) = match self.glossary.lookup(&rect.text) {
             Some(pinned) => (pinned, Via::Glossary),
             None => {
@@ -891,16 +1006,18 @@ impl Orchestrator {
                 (thai, Via::Engine)
             }
         };
-        self.emit_translated(region, rect, translation, via, origin, style);
+        self.emit_translated(region, rect, translation.clone(), via, origin, style);
+        translation
     }
 
     /// Glossary short-circuit, engine translate, and the resulting event
     /// for one block read. `rect` is region-relative; the emitted block
-    /// carries screen coordinates. Returns whether a translation was
-    /// emitted: `false` on engine failure, so the caller records no shown
-    /// text and the read is retried when the pixels change again. A failed
-    /// translation still counts as handled (the caller records the change)
-    /// so a dead engine is not hammered every tick.
+    /// carries screen coordinates. Returns the shown Thai — what
+    /// Translation Context (ticket 44) records — or `None` on engine
+    /// failure, so the caller records no shown text and the read is
+    /// retried when the pixels change again. A failed translation still
+    /// counts as handled (the caller records the change) so a dead engine
+    /// is not hammered every tick.
     #[allow(clippy::too_many_arguments)]
     async fn translate_and_emit(
         &self,
@@ -909,8 +1026,9 @@ impl Orchestrator {
         text: &str,
         origin: &EventOrigin,
         label: &str,
+        recent: &[(String, String)],
         style: Option<SampledStyle>,
-    ) -> bool {
+    ) -> Option<String> {
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
             None => {
@@ -923,12 +1041,14 @@ impl Orchestrator {
                 // translation-prompt override (ticket 37) rides the same
                 // way — non-LLM engines never see prompts at all. The
                 // preset the override is the wording of (ticket 42) rides
-                // the same way.
+                // the same way, as does the zone's Translation Context
+                // (ticket 44).
                 let guidance = crate::ports::TranslationGuidance {
                     glossary: self.glossary.relevant_entries(text),
                     genderless: self.config.genderless,
                     custom_base: self.config.translation_prompt_override.clone(),
                     preset: self.config.prompt_preset.clone(),
+                    recent_translations: recent.to_vec(),
                 };
                 self.translate
                     .translate_guided(
@@ -959,12 +1079,12 @@ impl Orchestrator {
         };
         match translated {
             Ok((translation, via)) => {
-                self.emit_translated(region, rect, translation, via, origin, style);
-                true
+                self.emit_translated(region, rect, translation.clone(), via, origin, style);
+                Some(translation)
             }
             Err(message) => {
                 self.emit(Stage::Translate, format!("{label}: {message}"));
-                false
+                None
             }
         }
     }
@@ -1009,6 +1129,19 @@ fn screen_block(block: &TextBlock, region: Region) -> TextBlock {
         height: block.height,
         text: block.text.clone(),
     }
+}
+
+/// Flattens text onto one line — the Translation Context record's shape
+/// (ticket 44): the prompt section renders one `- source → translation`
+/// line per pair, and a multi-line source or answer would break that
+/// shape. Line breaks and their surrounding whitespace collapse to one
+/// space; empty segments drop.
+fn one_line(text: &str) -> String {
+    text.split(['\r', '\n'])
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The system clock as a [`Clock`] port implementation.

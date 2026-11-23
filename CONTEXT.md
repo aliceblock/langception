@@ -93,3 +93,7 @@ _Avoid_: neutral mode, gender-free mode
 **System Prompt Preset**:
 A named pair of base instructions (per-block translation and screen-reading) that LLM prompts are built from, selectable globally or per Profile. Built-ins: General, Game, Novel, Manga.
 _Avoid_: prompt template, style preset, persona
+
+**Translation Context**:
+A translation-loop setting that appends the most recent successful translations of the same Capture Zone to the prompt, keeping consecutive text consistent in tone and naming. 0 (default) disables it.
+_Avoid_: history, memory, cache

@@ -677,6 +677,9 @@ pub struct GeneralSettingsDto {
     pub language: String,
     pub cadence_ms: u32,
     pub stability_ms: u32,
+    /// Translation Context (ticket 44): how many of each Capture Zone's
+    /// recent translations ride into the LLM prompts (0 = off).
+    pub context_translations: u32,
     /// The Genderless Mode global toggle (ticket 08).
     pub genderless: bool,
     /// Which ordinary window is pinned above other apps (ticket 34) —
@@ -697,11 +700,29 @@ pub(crate) async fn set_general(
         "ko" => SourceLanguage::Ko,
         other => return Err(format!("unknown source language \"{other}\"")),
     };
+    // Translation Context (ticket 44): same cap the config validation
+    // enforces, checked here so the user is looking at the field.
+    let context_translations = settings.context_translations;
+    if context_translations > langception_core::config::MAX_CONTEXT_TRANSLATIONS {
+        return Err(format!(
+            "Translation context must be between 0 and {}",
+            langception_core::config::MAX_CONTEXT_TRANSLATIONS
+        ));
+    }
+    // Copies for the restart decision below (the originals move into the
+    // config edit): only the loop-start fields need a restart to apply —
+    // the context window applies live through its watch channel.
+    let restart_language = language;
+    let restart_cadence = settings.cadence_ms;
+    let restart_stability = settings.stability_ms;
+    let restart_genderless = settings.genderless;
     run_off_main(app, move |app| {
+        let before = current_config(app)?;
         with_config_mut(app, |config| {
             config.source.language = language;
             config.capture.cadence_ms = settings.cadence_ms;
             config.capture.stability_ms = settings.stability_ms;
+            config.context_translations = settings.context_translations;
             config.genderless = settings.genderless;
             config.windows.results_on_top = settings.results_on_top;
             config.windows.settings_on_top = settings.settings_on_top;
@@ -711,10 +732,23 @@ pub(crate) async fn set_general(
         // 34) — no relaunch, no reopen; a hidden window takes the flag
         // for its next show.
         apply_always_on_top_from_config(app);
+        // Translation Context (ticket 44) applies live: the running loop
+        // reads the window per pass, so the next translation uses it —
+        // with a 0 the buffer empties and the prompts return to today's
+        // shape, all without a restart.
+        let state = app.state::<AppState>();
+        let _ = state.context_tx.send(context_translations);
         // Language/cadence/stability/genderless are read when the loop
-        // starts: restart it so the change visibly applies (a language
-        // change must reset tracking anyway — the OCR engine is rebuilt).
-        restart_loop_if_running(app);
+        // starts: restart only when one of them actually changed (a
+        // language change must reset tracking anyway — the OCR engine is
+        // rebuilt), so a context-only edit never resets per-block state.
+        let restart_worthy = before.source.language != restart_language
+            || before.capture.cadence_ms != restart_cadence
+            || before.capture.stability_ms != restart_stability
+            || before.genderless != restart_genderless;
+        if restart_worthy {
+            restart_loop_if_running(app);
+        }
         apply_state(app);
         Ok(())
     })

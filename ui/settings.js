@@ -683,6 +683,9 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
 const generalLanguage = document.getElementById("general-language");
 const generalCadence = document.getElementById("general-cadence");
 const generalStability = document.getElementById("general-stability");
+// Translation Context (ticket 44): the LLM prompts carry this many of each
+// zone's recent translations; 0 = off. Applies live — no loop restart.
+const generalContext = document.getElementById("general-context");
 const generalGenderless = document.getElementById("general-genderless");
 const generalAutostart = document.getElementById("general-autostart");
 // The window on-top toggles (ticket 34): saved with General, applied to
@@ -697,6 +700,7 @@ function loadGeneral(status) {
   generalLanguage.value = status.language;
   generalCadence.value = status.cadenceMs;
   generalStability.value = status.stabilityMs;
+  generalContext.value = status.contextTranslations;
   generalGenderless.checked = Boolean(status.genderless);
   generalAutostart.checked = Boolean(status.startWithWindows);
   generalResultsOnTop.checked = Boolean(status.resultsOnTop);
@@ -709,12 +713,16 @@ function loadGeneral(status) {
 async function saveGeneral() {
   const cadence = Math.round(Number(generalCadence.value) || 500);
   const stability = Math.round(Number(generalStability.value) || 0);
+  // The context window clamps to the Rust side's cap (20) here, so a
+  // fat-fingered value is corrected at the field instead of rejected.
+  const context = Math.min(20, Math.max(0, Math.round(Number(generalContext.value) || 0)));
   try {
     await invoke("set_general", {
       settings: {
         language: generalLanguage.value,
         cadenceMs: cadence,
         stabilityMs: stability,
+        contextTranslations: context,
         genderless: generalGenderless.checked,
         resultsOnTop: generalResultsOnTop.checked,
         settingsOnTop: generalSettingsOnTop.checked,
@@ -1638,6 +1646,7 @@ const TRACKED_GENERAL = [
   generalLanguage,
   generalCadence,
   generalStability,
+  generalContext,
   generalGenderless,
   generalResultsOnTop,
   generalSettingsOnTop,

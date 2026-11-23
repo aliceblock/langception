@@ -19,6 +19,13 @@ pub enum ConfigError {
     Validation(String),
 }
 
+/// The sanity cap on Translation Context (ticket 44): the window may not
+/// exceed this many recent-translation pairs, so a fat-fingered value
+/// cannot balloon every prompt. Twenty recent pairs is already a whole
+/// conversation's worth of Text Blocks — far past what a model needs for
+/// tonal continuity.
+pub const MAX_CONTEXT_TRANSLATIONS: u32 = 20;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceSettings {
     pub language: SourceLanguage,
@@ -697,6 +704,18 @@ pub struct AppConfig {
     /// any table section.
     #[serde(default)]
     pub genderless: bool,
+    /// Translation Context (CONTEXT.md, ticket 44): how many of a Capture
+    /// Zone's most recent successful translations ride into each LLM
+    /// prompt as continuity context, so consecutive dialogue keeps a
+    /// consistent tone, register, and naming. 0 (the default) disables the
+    /// feature entirely — nothing buffers, no prompt changes. Applies to
+    /// the LLM engines only (Google, Azure, DeepL never see prompts) and
+    /// is global — a Profile cannot override it. Read live by the running
+    /// loop: changing it applies on the next translation without a
+    /// restart. Second bare key so it still serializes before any table
+    /// section.
+    #[serde(default)]
+    pub context_translations: u32,
     /// The global default Translate Engine (ticket 09): one of
     /// [`TRANSLATE_ENGINES`] — "google" (the keyless default, ADR-0002),
     /// "azure" or "deepl" (keyed; keys under `[engines.*]`). A Profile's
@@ -847,6 +866,12 @@ impl AppConfig {
                 "[capture] stability_ms must be at most 10000".into(),
             ));
         }
+        if self.context_translations > MAX_CONTEXT_TRANSLATIONS {
+            return Err(ConfigError::Validation(format!(
+                "context_translations must be between 0 and {MAX_CONTEXT_TRANSLATIONS} — \
+                 larger windows would bloat every prompt"
+            )));
+        }
         self.text_style.validate()?;
         crate::prompt_preset::validate(self)?;
         for (action, key) in [
@@ -993,6 +1018,14 @@ impl AppConfig {
 # translation. Settings → General owns this toggle; a Profile's
 # "genderless" override below can force it on or off per app.
 genderless = false
+
+# Translation Context (CONTEXT.md): how many of a Capture Zone's most
+# recent successful translations ride into each LLM prompt as continuity
+# context, so consecutive dialogue keeps a consistent tone, register, and
+# naming (0 = off, the default). Applies to the LLM engines (Gemini,
+# OpenAI-compatible, LM Studio) only; Google, Azure and DeepL never see
+# prompts. Changes apply on the very next translation — no restart.
+context_translations = 0
 
 # The default Translate Engine (Settings → Engines): "google" (the keyless
 # default, ADR-0002), "azure" or "deepl" (keyed — set the key under
@@ -2599,6 +2632,54 @@ language = "en"
         );
         let config = AppConfig::from_toml_str(&legacy).unwrap();
         assert!(!config.genderless);
+    }
+
+    // ---- Translation Context window (ticket 44) ----
+
+    #[test]
+    fn context_translations_defaults_to_off_for_new_and_old_configs() {
+        // The default template says so...
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.context_translations, 0);
+        // ...and a pre-ticket-44 config (no such key) parses with the
+        // feature off rather than rejecting the file.
+        let legacy = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("context_translations"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let config = AppConfig::from_toml_str(&legacy).unwrap();
+        assert_eq!(config.context_translations, 0);
+    }
+
+    #[test]
+    fn context_translations_roundtrips_through_toml() {
+        let text =
+            AppConfig::DEFAULT_TEMPLATE.replace("context_translations = 0", "context_translations = 5");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.context_translations, 5);
+        assert!(
+            config
+                .to_toml_string()
+                .unwrap()
+                .contains("context_translations = 5"),
+            "the window stays a bare top-level key, hand-editable"
+        );
+
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn context_translations_over_the_cap_is_rejected() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("context_translations = 0", "context_translations = 21");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("context_translations") && message.contains("20"),
+            "the error names the field and the cap: {message}"
+        );
     }
 
     // ---- Window on-top toggles (ticket 34) ----

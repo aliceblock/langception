@@ -96,6 +96,9 @@ pub struct Status {
     /// How long a changed block must hold stable before it is translated
     /// (ticket 05).
     pub stability_ms: u32,
+    /// Translation Context (ticket 44): how many of each zone's recent
+    /// translations ride into the LLM prompts (0 = off).
+    pub context_translations: u32,
     /// The Genderless Mode global toggle (ticket 08); a Profile's override
     /// (Settings → Profiles) layers on top of this per app.
     pub genderless: bool,
@@ -321,6 +324,11 @@ pub(crate) struct AppState {
     /// The Excluded Blocks currently in force (all of them in full-screen
     /// mode; empty in zones mode — exclusions are consulted there only).
     exclusions_tx: watch::Sender<Vec<ExcludedBlock>>,
+    /// The Translation Context window (ticket 44): how many of each zone's
+    /// recent translations ride into the LLM prompts. Sent at loop start
+    /// and re-sent on every settings change — the loop reads it per pass,
+    /// so a change applies on the next translation without a restart.
+    pub(crate) context_tx: watch::Sender<u32>,
     pub(crate) warnings: Mutex<Vec<String>>,
     registered: Mutex<RegisteredHotkeys>,
     toggle_item: Mutex<Option<MenuItem<Wry>>>,
@@ -363,6 +371,7 @@ pub fn run() {
     let (zones_tx, _) = watch::channel(Vec::new());
     let (paused_tx, _) = watch::channel(false);
     let (exclusions_tx, _) = watch::channel(Vec::new());
+    let (context_tx, _) = watch::channel(0u32);
 
     // First launch = no config file yet, detected BEFORE load_config writes
     // the template: the setup wizard shows exactly once.
@@ -404,6 +413,7 @@ pub fn run() {
             zones_tx,
             paused_tx,
             exclusions_tx,
+            context_tx,
             warnings: Mutex::new(Vec::new()),
             registered: Mutex::new(RegisteredHotkeys::default()),
             toggle_item: Mutex::new(None),
@@ -964,6 +974,7 @@ fn status_for(app: &AppHandle) -> Status {
         excluded_blocks,
         cadence_ms,
         stability_ms,
+        context_translations,
         genderless,
         reading,
         glossary_terms,
@@ -1008,6 +1019,7 @@ fn status_for(app: &AppHandle) -> Status {
                 .collect(),
             config.capture.cadence_ms,
             config.capture.stability_ms,
+            config.context_translations,
             config.genderless,
             config.reading.code().to_string(),
             config.glossary.0.len(),
@@ -1029,6 +1041,7 @@ fn status_for(app: &AppHandle) -> Status {
             Vec::new(),
             0,
             0,
+            0,
             false,
             "ocr".into(),
             0,
@@ -1042,6 +1055,7 @@ fn status_for(app: &AppHandle) -> Status {
             String::new(),
             Vec::new(),
             Vec::new(),
+            0,
             0,
             0,
             false,
@@ -1114,6 +1128,7 @@ fn status_for(app: &AppHandle) -> Status {
         excluded_blocks,
         cadence_ms,
         stability_ms,
+        context_translations,
         genderless,
         reading,
         glossary_terms,
@@ -1689,6 +1704,10 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     let zones_rx = state.zones_tx.subscribe();
     let paused_rx = state.paused_tx.subscribe();
     let excluded_rx = state.exclusions_tx.subscribe();
+    // Translation Context (ticket 44): subscribe before sending (the
+    // zones' rule) so the fresh loop's first translation already sees the
+    // configured window.
+    let context_rx = state.context_tx.subscribe();
     let _ = state.paused_tx.send(false);
     *state.paused.lock().unwrap_or_else(|p| p.into_inner()) = false;
     let pipeline = match build_pipeline(app, &config, &target) {
@@ -1717,6 +1736,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
     apply_watching_nothing(&state, target.zones.is_empty());
     let _ = state.zones_tx.send(target.zones);
     let _ = state.exclusions_tx.send(target.exclusions);
+    let _ = state.context_tx.send(config.context_translations);
     // Privacy badge (ticket 06): the engine sending screen data off-machine
     // while the loop runs.
     *state.cloud_engine.lock().unwrap_or_else(|p| p.into_inner()) = cloud_badge(&pipeline);
@@ -1745,7 +1765,8 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         excluded_rx,
         events_tx,
     )
-    .with_fused(pipeline.fused);
+    .with_fused(pipeline.fused)
+    .with_context_rx(context_rx);
     let orchestrator_task = tauri::async_runtime::spawn(orchestrator.run());
     let forwarder_task = spawn_forwarder(app, events_rx, overlays);
 
@@ -1767,16 +1788,22 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         .and_then(|id| config.profiles.iter().find(|p| p.id == *id))
         .map(|p| format!(", profile=\"{}\"", p.name))
         .unwrap_or_default();
+    // Translation Context (ticket 44): named only while on, pairing with
+    // the prompt section the loop's LLM engines render.
+    let context_note = if config.context_translations > 0 {
+        format!(", context={}", config.context_translations)
+    } else {
+        String::new()
+    };
     crate::logging::log(
         "loop",
         format!(
-            "started — reading={} engine={} ocr={} source={} zones={zone_count}{}, \
+            "started — reading={} engine={} ocr={} source={} zones={zone_count}{profile_note}{context_note}, \
              prompt_preset=\"{}\"",
             config.reading.code(),
             loop_engine,
             pipeline.ocr_name,
             target.language.code(),
-            profile_note,
             preset_note,
         ),
     );

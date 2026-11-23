@@ -19,12 +19,12 @@ use crate::ports::{SourceLanguage, TranslationGuidance};
 
 /// The prompt template's version, tagged at the end of every system prompt.
 /// Bump on any wording change that could alter translation output.
-pub const PROMPT_VERSION: &str = "1";
+pub const PROMPT_VERSION: &str = "2";
 
 /// The fused vision prompt's version ([`fused_system_prompt`]), tagged the
 /// same way. Independent of [`PROMPT_VERSION`]: the two templates change
 /// for different reasons.
-pub const FUSED_PROMPT_VERSION: &str = "1";
+pub const FUSED_PROMPT_VERSION: &str = "2";
 
 /// The built-in default's tuning — what to translate (unchanged since
 /// ticket 10's OpenAI-compatible prompt). [`base_instruction`] appends the
@@ -220,6 +220,12 @@ const GENDERLESS_INSTRUCTION: &str = "Genderless Mode: write the translation so 
      นะครับ, นะคะ) — omit them. Do not use gendered first-person pronouns (ผม, ฉัน, หนู) — use \
      the neutral เรา instead.";
 
+/// The Translation Context section's instruction (ticket 44): what the pairs
+/// below it are and what the model should do with them — continuity of tone,
+/// register, and naming with what this same area already showed.
+const RECENT_TRANSLATIONS_INSTRUCTION: &str = "Recent translations of this area, oldest first \
+     — keep the tone, register, and naming consistent with them:";
+
 /// Language names for the prompt — models follow names better than ISO
 /// codes, and "th" alone reads ambiguous.
 fn source_name(source: SourceLanguage) -> &'static str {
@@ -247,6 +253,22 @@ fn push_glossary_section(prompt: &mut String, guidance: &TranslationGuidance) {
                          it occurs, including mid-sentence:");
         for (term, thai) in &guidance.glossary {
             prompt.push_str(&format!("\n- {term} → {thai}"));
+        }
+    }
+}
+
+/// Appends the Translation Context section (ticket 44) — shared by both
+/// templates like the Glossary's, so the continuity wording can never
+/// drift. Rendered only when the caller sent pairs: with the feature off
+/// (the default) nothing appends and the prompt is byte-identical to the
+/// pre-44 template apart from the version tag. Pairs are already in
+/// oldest-first order (the orchestrator's rolling buffer order).
+fn push_recent_translations_section(prompt: &mut String, guidance: &TranslationGuidance) {
+    if !guidance.recent_translations.is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(RECENT_TRANSLATIONS_INSTRUCTION);
+        for (source, thai) in &guidance.recent_translations {
+            prompt.push_str(&format!("\n- {source} → {thai}"));
         }
     }
 }
@@ -308,9 +330,10 @@ fn push_version_tag(
 /// Builds the LLM system prompt: the base translation instruction (the
 /// user's custom one when configured, ticket 37), then — only when
 /// present — the Glossary section (the entries relevant to the block being
-/// translated, ticket 11) and the Genderless instruction (ticket 08 at
-/// prompt level), then the version tag (marked `custom` when a custom base
-/// is in effect, so a recorded request shows what produced it).
+/// translated, ticket 11), the Genderless instruction (ticket 08 at
+/// prompt level), and the Translation Context section (the zone's recent
+/// translations, ticket 44), then the version tag (marked `custom` when a
+/// custom base is in effect, so a recorded request shows what produced it).
 pub fn system_prompt(
     source: SourceLanguage,
     target: &str,
@@ -331,6 +354,8 @@ pub fn system_prompt(
         prompt.push_str(GENDERLESS_INSTRUCTION);
     }
 
+    push_recent_translations_section(&mut prompt, guidance);
+
     push_version_tag(&mut prompt, guidance, PROMPT_VERSION, "translation-prompt");
     prompt
 }
@@ -340,11 +365,12 @@ pub fn system_prompt(
 /// contract — split constants that join into exactly the one template that
 /// shipped before, and that stay joined under a custom base (ticket 37),
 /// because the loop parses the reply mechanically. Then the same Glossary
-/// section and Genderless instruction the per-block translation prompt
-/// uses — the whole Glossary rides in a fused call because the model, not
-/// an OCR engine, is what reads the text (the orchestrator passes every
-/// entry) — then the fused version tag (marked `custom` under a custom
-/// base).
+/// section, Genderless instruction, and Translation Context section (the
+/// target zone's recent translations, ticket 44) the per-block translation
+/// prompt uses — the whole Glossary rides in a fused call because the
+/// model, not an OCR engine, is what reads the text (the orchestrator
+/// passes every entry) — then the fused version tag (marked `custom` under
+/// a custom base).
 pub fn fused_system_prompt(
     source: SourceLanguage,
     target: &str,
@@ -364,6 +390,8 @@ pub fn fused_system_prompt(
         prompt.push_str("\n\n");
         prompt.push_str(GENDERLESS_INSTRUCTION);
     }
+
+    push_recent_translations_section(&mut prompt, guidance);
 
     push_version_tag(&mut prompt, guidance, FUSED_PROMPT_VERSION, "fused-prompt");
     prompt
@@ -385,6 +413,7 @@ mod tests {
                 genderless,
                 custom_base: None,
                 preset: None,
+                recent_translations: Vec::new(),
             },
         )
     }
@@ -407,7 +436,7 @@ mod tests {
     fn every_prompt_carries_the_version_tag() {
         let prompt = system_prompt(SourceLanguage::En, "th", &TranslationGuidance::plain());
         assert!(
-            prompt.contains("(translation-prompt v1)"),
+            prompt.contains("(translation-prompt v2)"),
             "the version tag must ride in the prompt, was: {prompt}"
         );
     }
@@ -466,7 +495,7 @@ mod tests {
         assert!(prompt.contains("JSON array"), "was: {prompt}");
         assert!(prompt.contains("no markdown fences"), "was: {prompt}");
         assert!(prompt.contains("\"th\""), "was: {prompt}");
-        assert!(prompt.contains("(fused-prompt v1)"), "was: {prompt}");
+        assert!(prompt.contains("(fused-prompt v2)"), "was: {prompt}");
         // The per-block translation template is untouched by the fused one.
         assert!(!prompt.contains("(translation-prompt"), "was: {prompt}");
     }
@@ -491,6 +520,7 @@ mod tests {
                 genderless: true,
                 custom_base: None,
                 preset: None,
+                recent_translations: Vec::new(),
             },
         );
         assert!(prompt.contains("- Vertin → เวอร์ติน"), "was: {prompt}");
@@ -517,13 +547,16 @@ mod tests {
 
     #[test]
     fn empty_and_whitespace_overrides_are_byte_identical_to_the_default_prompt() {
-        // The pre-ticket-37 bytes, pinned: an absent override, an empty
-        // one, and a whitespace-only one all produce exactly the built-in
-        // prompt — nothing about the default wording may shift.
+        // The built-in default, pinned byte-for-byte: an absent override, an
+        // empty one, and a whitespace-only one all produce exactly this —
+        // nothing about the default wording may shift. (Ticket 44 bumped
+        // the version tag v1 → v2 by the versioning rule; the rest of the
+        // template is the pre-44 bytes unchanged, and with Translation
+        // Context off no section appends.)
         let expected = "You are a translation engine. Translate the user's text from \
 English to Thai. Reply with ONLY the translation — no explanations, no quotes \
 around it, no notes. Preserve line breaks and surrounding whitespace. If the \
-text is already in Thai, repeat it unchanged.\n\n(translation-prompt v1)";
+text is already in Thai, repeat it unchanged.\n\n(translation-prompt v2)";
         assert_eq!(
             system_prompt(SourceLanguage::En, "th", &TranslationGuidance::plain()),
             expected
@@ -537,7 +570,8 @@ text is already in Thai, repeat it unchanged.\n\n(translation-prompt v1)";
     #[test]
     fn the_default_fused_prompt_is_byte_identical_to_the_built_in_template() {
         // Splitting the reply contract out of the base instruction
-        // (ticket 37) must not move a single byte of what shipped before.
+        // (ticket 37) must not move a single byte of what shipped before;
+        // ticket 44's only change is the bumped version tag.
         let expected = "You are a screen-reading translation engine. The attached image is a \
 capture of the user's screen showing text in Japanese. Read every visible text \
 block and translate each one from Japanese to Thai. Reply with ONLY a JSON \
@@ -550,7 +584,7 @@ shape:\n\
 width and height in image pixels (all four integers). \"text\" is the source text \
 exactly as written on screen; \"th\" is the Thai translation. Merge the lines of \
 one paragraph into a single block. Omit anything you cannot actually read. \
-Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
+Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         assert_eq!(
             fused_system_prompt(SourceLanguage::Ja, "th", &TranslationGuidance::plain()),
             expected
@@ -580,11 +614,11 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
         // The version tag still rides, marked custom so a recorded request
         // shows what produced it.
         assert!(
-            prompt.contains("(translation-prompt v1 custom)"),
+            prompt.contains("(translation-prompt v2 custom)"),
             "was: {prompt}"
         );
         assert!(
-            !prompt.contains("(translation-prompt v1)"),
+            !prompt.contains("(translation-prompt v2)"),
             "the plain tag must not leak into custom prompts, was: {prompt}"
         );
     }
@@ -634,9 +668,9 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
         assert!(prompt.contains("JSON array"), "was: {prompt}");
         assert!(prompt.contains("\"th\""), "was: {prompt}");
         assert!(prompt.contains("no readable text"), "was: {prompt}");
-        assert!(prompt.contains("(fused-prompt v1 custom)"), "was: {prompt}");
+        assert!(prompt.contains("(fused-prompt v2 custom)"), "was: {prompt}");
         assert!(
-            !prompt.contains("(fused-prompt v1)"),
+            !prompt.contains("(fused-prompt v2)"),
             "the plain tag must not leak into custom prompts, was: {prompt}"
         );
     }
@@ -661,11 +695,11 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
         guidance.preset = Some("game".into());
         let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
         assert!(
-            prompt.contains("(translation-prompt v1 preset:game)"),
+            prompt.contains("(translation-prompt v2 preset:game)"),
             "was: {prompt}"
         );
         assert!(
-            !prompt.contains("(translation-prompt v1 custom)"),
+            !prompt.contains("(translation-prompt v2 custom)"),
             "a preset is not an anonymous custom prompt, was: {prompt}"
         );
     }
@@ -688,7 +722,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
             guidance.preset = Some(name.into());
             let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
             assert!(
-                prompt.ends_with(&format!("\n\n(translation-prompt v1 preset:{label})")),
+                prompt.ends_with(&format!("\n\n(translation-prompt v2 preset:{label})")),
                 "name {name:?}, was: {prompt}"
             );
         }
@@ -702,7 +736,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
         let tag = prompt.rfind('(').map(|at| &prompt[at..]).unwrap_or("");
         assert_eq!(
             tag,
-            format!("(translation-prompt v1 preset:{})", "x".repeat(40))
+            format!("(translation-prompt v2 preset:{})", "x".repeat(40))
         );
     }
 
@@ -863,6 +897,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
             genderless: true,
             custom_base: Some(texts.translation.clone()),
             preset: Some(BuiltinPreset::Game.code().into()),
+            recent_translations: Vec::new(),
         };
         let prompt = system_prompt(SourceLanguage::Ja, "th", &guidance);
         // The Game wording, with the placeholders substituted...
@@ -886,7 +921,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
         assert!(prompt.contains("- Vertin → เวอร์ติน"), "was: {prompt}");
         assert!(prompt.contains("Genderless Mode"), "was: {prompt}");
         assert!(
-            prompt.ends_with("(translation-prompt v1 preset:game)"),
+            prompt.ends_with("(translation-prompt v2 preset:game)"),
             "was: {prompt}"
         );
 
@@ -911,8 +946,103 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v1)";
         assert!(fused.contains("- Vertin → เวอร์ติน"), "was: {fused}");
         assert!(fused.contains("Genderless Mode"), "was: {fused}");
         assert!(
-            fused.ends_with("(fused-prompt v1 preset:game)"),
+            fused.ends_with("(fused-prompt v2 preset:game)"),
             "was: {fused}"
+        );
+    }
+
+    // ---- Translation Context section (ticket 44) ----
+
+    fn with_recent(recent: &[(&str, &str)]) -> TranslationGuidance {
+        TranslationGuidance {
+            recent_translations: recent
+                .iter()
+                .map(|(s, th)| (s.to_string(), th.to_string()))
+                .collect(),
+            ..TranslationGuidance::plain()
+        }
+    }
+
+    #[test]
+    fn the_recent_translations_section_lists_pairs_oldest_first_with_the_instruction() {
+        let prompt = system_prompt(
+            SourceLanguage::En,
+            "th",
+            &with_recent(&[("Hello", "สวัสดี"), ("Goodbye", "ลาก่อน")]),
+        );
+        assert!(
+            prompt.contains("keep the tone, register, and naming consistent"),
+            "the continuity instruction must ride: {prompt}"
+        );
+        // Oldest → newest, in buffer order, one pair per line.
+        let hello_at = prompt.find("- Hello → สวัสดี").expect("first pair line");
+        let goodbye_at = prompt.find("- Goodbye → ลาก่อน").expect("second pair line");
+        assert!(
+            hello_at < goodbye_at,
+            "pairs must render oldest first, was: {prompt}"
+        );
+        // The section sits before the version tag.
+        let tag_at = prompt.find("(translation-prompt v2)").unwrap();
+        assert!(hello_at < tag_at, "the section precedes the tag: {prompt}");
+    }
+
+    #[test]
+    fn an_empty_recent_list_renders_no_section() {
+        // The default (feature off): not even the section's wording may
+        // appear — the prompt is exactly the pre-44 default pinned above.
+        for guidance in [TranslationGuidance::plain(), with_recent(&[])] {
+            let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
+            assert!(
+                !prompt.contains("Recent translations"),
+                "no section may render while the feature is off: {prompt}"
+            );
+            assert_eq!(
+                prompt,
+                system_prompt(SourceLanguage::En, "th", &TranslationGuidance::plain()),
+                "an empty list must equal the plain default"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fused_prompt_renders_the_same_recent_translations_section() {
+        let prompt = fused_system_prompt(
+            SourceLanguage::Ja,
+            "th",
+            &with_recent(&[("勇者", "ผู้กล้า")]),
+        );
+        assert!(
+            prompt.contains("- 勇者 → ผู้กล้า"),
+            "the shared builder must render the pairs: {prompt}"
+        );
+        assert!(
+            prompt.contains("keep the tone, register, and naming consistent"),
+            "was: {prompt}"
+        );
+        assert!(
+            prompt.contains("(fused-prompt v2)"),
+            "was: {prompt}"
+        );
+
+        // And with the feature off, nothing renders there either.
+        let plain = fused_system_prompt(SourceLanguage::Ja, "th", &TranslationGuidance::plain());
+        assert!(!plain.contains("Recent translations"), "was: {plain}");
+    }
+
+    #[test]
+    fn recent_translations_compose_with_glossary_genderless_and_custom_base() {
+        let mut guidance = with_recent(&[("Hello", "สวัสดี")]);
+        guidance.glossary = vec![("Vertin".into(), "เวอร์ติน".into())];
+        guidance.genderless = true;
+        guidance.custom_base = Some("Translate like a pirate.".into());
+        let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
+        assert!(prompt.contains("Translate like a pirate."), "was: {prompt}");
+        assert!(prompt.contains("- Vertin → เวอร์ติน"), "was: {prompt}");
+        assert!(prompt.contains("Genderless Mode"), "was: {prompt}");
+        assert!(prompt.contains("- Hello → สวัสดี"), "was: {prompt}");
+        assert!(
+            prompt.contains("(translation-prompt v2 custom)"),
+            "was: {prompt}"
         );
     }
 }

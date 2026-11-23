@@ -203,6 +203,13 @@ pub struct TranslationGuidance {
     /// preset produced it. `None` for the built-in default and for
     /// hand-written text.
     pub preset: Option<String>,
+    /// Translation Context (ticket 44): the Capture Zone's last successful
+    /// translations as `(source, thai)` pairs, oldest first, already
+    /// trimmed to the configured window by the caller (empty = the feature
+    /// is off — the prompt renders no section at all). LLM engines render
+    /// it as a continuity section ([`crate::prompt`]); non-LLM engines
+    /// discard it with the rest of the guidance.
+    pub recent_translations: Vec<(String, String)>,
 }
 
 impl TranslationGuidance {
@@ -334,10 +341,12 @@ mod tests {
     #[tokio::test]
     async fn a_non_llm_engine_never_sees_the_prompt_guidance() {
         // Ticket 37's "keyed/MT engines are unchanged regardless of the
-        // override text", a System Prompt Preset included (ticket 42): the
-        // port's default translate_guided discards the guidance wholesale —
-        // a custom base and its preset label included — so such an engine
-        // is called with the bare text exactly as before.
+        // override text", a System Prompt Preset included (ticket 42), and
+        // Translation Context included (ticket 44): the port's default
+        // translate_guided discards the guidance wholesale — a custom base,
+        // its preset label, and the zone's recent-translation pairs
+        // included — so such an engine is called with the bare text exactly
+        // as before.
         let engine = BareEngine {
             seen: std::sync::Mutex::new(Vec::new()),
         };
@@ -346,6 +355,7 @@ mod tests {
             genderless: true,
             custom_base: Some("Translate like a pirate.".into()),
             preset: Some("game".into()),
+            recent_translations: vec![("Hello".into(), "สวัสดี".into())],
         };
         let thai = engine
             .translate_guided("Vertin picks up the case", SourceLanguage::En, "th", &guidance)
@@ -355,7 +365,7 @@ mod tests {
         assert_eq!(
             *engine.seen.lock().unwrap(),
             vec!["Vertin picks up the case".to_string()],
-            "the bare text, nothing else — no override can reach a keyed engine"
+            "the bare text, nothing else — no guidance can reach a keyed engine"
         );
     }
 

@@ -515,7 +515,7 @@ mod tests {
         assert!(system.contains("JSON array"), "was: {system}");
         assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
         assert!(system.contains("Genderless Mode"), "was: {system}");
-        assert!(system.contains("(fused-prompt v1)"), "was: {system}");
+        assert!(system.contains("(fused-prompt v2)"), "was: {system}");
         let parts = value["contents"][0]["parts"].as_array().unwrap();
         let inline = &parts[0]["inlineData"];
         assert_eq!(inline["mimeType"], "image/png");
@@ -546,7 +546,7 @@ mod tests {
         let system = messages[0]["content"].as_str().unwrap();
         assert!(system.contains("JSON array"), "was: {system}");
         assert!(system.contains("Japanese"), "was: {system}");
-        assert!(system.contains("(fused-prompt v1)"), "was: {system}");
+        assert!(system.contains("(fused-prompt v2)"), "was: {system}");
         assert_eq!(messages[1]["role"], "user");
         let parts = messages[1]["content"].as_array().unwrap();
         assert_eq!(parts[0]["type"], "text");

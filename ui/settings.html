@@ -133,6 +133,10 @@
             <span>Stability (ms)</span>
             <input id="general-stability" type="number" min="0" max="10000" step="50" />
           </label>
+          <label class="form-row" title="Translation Context (CONTEXT.md): feed the Capture Zone's last successful translations into each LLM prompt, so consecutive dialogue keeps a consistent tone, register, and naming. 0 = off. Applies to the LLM engines only (Gemini, OpenAI-compatible, LM Studio), and on the very next translation — no restart.">
+            <span>Translation Context</span>
+            <input id="general-context" type="number" min="0" max="20" step="1" />
+          </label>
           <label class="form-row" title="Translated speech carries no speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns (ผม/ฉัน/หนู → เรา) are scrubbed from engine output">
             <span>Genderless Mode</span>
             <input id="general-genderless" type="checkbox" />
@@ -154,8 +158,9 @@
           <span class="hint">
             Language, cadence, stability and Genderless Mode apply when
             translation (re)starts — a running loop restarts automatically.
-            Start-with-Windows applies immediately; the window on-top
-            toggles apply with Save. Per-app Profiles can override
+            Translation context applies on the very next translation, with
+            no restart. Start-with-Windows applies immediately; the window
+            on-top toggles apply with Save. Per-app Profiles can override
             Genderless Mode (Settings → Profiles).
           </span>
         </div>

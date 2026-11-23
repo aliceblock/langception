@@ -14,5 +14,6 @@ pub(crate) fn guided(entries: &[(&str, &str)], genderless: bool) -> TranslationG
         genderless,
         custom_base: None,
         preset: None,
+        recent_translations: Vec::new(),
     }
 }

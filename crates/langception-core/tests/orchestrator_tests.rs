@@ -239,6 +239,7 @@ struct GuidedCall {
     genderless: bool,
     custom_base: Option<String>,
     preset: Option<String>,
+    recent_translations: Vec<(String, String)>,
 }
 
 impl FakeTranslate {
@@ -300,6 +301,7 @@ impl TranslateEngine for FakeTranslate {
             genderless: guidance.genderless,
             custom_base: guidance.custom_base.clone(),
             preset: guidance.preset.clone(),
+            recent_translations: guidance.recent_translations.clone(),
         });
         self.answer(text).await
     }
@@ -359,6 +361,7 @@ struct FusedCallRecord {
     genderless: bool,
     custom_base: Option<String>,
     preset: Option<String>,
+    recent_translations: Vec<(String, String)>,
     target: String,
 }
 
@@ -395,6 +398,7 @@ impl FusedEngine for FakeFused {
             genderless: guidance.genderless,
             custom_base: guidance.custom_base.clone(),
             preset: guidance.preset.clone(),
+            recent_translations: guidance.recent_translations.clone(),
             target: target.to_string(),
         });
         let mut rx = self.responses.lock().await;
@@ -424,6 +428,9 @@ struct Harness {
     zones_tx: watch::Sender<Vec<Zone>>,
     paused_tx: watch::Sender<bool>,
     excluded_tx: watch::Sender<Vec<ExcludedBlock>>,
+    /// Translation Context window (ticket 44): tests send the live value
+    /// here; 0 = off (every harness's default).
+    context_tx: watch::Sender<u32>,
 }
 
 /// The harness starts watching one zone (z1 = REGION), like the app does
@@ -474,6 +481,7 @@ async fn harness_with_config(
     let (zones_tx, zones_rx) = watch::channel(vec![zone("z1", "Zone 1", REGION)]);
     let (paused_tx, paused_rx) = watch::channel(false);
     let (excluded_tx, excluded_rx) = watch::channel(Vec::new());
+    let (context_tx, context_rx) = watch::channel(0u32);
 
     let orchestrator = Orchestrator::new(
         Arc::new(capture),
@@ -487,7 +495,8 @@ async fn harness_with_config(
         excluded_rx,
         events_tx,
     )
-    .with_fused(fused.then(|| Arc::clone(&fused_fake) as Arc<dyn FusedEngine>));
+    .with_fused(fused.then(|| Arc::clone(&fused_fake) as Arc<dyn FusedEngine>))
+    .with_context_rx(context_rx);
 
     (
         Harness {
@@ -504,6 +513,7 @@ async fn harness_with_config(
             zones_tx,
             paused_tx,
             excluded_tx,
+            context_tx,
         },
         orchestrator,
     )
@@ -2062,6 +2072,7 @@ async fn glossary_entries_appearing_in_the_block_ride_in_the_engine_guidance() {
             genderless: false,
             custom_base: None,
             preset: None,
+            recent_translations: Vec::new(),
         }],
         "exactly the in-sentence glossary entry must reach the engine"
     );
@@ -2094,6 +2105,7 @@ async fn blocks_without_glossary_terms_carry_empty_guidance() {
             genderless: false,
             custom_base: None,
             preset: None,
+            recent_translations: Vec::new(),
         }],
         "no relevant term → an empty glossary injection"
     );
@@ -2115,6 +2127,7 @@ async fn genderless_mode_rides_in_the_engine_guidance() {
             genderless: true,
             custom_base: None,
             preset: None,
+            recent_translations: Vec::new(),
         }],
         "the mode-on flag must reach the LLM prompt path"
     );
@@ -2210,6 +2223,7 @@ async fn the_translation_prompt_override_rides_in_the_engine_guidance() {
             genderless: false,
             custom_base: Some("Translate {source} speech casually.".into()),
             preset: None,
+            recent_translations: Vec::new(),
         }],
         "the custom translation base must reach the LLM prompt path"
     );
@@ -2305,6 +2319,433 @@ async fn the_prompt_preset_rides_in_the_fused_guidance() {
         h.fused.calls()[0].preset.as_deref(),
         Some("manga"),
         "the fused engine must be told which preset its prompt is the wording of"
+    );
+}
+
+// ---- Translation Context (ticket 44) ----
+//
+// Each zone keeps a rolling buffer of its last X successful translations,
+// riding in the same per-block guidance the Glossary uses. Recorded only on
+// shown emissions — failures and suppressed identical re-reads (ticket 22)
+// never churn it — and the window applies live: the watch value is read per
+// pass, so a settings change lands on the very next translation.
+
+#[tokio::test]
+async fn with_the_feature_off_nothing_buffers_and_no_guidance_rides() {
+    let (mut h, mut orch) = harness().await;
+
+    for text in ["Hello", "Goodbye"] {
+        feed_tick(&h, 1, vec![block(0, 0, text)]).await;
+        orch.tick().await;
+        let _ = next_event(&mut h.events).await;
+    }
+    let calls = h.translate.guided_calls();
+    assert_eq!(calls.len(), 2);
+    for call in calls {
+        assert!(
+            call.recent_translations.is_empty(),
+            "the default window (0) must buffer nothing: {:?}",
+            call.recent_translations
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_zone_context_rides_in_the_engine_guidance_oldest_first() {
+    let (mut h, mut orch) = harness().await;
+    h.context_tx.send(3).unwrap();
+
+    // Translation 1: no priors.
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+
+    // Translation 2: sees exactly the first pair.
+    feed_tick(&h, 1, vec![block(0, 0, "Goodbye")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[1].recent_translations,
+        vec![("Hello".to_string(), "[TH] Hello".to_string())],
+        "the second call must carry the first translation"
+    );
+
+    // Translation 3: the first two, oldest first.
+    feed_tick(&h, 1, vec![block(0, 0, "Farewell")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[2].recent_translations,
+        vec![
+            ("Hello".to_string(), "[TH] Hello".to_string()),
+            ("Goodbye".to_string(), "[TH] Goodbye".to_string()),
+        ]
+    );
+
+    // Translation 4 with three priors: exactly those three pairs, oldest →
+    // newest (the acceptance criterion's shape).
+    feed_tick(&h, 1, vec![block(0, 0, "See you")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[3].recent_translations,
+        vec![
+            ("Hello".to_string(), "[TH] Hello".to_string()),
+            ("Goodbye".to_string(), "[TH] Goodbye".to_string()),
+            ("Farewell".to_string(), "[TH] Farewell".to_string()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_window_evicts_oldest_first() {
+    let (mut h, mut orch) = harness().await;
+    h.context_tx.send(2).unwrap();
+
+    for text in ["Alpha", "Beta", "Gamma", "Delta"] {
+        feed_tick(&h, 1, vec![block(0, 0, text)]).await;
+        orch.tick().await;
+        let _ = next_event(&mut h.events).await;
+    }
+    assert_eq!(
+        h.translate.guided_calls()[3].recent_translations,
+        vec![
+            ("Beta".to_string(), "[TH] Beta".to_string()),
+            ("Gamma".to_string(), "[TH] Gamma".to_string()),
+        ],
+        "a window of 2 must hold the last two translations only"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_translation_never_enters_the_zone_context() {
+    let (mut h, mut orch) = harness().await;
+    h.context_tx.send(3).unwrap();
+
+    // The engine fails for "Hello": the error surfaces, nothing is shown,
+    // nothing records.
+    h.responses
+        .send(Err(TranslateError::new("HTTP 503 unavailable")))
+        .await
+        .unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Error { stage, .. } => assert_eq!(stage, Stage::Translate),
+        other => panic!("expected Error, got {other:?}"),
+    }
+
+    // "Goodbye" succeeds; its guidance carries NO Hello pair.
+    feed_tick(&h, 1, vec![block(0, 0, "Goodbye")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert!(
+        h.translate.guided_calls()[1]
+            .recent_translations
+            .is_empty(),
+        "a failed translation must never enter the buffer"
+    );
+
+    // The next translation sees only the successful pair.
+    feed_tick(&h, 1, vec![block(0, 0, "Farewell")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[2].recent_translations,
+        vec![("Goodbye".to_string(), "[TH] Goodbye".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn suppressed_identical_rereads_do_not_churn_the_zone_context() {
+    let (mut h, mut orch) = harness().await;
+    h.context_tx.send(3).unwrap();
+
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+
+    // The pixels jitter (animation) but the read says "Hello" again: the
+    // ticket-22 suppression drops it — no engine call, no event, and the
+    // buffer must not gain a duplicate pair.
+    for anim in [8u8, 9] {
+        let frame = frame_animated(&[block(0, 0, "Hello")], anim, anim);
+        feed(&h, 1, &frame, Some(vec![block(0, 0, "Hello")])).await;
+        orch.tick().await;
+    }
+    assert_eq!(h.translate.calls(), ["Hello"], "the re-read is suppressed");
+    assert_no_event(&mut h.events, "a suppressed re-read must not emit").await;
+
+    // A genuine change: its guidance still carries exactly one pair.
+    feed_tick(&h, 1, vec![block(0, 0, "Goodbye")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[1].recent_translations,
+        vec![("Hello".to_string(), "[TH] Hello".to_string())],
+        "suppressed reads must not churn the buffer"
+    );
+}
+
+#[tokio::test]
+async fn zone_context_does_not_bleed_across_zones() {
+    let (mut h, mut orch) = harness().await;
+    h.context_tx.send(3).unwrap();
+    set_zones(
+        &h,
+        vec![
+            zone(
+                "z1",
+                "Left",
+                Region {
+                    x: 0,
+                    y: 0,
+                    width: 200,
+                    height: 100,
+                },
+            ),
+            zone(
+                "z2",
+                "Right",
+                Region {
+                    x: 400,
+                    y: 0,
+                    width: 200,
+                    height: 100,
+                },
+            ),
+        ],
+    );
+
+    // Zone 1 sees "Hello", zone 2 sees "World" (each pull takes one queued
+    // frame/result, zones processed in order).
+    feed(
+        &h,
+        1,
+        &frame_for(&[block(10, 10, "Hello")]),
+        Some(vec![block(10, 10, "Hello")]),
+    )
+    .await;
+    feed(
+        &h,
+        1,
+        &frame_for(&[block(10, 10, "World")]),
+        Some(vec![block(10, 10, "World")]),
+    )
+    .await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    let _ = next_event(&mut h.events).await;
+
+    // Each zone's second translation chains off ITS OWN first one only.
+    feed(
+        &h,
+        1,
+        &frame_for(&[block(10, 10, "Goodbye")]),
+        Some(vec![block(10, 10, "Goodbye")]),
+    )
+    .await;
+    feed(
+        &h,
+        1,
+        &frame_for(&[block(10, 10, "Later")]),
+        Some(vec![block(10, 10, "Later")]),
+    )
+    .await;
+    orch.tick().await;
+    let calls = h.translate.guided_calls();
+    assert_eq!(calls.len(), 4, "z1 Hello, z2 World, z1 Goodbye, z2 Later");
+    assert_eq!(
+        calls[2].recent_translations,
+        vec![("Hello".to_string(), "[TH] Hello".to_string())],
+        "zone 1's context"
+    );
+    assert_eq!(
+        calls[3].recent_translations,
+        vec![("World".to_string(), "[TH] World".to_string())],
+        "zone 2's context — z1's pairs must not bleed in"
+    );
+}
+
+#[tokio::test]
+async fn changing_the_window_applies_live_without_a_restart() {
+    let (mut h, mut orch) = harness().await;
+
+    // Window 0 (default): the translation shows but nothing records.
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+
+    // Raise to 1 mid-session: the NEXT translation still sees nothing
+    // (nothing buffered while off) and becomes the first recorded pair.
+    h.context_tx.send(1).unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Goodbye")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert!(h.translate.guided_calls()[1].recent_translations.is_empty());
+    feed_tick(&h, 1, vec![block(0, 0, "Farewell")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[2].recent_translations,
+        vec![("Goodbye".to_string(), "[TH] Goodbye".to_string())],
+        "the window applies live: the pair recorded after the raise rides"
+    );
+
+    // Back to 0: nothing injects and nothing is kept — re-enabling later
+    // starts from what is translated next, never from a stale backlog.
+    h.context_tx.send(0).unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "See you")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert!(h.translate.guided_calls()[3].recent_translations.is_empty());
+    h.context_tx.send(2).unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Later")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert!(h.translate.guided_calls()[4].recent_translations.is_empty());
+    feed_tick(&h, 1, vec![block(0, 0, "Again")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[5].recent_translations,
+        vec![("Later".to_string(), "[TH] Later".to_string())],
+        "a re-enabled window builds from fresh translations only"
+    );
+}
+
+#[tokio::test]
+async fn fused_calls_carry_the_zone_context_too() {
+    let (mut h, mut orch) =
+        harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+    h.context_tx.send(2).unwrap();
+
+    // First call: no priors; the block's answer displays and records.
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Hello")]),
+        Ok(vec![fused_block(0, 0, "Hello", "สวัสดี")]),
+    )
+    .await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert!(h.fused.calls()[0].recent_translations.is_empty());
+
+    // A changed frame runs the fused call again: its guidance carries the
+    // first pair, exactly as the classic path injects it.
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Goodbye")]),
+        Ok(vec![fused_block(0, 0, "Goodbye", "ลาก่อน")]),
+    )
+    .await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.fused.calls()[1].recent_translations,
+        vec![("Hello".to_string(), "สวัสดี".to_string())],
+        "the fused prompt must see its zone's recent translations"
+    );
+
+    // The third call carries both pairs, oldest first.
+    feed_fused(
+        &h,
+        &frame_for(&[block(0, 0, "Farewell")]),
+        Ok(vec![fused_block(0, 0, "Farewell", "ราตรีสวัสดิ์")]),
+    )
+    .await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.fused.calls()[2].recent_translations,
+        vec![
+            ("Hello".to_string(), "สวัสดี".to_string()),
+            ("Goodbye".to_string(), "ลาก่อน".to_string()),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn the_recorded_pair_is_the_displayed_thai() {
+    // Genderless Mode on: the engine's gendered answer is scrubbed before
+    // display, and the scrubbed form is what the context records — the
+    // consistency target is what the user actually saw.
+    let (mut h, mut orch) = harness_genderless().await;
+    h.context_tx.send(2).unwrap();
+    h.responses.send(Ok("สวัสดีครับ".to_string())).await.unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => assert_eq!(translation, "สวัสดี"),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+
+    feed_tick(&h, 1, vec![block(0, 0, "Goodbye")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[1].recent_translations,
+        vec![("Hello".to_string(), "สวัสดี".to_string())],
+        "the post-scrub Thai must be recorded, not the raw engine output"
+    );
+}
+
+#[tokio::test]
+async fn a_glossary_pinned_display_records_too() {
+    // A whole-block Glossary match never calls the engine, but it IS a
+    // shown translation — the buffer records it like any other emission.
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("VERTIN".to_string(), "เวอร์ติน".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, false).await;
+    h.context_tx.send(2).unwrap();
+
+    feed_tick(&h, 1, vec![block(0, 0, "  vertin  ")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => assert_eq!(translation, "เวอร์ติน"),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+    assert!(h.translate.calls().is_empty(), "the engine was never called");
+
+    feed_tick(&h, 1, vec![block(0, 0, "Other")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[0].recent_translations,
+        vec![("vertin".to_string(), "เวอร์ติน".to_string())],
+        "the pinned display must ride as context for the next block"
+    );
+}
+
+#[tokio::test]
+async fn multi_line_answers_record_flattened_onto_one_line() {
+    // The prompt section renders one `- source → translation` line per
+    // pair, so a multi-line answer records flattened — the displayed text
+    // keeps its line breaks regardless.
+    let (mut h, mut orch) = harness().await;
+    h.context_tx.send(1).unwrap();
+    h.responses
+        .send(Ok("line one\nline two".to_string()))
+        .await
+        .unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Paragraph")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, .. } => {
+            assert_eq!(translation, "line one\nline two", "display keeps the breaks")
+        }
+        other => panic!("expected Translated, got {other:?}"),
+    }
+
+    feed_tick(&h, 1, vec![block(0, 0, "Next")]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await;
+    assert_eq!(
+        h.translate.guided_calls()[1].recent_translations,
+        vec![("Paragraph".to_string(), "line one line two".to_string())],
+        "the record must be single-line"
     );
 }
 
@@ -2447,7 +2888,7 @@ async fn pipeline_tick_sends_the_guided_prompt_to_the_http_engine() {
     let system = body["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
     assert!(system.contains("Genderless Mode"), "was: {system}");
-    assert!(system.contains("(translation-prompt v1)"), "was: {system}");
+    assert!(system.contains("(translation-prompt v2)"), "was: {system}");
     assert_eq!(body["messages"][1]["content"], "Vertin picks up the case");
 
     // And the loop completed with the engine's answer from the golden body.
@@ -2539,7 +2980,7 @@ async fn pipeline_tick_sends_a_custom_prompt_to_the_http_engine() {
     assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
     assert!(system.contains("Genderless Mode"), "was: {system}");
     assert!(
-        system.contains("(translation-prompt v1 custom)"),
+        system.contains("(translation-prompt v2 custom)"),
         "was: {system}"
     );
     assert_eq!(body["messages"][1]["content"], "Vertin picks up the case");
@@ -2649,7 +3090,7 @@ async fn pipeline_tick_sends_a_preset_prompt_to_the_http_engine() {
     assert!(system.contains("Genderless Mode"), "was: {system}");
     // ...and the tag names the preset that produced it.
     assert!(
-        system.ends_with("(translation-prompt v1 preset:game)"),
+        system.ends_with("(translation-prompt v2 preset:game)"),
         "was: {system}"
     );
 
@@ -3078,7 +3519,7 @@ async fn pipeline_tick_sends_the_image_to_the_http_fused_engine() {
     // The system message is the fused contract, with the glossary riding.
     let system = body["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("JSON array"), "was: {system}");
-    assert!(system.contains("(fused-prompt v1)"), "was: {system}");
+    assert!(system.contains("(fused-prompt v2)"), "was: {system}");
     assert!(system.contains("- Start → เริ่ม"), "was: {system}");
     assert!(system.contains("Genderless Mode"), "was: {system}");
     // The image rides as the OpenAI vision content part.
