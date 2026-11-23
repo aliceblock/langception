@@ -53,6 +53,11 @@
 //! jitters), and a changed block must hold its new pixels stable for
 //! [`LoopConfig::stability`] before it is translated. Animations never hold
 //! still, so they debounce into silence instead of spamming re-translations.
+//!
+//! Every pass also measures itself (ticket 47): capture, the read stage,
+//! the translation work, and the pass total ride the same event stream as a
+//! [`LoopEvent::Timing`] — a few clock reads per pass, no behavior change —
+//! so the Timing Debug window can show which stage is slow in real time.
 
 use crate::glossary::Glossary;
 use crate::hash::{block_dhash, frame_checksum};
@@ -144,6 +149,40 @@ pub enum LoopEvent {
     Error {
         stage: Stage,
         message: String,
+        at_ms: u64,
+    },
+    /// Per-pass stage timings (ticket 47): how long each stage of ONE
+    /// pipeline pass took — capture (screenshot + checksum / change
+    /// detection), the read (OCR + translate on the classic path, or the
+    /// single fused call replacing both), and the pass total. Always
+    /// collected (a few clock reads per pass, no behavior change) and
+    /// rendered only by the Timing Debug window; the forwarder drops the
+    /// event when that window is closed. Every pass emits — including
+    /// unchanged ticks, whose `blocks_translated` is 0 — because capture
+    /// itself can be the slow stage on a large zone.
+    Timing {
+        origin: EventOrigin,
+        /// Capture + frame checksum + change detection.
+        capture_ms: u64,
+        /// The classic OCR read; `None` when this pass never read
+        /// (unchanged frame took the fast path) or read through the fused
+        /// call.
+        ocr_ms: Option<u64>,
+        /// Time spent producing translations during this pass — Translate
+        /// Engine calls and their Glossary short-circuits, matured
+        /// fast-path fires included (their engine time is this pass's
+        /// cost). `None` on the fused path: the translation rides the
+        /// fused call's answer, so the stage never runs.
+        translate_ms: Option<u64>,
+        /// The fused vision call (ticket 12); `None` on the classic path.
+        fused_ms: Option<u64>,
+        /// Pass start to pass end — the stage durations above plus the
+        /// pass's own hashing and bookkeeping, so they sum to it within
+        /// rounding.
+        total_ms: u64,
+        /// Translations actually shown during this pass (suppressed
+        /// deduped reads and failures do not count).
+        blocks_translated: u32,
         at_ms: u64,
     },
 }
@@ -304,6 +343,21 @@ impl ZoneState {
             recent: Vec::new(),
         }
     }
+}
+
+/// Stage durations accumulated across one pipeline pass (ticket 47), then
+/// shipped as [`LoopEvent::Timing`]. The read stage fills `ocr_ms` or
+/// `fused_ms`; every Translate Engine call this pass made — matured
+/// fast-path fires included — adds to `translate_ms` and counts a shown
+/// block. Purely observational: nothing in the loop reads this struct, it
+/// only rides along.
+#[derive(Debug, Default)]
+struct PassTimings {
+    capture_ms: u64,
+    ocr_ms: Option<u64>,
+    fused_ms: Option<u64>,
+    translate_ms: u64,
+    blocks_translated: u32,
 }
 
 /// Evicts a Translation Context buffer's oldest pairs until it holds at
@@ -469,19 +523,27 @@ impl Orchestrator {
     /// immediately (no tracking state, no stability window — the user asked
     /// for what is on screen right now), and the running loop's state is
     /// untouched. With a fused engine attached the pass is one model call
-    /// (ticket 12).
+    /// (ticket 12). Emits a [`LoopEvent::Timing`] like a zone pass (ticket
+    /// 47) — every pass does, a failed capture included: its duration is
+    /// the "which stage is slow" answer when capture hangs.
     pub async fn capture_once(&self, region: Region) {
         let origin = EventOrigin::OneShot;
         let label = "One-shot capture";
+        let started = self.clock.now_ms();
+        let mut timings = PassTimings::default();
         let image = match self.capture.capture(region).await {
             Ok(image) => image,
             Err(e) => {
+                timings.capture_ms = self.clock.now_ms().saturating_sub(started);
                 self.emit(Stage::Capture, format!("{label}: {e}"));
+                self.emit_timing(origin, timings, started, true);
                 return;
             }
         };
+        timings.capture_ms = self.clock.now_ms().saturating_sub(started);
         let exclusions = self.excluded_rx.borrow().clone();
         if let Some(fused) = &self.fused {
+            let read_started = self.clock.now_ms();
             let fused_blocks = match fused
                 .recognize_and_translate(
                     &image,
@@ -495,10 +557,13 @@ impl Orchestrator {
             {
                 Ok(blocks) => blocks,
                 Err(e) => {
+                    timings.fused_ms = Some(self.clock.now_ms().saturating_sub(read_started));
                     self.emit(Stage::Fused, format!("{label}: {e}"));
+                    self.emit_timing(origin, timings, started, false);
                     return;
                 }
             };
+            timings.fused_ms = Some(self.clock.now_ms().saturating_sub(read_started));
             for fused in fused_blocks {
                 let text = fused.block.text.trim().to_string();
                 if text.is_empty() {
@@ -518,9 +583,12 @@ impl Orchestrator {
                     self.sampled_style(&image, &fused.block),
                 )
                 .await;
+                timings.blocks_translated += 1;
             }
+            self.emit_timing(origin, timings, started, false);
             return;
         }
+        let read_started = self.clock.now_ms();
         let blocks = match self
             .ocr
             .recognize(&image, self.config.source_language)
@@ -528,10 +596,13 @@ impl Orchestrator {
         {
             Ok(blocks) => blocks,
             Err(e) => {
+                timings.ocr_ms = Some(self.clock.now_ms().saturating_sub(read_started));
                 self.emit(Stage::Ocr, format!("{label}: {e}"));
+                self.emit_timing(origin, timings, started, true);
                 return;
             }
         };
+        timings.ocr_ms = Some(self.clock.now_ms().saturating_sub(read_started));
         // Ticket 23: the same merge pass as the zone loop's classic read
         // (crate::merge) — a multi-line paragraph is one Text Block here too.
         for block in merge_lines(blocks, self.config.source_language) {
@@ -543,18 +614,25 @@ impl Orchestrator {
             if exclusions.iter().any(|e| e.covers(&screen_block)) {
                 continue;
             }
-            self.translate_and_emit(
-                region,
-                &block,
-                &text,
-                &origin,
-                label,
-                // No zone context in a one-shot pass (ticket 44).
-                &[],
-                self.sampled_style(&image, &block),
-            )
-            .await;
+            if self
+                .translate_and_emit(
+                    region,
+                    &block,
+                    &text,
+                    &origin,
+                    label,
+                    // No zone context in a one-shot pass (ticket 44).
+                    &[],
+                    self.sampled_style(&image, &block),
+                    &mut timings,
+                )
+                .await
+                .is_some()
+            {
+                timings.blocks_translated += 1;
+            }
         }
+        self.emit_timing(origin, timings, started, true);
     }
 
     /// One pass over one zone. Fast path: the capture is pixel-identical to
@@ -562,6 +640,11 @@ impl Orchestrator {
     /// blocks that frame already missed keep missing, and OCR never runs.
     /// Otherwise OCR runs and every Text Block goes through the dHash
     /// pipeline. Never panics; every failure becomes a [`LoopEvent::Error`].
+    /// Every pass also emits a [`LoopEvent::Timing`] (ticket 47) — unchanged
+    /// ticks included (`blocks_translated: 0`), because capture itself can
+    /// be the slow stage; a failed capture emits the error plus the timing
+    /// it managed (capture duration up to the failure — a hanging capture
+    /// is exactly when that number matters).
     async fn process_zone(
         &self,
         zone: &Zone,
@@ -573,19 +656,32 @@ impl Orchestrator {
             name: zone.name.clone(),
         };
         let label = format!("zone \"{}\"", zone.name);
+        let started = self.clock.now_ms();
+        let mut timings = PassTimings::default();
         let image = match self.capture.capture(zone.region).await {
             Ok(image) => image,
             Err(e) => {
+                timings.capture_ms = self.clock.now_ms().saturating_sub(started);
                 self.emit(Stage::Capture, format!("{label}: {e}"));
+                self.emit_timing(origin, timings, started, self.fused.is_none());
                 return state;
             }
         };
+        timings.capture_ms = self.clock.now_ms().saturating_sub(started);
 
         let frame = frame_checksum(&image);
         if state.last_frame == Some(frame) {
-            self.fire_matured(&mut state, zone.region, &origin, &label, &image)
-                .await;
+            self.fire_matured(
+                &mut state,
+                zone.region,
+                &origin,
+                &label,
+                &image,
+                &mut timings,
+            )
+            .await;
             self.advance_removals(&mut state, &origin);
+            self.emit_timing(origin, timings, started, self.fused.is_none());
             return state;
         }
 
@@ -600,37 +696,45 @@ impl Orchestrator {
         // blocks whose translation is requested per fire. Either way each
         // read is `(block, translation)` — `None` marks the OCR form.
         let reads: Vec<(TextBlock, Option<String>)> = match &self.fused {
-            Some(fused) => match fused
-                .recognize_and_translate(
-                    &image,
-                    self.config.source_language,
-                    crate::ports::TARGET_LANGUAGE,
-                    &self.fused_guidance(recent_context(&mut state, context_window)),
-                )
-                .await
-            {
-                Ok(blocks) => blocks
-                    .into_iter()
-                    .map(|fused| (fused.block, Some(fused.translation)))
-                    .collect(),
-                Err(e) => {
-                    self.emit(Stage::Fused, format!("{label}: {e}"));
-                    // last_frame stays behind: the next pass retries
-                    // even if the screen has not changed since.
-                    return state;
+            Some(fused) => {
+                let read_started = self.clock.now_ms();
+                let answered = fused
+                    .recognize_and_translate(
+                        &image,
+                        self.config.source_language,
+                        crate::ports::TARGET_LANGUAGE,
+                        &self.fused_guidance(recent_context(&mut state, context_window)),
+                    )
+                    .await;
+                timings.fused_ms = Some(self.clock.now_ms().saturating_sub(read_started));
+                match answered {
+                    Ok(blocks) => blocks
+                        .into_iter()
+                        .map(|fused| (fused.block, Some(fused.translation)))
+                        .collect(),
+                    Err(e) => {
+                        self.emit(Stage::Fused, format!("{label}: {e}"));
+                        // last_frame stays behind: the next pass retries
+                        // even if the screen has not changed since.
+                        self.emit_timing(origin, timings, started, false);
+                        return state;
+                    }
                 }
-            },
+            }
             None => {
-                let blocks = match self
+                let read_started = self.clock.now_ms();
+                let recognized = self
                     .ocr
                     .recognize(&image, self.config.source_language)
-                    .await
-                {
+                    .await;
+                timings.ocr_ms = Some(self.clock.now_ms().saturating_sub(read_started));
+                let blocks = match recognized {
                     Ok(blocks) => blocks,
                     Err(e) => {
                         self.emit(Stage::Ocr, format!("{label}: {e}"));
                         // last_frame stays behind: the next pass retries OCR
                         // even if the screen has not changed since.
+                        self.emit_timing(origin, timings, started, true);
                         return state;
                     }
                 };
@@ -702,6 +806,7 @@ impl Orchestrator {
                             &label,
                             &image,
                             &recent,
+                            &mut timings,
                         )
                         .await
                     {
@@ -740,6 +845,7 @@ impl Orchestrator {
                             &label,
                             &image,
                             &recent,
+                            &mut timings,
                         )
                         .await
                     {
@@ -770,6 +876,7 @@ impl Orchestrator {
         self.report_removals(&mut state, gone, &origin);
 
         state.last_frame = Some(frame);
+        self.emit_timing(origin, timings, started, self.fused.is_none());
         state
     }
 
@@ -778,7 +885,8 @@ impl Orchestrator {
     /// frame actually saw can fire (misses == 0): a block it no longer
     /// shows is not on screen, whatever its pending says. The cached
     /// rect/text are exactly what that frame read, so the fire is current —
-    /// and Auto Colors samples from that same frame.
+    /// and Auto Colors samples from that same frame. Fired engine time
+    /// accumulates into the pass's timings (ticket 47).
     async fn fire_matured(
         &self,
         state: &mut ZoneState,
@@ -786,6 +894,7 @@ impl Orchestrator {
         origin: &EventOrigin,
         label: &str,
         image: &CapturedImage,
+        timings: &mut PassTimings,
     ) {
         let now = self.clock.now_ms();
         let stable_ms = self.config.stability.as_millis() as u64;
@@ -825,6 +934,7 @@ impl Orchestrator {
                     label,
                     image,
                     &recent,
+                    timings,
                 )
                 .await
             {
@@ -949,7 +1059,8 @@ impl Orchestrator {
     /// for a suppressed read or a failed translation, which must leave the
     /// zone's buffer alone. Pairs are flattened onto one line: the prompt
     /// section renders one `- source → translation` line per pair, and a
-    /// multi-line answer would break that shape.
+    /// multi-line answer would break that shape. Actual emissions count
+    /// into the pass's timings (ticket 47).
     #[allow(clippy::too_many_arguments)]
     async fn fire_read(
         &self,
@@ -963,6 +1074,7 @@ impl Orchestrator {
         label: &str,
         image: &CapturedImage,
         recent: &[(String, String)],
+        timings: &mut PassTimings,
     ) -> Option<(String, String)> {
         if entry.last_fired_text.as_deref() == Some(text) {
             return None; // suppressed: nothing shown, nothing recorded
@@ -971,12 +1083,22 @@ impl Orchestrator {
         let shown = match fused_translation {
             Some(thai) => Some(self.emit_fused_block(region, rect, thai, origin, style).await),
             None => {
-                self.translate_and_emit(region, rect, text, origin, label, recent, style)
-                    .await
+                self.translate_and_emit(
+                    region,
+                    rect,
+                    text,
+                    origin,
+                    label,
+                    recent,
+                    style,
+                    timings,
+                )
+                .await
             }
         };
         entry.fired_hash = Some(hash);
         let thai = shown?;
+        timings.blocks_translated += 1;
         entry.last_fired_text = Some(text.to_string());
         Some((one_line(text), one_line(&thai)))
     }
@@ -1017,7 +1139,9 @@ impl Orchestrator {
     /// failure, so the caller records no shown text and the read is
     /// retried when the pixels change again. A failed translation still
     /// counts as handled (the caller records the change) so a dead engine
-    /// is not hammered every tick.
+    /// is not hammered every tick. The whole translation-production time
+    /// (Glossary lookup, engine call, scrub) accumulates into the pass's
+    /// translate stage (ticket 47).
     #[allow(clippy::too_many_arguments)]
     async fn translate_and_emit(
         &self,
@@ -1028,7 +1152,9 @@ impl Orchestrator {
         label: &str,
         recent: &[(String, String)],
         style: Option<SampledStyle>,
+        timings: &mut PassTimings,
     ) -> Option<String> {
+        let translate_started = self.clock.now_ms();
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
             None => {
@@ -1077,6 +1203,7 @@ impl Orchestrator {
                     .map_err(|e| e.message)
             }
         };
+        timings.translate_ms += self.clock.now_ms().saturating_sub(translate_started);
         match translated {
             Ok((translation, via)) => {
                 self.emit_translated(region, rect, translation.clone(), via, origin, style);
@@ -1114,6 +1241,35 @@ impl Orchestrator {
                 stage,
                 message,
                 at_ms: self.clock.now_ms(),
+            })
+            .ok();
+    }
+
+    /// Ships one pass's [`PassTimings`] as a [`LoopEvent::Timing`] (ticket
+    /// 47). `total_ms` is measured pass start → pass end, so the stage
+    /// durations plus the pass's own hashing and bookkeeping sum to it
+    /// within rounding. `classic` decides the translate stage's presence:
+    /// on the fused path the stage never runs (the translation rides the
+    /// fused call's answer), so it reports `None` even though the
+    /// accumulator stays at zero.
+    fn emit_timing(
+        &self,
+        origin: EventOrigin,
+        timings: PassTimings,
+        started_ms: u64,
+        classic: bool,
+    ) {
+        let now = self.clock.now_ms();
+        self.events
+            .send(LoopEvent::Timing {
+                origin,
+                capture_ms: timings.capture_ms,
+                ocr_ms: timings.ocr_ms,
+                translate_ms: classic.then_some(timings.translate_ms),
+                fused_ms: timings.fused_ms,
+                total_ms: now.saturating_sub(started_ms),
+                blocks_translated: timings.blocks_translated,
+                at_ms: now,
             })
             .ok();
     }

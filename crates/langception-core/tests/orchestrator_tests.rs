@@ -8,6 +8,8 @@
 //! and pixel-identical screens are expressed by re-feeding the same frame.
 //! That drives the ticket-05 change detection for real: identical frames
 //! take the OCR-skipping fast path, changed frames run the dHash pipeline.
+//! The ticket-47 timing tests pin exact stage durations by charging a
+//! per-call fake-clock cost to the stage fakes.
 
 use async_trait::async_trait;
 use langception_core::glossary::Glossary;
@@ -161,6 +163,8 @@ fn frame_animated(blocks: &[TextBlock], corner: u8, anim: u8) -> CapturedImage {
 struct FakeCapture {
     images: AsyncMutex<mpsc::Receiver<CapturedImage>>,
     calls: Arc<Mutex<u32>>,
+    /// Fake-clock cost per call (ticket 47); unpinned = free.
+    cost: CostPin,
 }
 
 impl FakeCapture {
@@ -171,6 +175,7 @@ impl FakeCapture {
             Self {
                 images: AsyncMutex::new(rx),
                 calls: Arc::new(Mutex::new(0)),
+                cost: CostPin::default(),
             },
         )
     }
@@ -180,6 +185,7 @@ impl FakeCapture {
 impl CaptureSource for FakeCapture {
     async fn capture(&self, _region: Region) -> Result<CapturedImage, CaptureError> {
         *self.calls.lock().unwrap() += 1;
+        self.cost.charge();
         let mut rx = self.images.lock().await;
         rx.recv()
             .await
@@ -191,6 +197,8 @@ impl CaptureSource for FakeCapture {
 struct FakeOcr {
     results: AsyncMutex<mpsc::Receiver<Result<Vec<TextBlock>, OcrError>>>,
     calls: Arc<Mutex<u32>>,
+    /// Fake-clock cost per call (ticket 47); unpinned = free.
+    cost: CostPin,
 }
 
 impl FakeOcr {
@@ -201,6 +209,7 @@ impl FakeOcr {
             Self {
                 results: AsyncMutex::new(rx),
                 calls: Arc::new(Mutex::new(0)),
+                cost: CostPin::default(),
             },
         )
     }
@@ -214,6 +223,7 @@ impl OcrEngine for FakeOcr {
         _source: SourceLanguage,
     ) -> Result<Vec<TextBlock>, OcrError> {
         *self.calls.lock().unwrap() += 1;
+        self.cost.charge();
         let mut rx = self.results.lock().await;
         rx.recv().await.unwrap_or(Ok(Vec::new()))
     }
@@ -228,6 +238,8 @@ struct FakeTranslate {
     requests: Mutex<Vec<String>>,
     guided: Mutex<Vec<GuidedCall>>,
     responses: AsyncMutex<mpsc::Receiver<Result<String, TranslateError>>>,
+    /// Fake-clock cost per call (ticket 47); unpinned = free.
+    cost: CostPin,
 }
 
 /// One `translate_guided` call: the text plus the guidance the orchestrator
@@ -251,6 +263,7 @@ impl FakeTranslate {
                 requests: Mutex::new(Vec::new()),
                 guided: Mutex::new(Vec::new()),
                 responses: AsyncMutex::new(rx),
+                cost: CostPin::default(),
             },
         )
     }
@@ -284,6 +297,7 @@ impl TranslateEngine for FakeTranslate {
         _target: &str,
     ) -> Result<String, TranslateError> {
         self.requests.lock().unwrap().push(text.to_string());
+        self.cost.charge();
         self.answer(text).await
     }
 
@@ -295,6 +309,7 @@ impl TranslateEngine for FakeTranslate {
         guidance: &langception_core::ports::TranslationGuidance,
     ) -> Result<String, TranslateError> {
         self.requests.lock().unwrap().push(text.to_string());
+        self.cost.charge();
         self.guided.lock().unwrap().push(GuidedCall {
             text: text.to_string(),
             glossary: guidance.glossary.clone(),
@@ -343,6 +358,27 @@ impl Clock for FakeClock {
     }
 }
 
+/// Interior-mutable fake-clock cost for one stage's fake (ticket 47): the
+/// timing tests pin how many ms each stage call takes, and the fake
+/// advances the shared clock by that amount per call — exactly what a real
+/// stage's latency does to the system clock. Unpinned (the default) the
+/// stage is free, so no pre-existing test sees its clock move.
+#[derive(Default)]
+struct CostPin(Mutex<Option<(Arc<FakeClock>, u64)>>);
+
+impl CostPin {
+    /// Pins this stage's per-call cost against the shared fake clock.
+    fn pin(&self, clock: &Arc<FakeClock>, ms: u64) {
+        *self.0.lock().unwrap() = Some((Arc::clone(clock), ms));
+    }
+
+    fn charge(&self) {
+        if let Some((clock, ms)) = self.0.lock().unwrap().as_ref() {
+            *clock.now.lock().unwrap() += *ms;
+        }
+    }
+}
+
 /// The fused vision engine fake (ticket 12): records every call — the frame
 /// it was handed plus the guidance the orchestrator computed (the WHOLE
 /// glossary, since a fused call sees the image rather than one block's
@@ -350,6 +386,8 @@ impl Clock for FakeClock {
 struct FakeFused {
     calls: Mutex<Vec<FusedCallRecord>>,
     responses: AsyncMutex<mpsc::Receiver<Result<Vec<FusedBlock>, FusedError>>>,
+    /// Fake-clock cost per call (ticket 47); unpinned = free.
+    cost: CostPin,
 }
 
 /// One `recognize_and_translate` call.
@@ -373,6 +411,7 @@ impl FakeFused {
             Self {
                 calls: Mutex::new(Vec::new()),
                 responses: AsyncMutex::new(rx),
+                cost: CostPin::default(),
             },
         )
     }
@@ -401,6 +440,7 @@ impl FusedEngine for FakeFused {
             recent_translations: guidance.recent_translations.clone(),
             target: target.to_string(),
         });
+        self.cost.charge();
         let mut rx = self.responses.lock().await;
         rx.recv().await.unwrap_or(Ok(Vec::new()))
     }
@@ -422,6 +462,10 @@ struct Harness {
     fused_responses: mpsc::Sender<Result<Vec<FusedBlock>, FusedError>>,
     capture_calls: Arc<Mutex<u32>>,
     ocr_calls: Arc<Mutex<u32>>,
+    /// The Arc'd stage fakes, kept so the timing tests (ticket 47) can pin
+    /// per-call fake-clock costs after construction.
+    capture: Arc<FakeCapture>,
+    ocr: Arc<FakeOcr>,
     translate: Arc<FakeTranslate>,
     fused: Arc<FakeFused>,
     clock: Arc<FakeClock>,
@@ -431,6 +475,19 @@ struct Harness {
     /// Translation Context window (ticket 44): tests send the live value
     /// here; 0 = off (every harness's default).
     context_tx: watch::Sender<u32>,
+}
+
+impl Harness {
+    /// Pins per-call fake-clock stage costs (ticket 47): each capture call
+    /// advances the clock `capture_ms`, each read call (OCR or fused)
+    /// `read_ms`, each translate call `translate_ms`. The orchestrator's
+    /// timing events then carry these exact durations.
+    fn pin_stage_costs(&self, capture_ms: u64, read_ms: u64, translate_ms: u64) {
+        self.capture.cost.pin(&self.clock, capture_ms);
+        self.ocr.cost.pin(&self.clock, read_ms);
+        self.fused.cost.pin(&self.clock, read_ms);
+        self.translate.cost.pin(&self.clock, translate_ms);
+    }
 }
 
 /// The harness starts watching one zone (z1 = REGION), like the app does
@@ -470,8 +527,10 @@ async fn harness_with_config(
 ) -> (Harness, Orchestrator) {
     let (images_tx, capture) = FakeCapture::new();
     let capture_calls = Arc::clone(&capture.calls);
+    let capture = Arc::new(capture);
     let (ocr_tx, ocr) = FakeOcr::new();
     let ocr_calls = Arc::clone(&ocr.calls);
+    let ocr = Arc::new(ocr);
     let (responses_tx, translate) = FakeTranslate::new();
     let translate = Arc::new(translate);
     let (fused_responses_tx, fused_fake) = FakeFused::new();
@@ -484,8 +543,8 @@ async fn harness_with_config(
     let (context_tx, context_rx) = watch::channel(0u32);
 
     let orchestrator = Orchestrator::new(
-        Arc::new(capture),
-        Arc::new(ocr),
+        Arc::clone(&capture) as Arc<dyn CaptureSource>,
+        Arc::clone(&ocr) as Arc<dyn OcrEngine>,
         translate.clone(),
         clock.clone(),
         config,
@@ -507,6 +566,8 @@ async fn harness_with_config(
             fused_responses: fused_responses_tx,
             capture_calls,
             ocr_calls,
+            capture,
+            ocr,
             translate,
             fused: fused_fake,
             clock,
@@ -576,20 +637,51 @@ fn set_zones(h: &Harness, zones: Vec<Zone>) {
     h.zones_tx.send(zones).unwrap();
 }
 
+/// The next display event (ticket 47: every pass also emits a Timing event
+/// on the same channel; tests that don't pin timings skip them here — the
+/// timing tests read them explicitly via [`next_timing`]).
 async fn next_event(events: &mut mpsc::UnboundedReceiver<LoopEvent>) -> LoopEvent {
-    tokio::time::timeout(Duration::from_secs(2), events.recv())
-        .await
-        .expect("event should arrive within 2s")
-        .expect("event channel should stay open")
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+            .await
+            .expect("event should arrive within 2s")
+            .expect("event channel should stay open");
+        if !matches!(event, LoopEvent::Timing { .. }) {
+            return event;
+        }
+    }
 }
 
+/// Asserts no event other than the per-pass Timing arrives (ticket 47 made
+/// every pass emit one — unchanged ticks included — so the display-event
+/// assertions below skip it; the timing tests pin the timing events
+/// themselves).
 async fn assert_no_event(events: &mut mpsc::UnboundedReceiver<LoopEvent>, what: &str) {
-    assert!(
-        tokio::time::timeout(Duration::from_millis(100), events.recv())
+    loop {
+        match tokio::time::timeout(Duration::from_millis(100), events.recv()).await {
+            // Nothing (else) arrived: the assertion holds.
+            Err(_elapsed) => return,
+            Ok(None) => panic!("{what}: event channel closed"),
+            // The per-pass timing row, not a display event.
+            Ok(Some(LoopEvent::Timing { .. })) => continue,
+            Ok(Some(other)) => panic!("{what}: got {other:?}"),
+        }
+    }
+}
+
+/// The next Timing event (ticket 47), skipping the display events that
+/// fired earlier in the same pass — order-sensitive tests consume those via
+/// [`next_event`] first.
+async fn next_timing(events: &mut mpsc::UnboundedReceiver<LoopEvent>) -> LoopEvent {
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
             .await
-            .is_err(),
-        "{what}"
-    );
+            .expect("timing event should arrive within 2s")
+            .expect("event channel should stay open");
+        if matches!(event, LoopEvent::Timing { .. }) {
+            return event;
+        }
+    }
 }
 
 /// Polls until `cond` holds (fake-clock tests must not rely on fixed sleeps).
@@ -3774,5 +3866,289 @@ fn stage_name_matches_the_serde_spelling() {
     ] {
         assert_eq!(stage.name(), spelling);
         assert_eq!(serde_json::to_value(stage).unwrap(), spelling);
+    }
+}
+
+// ---- Per-pass stage timings (ticket 47) ----
+//
+// The pinned-duration tests: each fake stage advances the shared fake
+// clock by its cost per call, so a timing event's stage durations are
+// exact, and the stages sum to the pass total (the pass's own hashing and
+// bookkeeping cost no fake-clock time).
+
+#[tokio::test]
+async fn every_pass_emits_a_timing_event_with_pinned_stage_durations() {
+    let (mut h, mut orch) = harness().await;
+    h.pin_stage_costs(5, 40, 30);
+    let hello = vec![block(100, 200, "Hello")];
+
+    feed_tick(&h, 1, hello.clone()).await;
+    orch.tick().await;
+
+    // The translated row fires mid-pass, the timing row at its end.
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { .. } => {}
+        other => panic!("expected Translated first, got {other:?}"),
+    }
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            origin,
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            fused_ms,
+            total_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(
+                origin,
+                EventOrigin::Zone {
+                    id: "z1".into(),
+                    name: "Zone 1".into()
+                }
+            );
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, Some(40));
+            assert_eq!(translate_ms, Some(30));
+            assert_eq!(fused_ms, None);
+            assert_eq!(blocks_translated, 1);
+            // capture + ocr + translate sum to the total, within rounding.
+            assert_eq!(capture_ms + ocr_ms.unwrap() + translate_ms.unwrap(), total_ms);
+            assert_eq!(total_ms, 75);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_unchanged_tick_emits_a_timing_event_with_zero_blocks() {
+    let (mut h, mut orch) = harness().await;
+    h.pin_stage_costs(5, 40, 30);
+    let hello = vec![block(100, 200, "Hello")];
+
+    feed_tick(&h, 1, hello.clone()).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated
+    let _ = next_timing(&mut h.events).await; // pass 1's timing row
+
+    // Pixel-identical screen: the fast path — no OCR, no translation, but
+    // still a timing row (capture can be the slow stage on a large zone),
+    // reporting zero blocks instead of being silently dropped.
+    feed_unchanged(&h, 1, hello.clone()).await;
+    orch.tick().await;
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            fused_ms,
+            total_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, None);
+            assert_eq!(translate_ms, Some(0));
+            assert_eq!(fused_ms, None);
+            assert_eq!(blocks_translated, 0);
+            assert_eq!(total_ms, 5);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_fused_pass_reports_the_fused_stage_not_ocr_or_translate() {
+    let (mut h, mut orch) = harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+    h.pin_stage_costs(5, 60, 30);
+    let hello = block(100, 200, "Hello");
+    h.fused_responses
+        .send(Ok(vec![FusedBlock {
+            block: hello.clone(),
+            translation: "[TH] Hello".into(),
+        }]))
+        .await
+        .unwrap();
+
+    feed_tick(&h, 1, vec![hello.clone()]).await;
+    orch.tick().await;
+
+    let _ = next_event(&mut h.events).await; // Translated
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            fused_ms,
+            total_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, None);
+            // The fused stage replaced both: no ocr/translate row, the
+            // fused call's duration instead.
+            assert_eq!(translate_ms, None);
+            assert_eq!(fused_ms, Some(60));
+            assert_eq!(blocks_translated, 1);
+            assert_eq!(capture_ms + fused_ms.unwrap(), total_ms);
+            assert_eq!(total_ms, 65);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_fast_path_fire_charges_its_translate_time_to_its_own_pass() {
+    let (mut h, mut orch) = harness_with_stability(1000).await;
+    h.pin_stage_costs(5, 40, 30);
+    let hello = vec![block(100, 200, "Hello")];
+
+    // Pass 1 detects the change; the stability window holds the fire.
+    feed_tick(&h, 1, hello.clone()).await;
+    h.clock.set_now_ms(1000);
+    orch.tick().await;
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, Some(40));
+            assert_eq!(translate_ms, Some(0));
+            assert_eq!(blocks_translated, 0);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+
+    // Pass 2: pixel-identical screen (the fast path) — the pending matured
+    // and fires with its cached read. Its engine time is THIS pass's
+    // translate stage.
+    feed_unchanged(&h, 1, hello.clone()).await;
+    h.clock.set_now_ms(3000);
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { .. } => {}
+        other => panic!("expected the matured Translated, got {other:?}"),
+    }
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            total_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, None);
+            assert_eq!(translate_ms, Some(30));
+            assert_eq!(blocks_translated, 1);
+            assert_eq!(total_ms, 35);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn one_shot_passes_emit_timing_rows_like_zone_passes() {
+    let (mut h, orch) = harness().await;
+    h.pin_stage_costs(5, 40, 30);
+    let lines = vec![block(0, 0, "Hello")];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+
+    orch.capture_once(REGION).await;
+
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { origin, .. } => assert_eq!(origin, EventOrigin::OneShot),
+        other => panic!("expected Translated, got {other:?}"),
+    }
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            origin,
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            fused_ms,
+            total_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(origin, EventOrigin::OneShot);
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, Some(40));
+            assert_eq!(translate_ms, Some(30));
+            assert_eq!(fused_ms, None);
+            assert_eq!(blocks_translated, 1);
+            assert_eq!(total_ms, 75);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_failed_capture_still_emits_a_timing_event() {
+    let (mut h, mut orch) = harness().await;
+    h.pin_stage_costs(5, 40, 30);
+
+    // Capture fails this tick: the Error event names the stage, and the
+    // timing row still reports the duration the capture managed up to the
+    // failure — a hanging capture is when that number matters most.
+    drop(h.images);
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Error { stage, .. } => assert_eq!(stage, Stage::Capture),
+        other => panic!("expected Error, got {other:?}"),
+    }
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            fused_ms,
+            total_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, None);
+            assert_eq!(translate_ms, Some(0));
+            assert_eq!(fused_ms, None);
+            assert_eq!(blocks_translated, 0);
+            assert_eq!(total_ms, 5);
+        }
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn translate_time_accumulates_across_a_pass_blocks() {
+    let (mut h, mut orch) = harness().await;
+    h.pin_stage_costs(0, 0, 30);
+    let blocks = vec![block(100, 200, "Hello"), block(100, 400, "World")];
+
+    feed_tick(&h, 1, blocks.clone()).await;
+    orch.tick().await;
+
+    let _ = next_event(&mut h.events).await; // Translated "Hello"
+    let _ = next_event(&mut h.events).await; // Translated "World"
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            translate_ms: Some(ms),
+            blocks_translated,
+            total_ms,
+            ..
+        } => {
+            // Each block's engine call charged the pass's translate stage.
+            assert_eq!(ms, 60);
+            assert_eq!(blocks_translated, 2);
+            assert_eq!(total_ms, 60);
+        }
+        other => panic!("expected Timing, got {other:?}"),
     }
 }

@@ -1,0 +1,157 @@
+/* Debug Log window (ticket 47): the per-pass stage-timing stream.
+   Shares the app's theme tokens (theme.css); this file only lays out the
+   summary header and the scrolling row list. */
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+}
+
+/* The rolling summary: one chip per stage, the slowest (by average)
+   highlighted. Wraps rather than scrolls so every stage stays visible. */
+#summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex: none;
+}
+
+#summary.empty {
+  color: var(--muted);
+}
+
+#summary .passes {
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.stage-chip {
+  display: inline-flex;
+  gap: 5px;
+  align-items: baseline;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.stage-chip .name {
+  color: var(--muted);
+}
+
+.stage-chip.slow {
+  border-color: var(--accent-deep);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel-2));
+}
+
+.stage-chip.slow .name {
+  color: var(--accent);
+}
+
+/* The row stream: chronological, newest at the bottom, auto-scrolled. */
+#rows {
+  flex: 1;
+  overflow-y: auto;
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
+}
+
+#rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 14px;
+  border-left: 3px solid transparent;
+}
+
+#rows li + li {
+  border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+#rows .time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+#rows .origin {
+  flex: none;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--info);
+  white-space: nowrap;
+}
+
+#rows .ms {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+#rows .ms .name {
+  color: var(--muted);
+}
+
+/* The pass's slowest stage: identifiable at a glance. */
+#rows .ms.slow {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+#rows .ms.slow::after {
+  content: " ◂";
+  color: var(--accent-deep);
+}
+
+#rows .total {
+  color: var(--text);
+  font-weight: 600;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+#rows .blocks {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Collapsed run of unchanged ticks: one compact row for the whole run. */
+#rows li.unchanged {
+  color: var(--muted);
+  border-left-color: color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+#rows li.unchanged .count {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Errors render alongside timings, same stream. */
+#rows li.error {
+  border-left-color: var(--err);
+  color: var(--err);
+}
+
+#rows li.error .stage {
+  padding: 1px 7px;
+  border-radius: 9px;
+  border: 1px solid var(--err);
+  white-space: nowrap;
+}
+
+#rows li.error .message {
+  word-break: break-word;
+}

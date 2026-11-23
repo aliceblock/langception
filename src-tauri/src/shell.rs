@@ -3,9 +3,9 @@
 //! (Alt+Z / Alt+Q), Adjust Mode (Alt+A: zone drag/resize + block exclusion,
 //! ticket 04), full-screen mode with monitor selection, the per-monitor
 //! In-place Overlay (ticket 03), the Results Window event bridge, the
-//! config file lifecycle, single-instance behavior, and the cloud-engine
-//! privacy badge (ticket 06). Thin adapter — exercised by the manual smoke
-//! checklist.
+//! Debug Log window (ticket 47), the config file lifecycle,
+//! single-instance behavior, and the cloud-engine privacy badge (ticket
+//! 06). Thin adapter — exercised by the manual smoke checklist.
 
 use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{
@@ -46,6 +46,10 @@ use tokio::sync::{mpsc, watch};
 /// the single-instance handoff, and close-to-tray all show/hide it by label.
 const RESULTS_LABEL: &str = "results";
 const PICKER_LABEL: &str = "zone-picker";
+/// The Debug Log window (ticket 47): live per-pass stage timings, a
+/// support tool opened from the tray. Created on demand, closed like any
+/// ordinary window — the loop never knows it existed.
+const DEBUG_LABEL: &str = "debug";
 /// Drags smaller than this (CSS px) count as a click: the session cancels.
 const MIN_DRAG_CSS_PX: i32 = 8;
 
@@ -664,6 +668,9 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let new_zone = MenuItem::with_id(app, "new-zone", "New Capture Zone", true, None::<&str>)?;
     let one_shot = MenuItem::with_id(app, "one-shot", "One-shot Capture", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    // The Debug Log window (ticket 47): support tool for "which stage is
+    // slow" — open it and watch the per-pass timings stream.
+    let debug_item = MenuItem::with_id(app, "timing-debug", "Debug Log Window…", true, None::<&str>)?;
     let open_config =
         MenuItem::with_id(app, "open-config", "Open Config Folder", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -682,6 +689,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &new_zone,
             &one_shot,
             &settings_item,
+            &debug_item,
             &open_config,
             &quit,
         ],
@@ -739,6 +747,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "new-zone" => spawn_off_main(app, |app| open_picker(app, PickerMode::Zone)),
             "one-shot" => spawn_off_main(app, |app| open_picker(app, PickerMode::OneShot)),
             "settings" => spawn_off_main(app, crate::settings::open_settings),
+            "timing-debug" => spawn_off_main(app, open_debug_window),
             "open-config" => open_config_folder_inner(app),
             "quit" => app.exit(0),
             _ => {}
@@ -1605,9 +1614,10 @@ pub(crate) fn build_translate_engine(
 }
 
 /// Bridges orchestrator events to the display layer: the Results Window
-/// (translations + errors) and the In-place Overlay (zone translations in
-/// place, routed per monitor). Exits on its own when the last event sender
-/// drops (loop stopped, or a one-shot pass finished).
+/// (translations + errors), the In-place Overlay (zone translations in
+/// place, routed per monitor), and the Debug Log window (per-pass stage
+/// timings alongside the errors, ticket 47). Exits on its own when the
+/// last event sender drops (loop stopped, or a one-shot pass finished).
 fn spawn_forwarder(
     app: &AppHandle,
     mut events_rx: mpsc::UnboundedReceiver<LoopEvent>,
@@ -1644,6 +1654,9 @@ fn spawn_forwarder(
                         notify_engine_error(&bridge_app, message);
                     }
                 }
+                // Timings route to the debug window below — the overlay
+                // and Results Window are display surfaces, not diagnostics.
+                LoopEvent::Timing { .. } => {}
             }
             // The overlay handles its own events; the Results Window is a
             // history log and does not care about removals.
@@ -1651,13 +1664,29 @@ fn spawn_forwarder(
                 event,
                 LoopEvent::Translated { .. } | LoopEvent::Error { .. }
             ) {
-                if let Some(window) = bridge_app.get_webview_window(RESULTS_LABEL) {
-                    // Window temporarily unavailable (user hid it): keep the loop.
-                    let _ = window.emit("loop-event", &event);
-                }
+                emit_loop_event(&bridge_app, RESULTS_LABEL, &event);
+            }
+            // The Debug Log window (ticket 47) renders timings with the
+            // errors it shows alongside them. Window closed → dropped right
+            // here: nothing serializes, nothing emits, and the loop's only
+            // timing cost stays the orchestrator's clock reads. Never
+            // awaited, never blocking — open/closing the window cannot
+            // touch the loop.
+            if matches!(event, LoopEvent::Timing { .. } | LoopEvent::Error { .. }) {
+                emit_loop_event(&bridge_app, DEBUG_LABEL, &event);
             }
         }
     })
+}
+
+/// Forwards one loop event to the listening window with `label`, if it
+/// exists right now: a hidden or closed window is skipped — nothing
+/// serializes, nothing emits, and the loop carries on (the forwarder never
+/// blocks on a missing window).
+fn emit_loop_event(app: &AppHandle, label: &str, event: &LoopEvent) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.emit("loop-event", event);
+    }
 }
 
 /// Shows one tray notification for an engine error, throttled: the same
@@ -2401,6 +2430,45 @@ fn close_picker(app: &AppHandle) {
     if app.state::<AppState>().running.lock().unwrap_or_else(|p| p.into_inner()).is_some() {
         crate::overlay::show_all(app);
     }
+}
+
+// ---- Debug Log window (ticket 47) ----
+
+/// Opens (or focuses) the Debug Log window: a normal, closable window
+/// streaming the loop's per-pass stage timings. History starts when it
+/// opens; opening and closing it never touches the loop, the overlays, or
+/// the Results Window (the forwarder just drops timing events while it is
+/// gone).
+///
+/// Threading: MUST NOT run on the main thread (creates a window — see
+/// `run_off_main`; all callers route through `spawn_off_main`).
+fn open_debug_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(DEBUG_LABEL) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    let window =
+        WebviewWindowBuilder::new(app, DEBUG_LABEL, WebviewUrl::App("debug.html".into()))
+            .title("Langception — Debug Log")
+            .inner_size(780.0, 540.0)
+            .min_inner_size(520.0, 300.0)
+            .build()
+            .map_err(|e| format!("cannot open the debug log window: {e}"))?;
+    // Same rule as every other Langception window (ADR-0003): never a
+    // translation source — a zone over the timing rows must not OCR them.
+    if let Err(message) = crate::overlay::exclude_from_capture(&window) {
+        app.state::<AppState>()
+            .warnings
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(format!(
+                "could not exclude the debug log window from capture: {message}"
+            ));
+    }
+    let _ = window.set_focus();
+    Ok(())
 }
 
 fn primary_monitor(app: &AppHandle) -> Result<Monitor, String> {
