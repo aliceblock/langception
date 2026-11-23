@@ -109,5 +109,5 @@ A Settings button and an optional on-launch fetch that compare the running versi
 _Avoid_: auto-update, updater, version monitor
 
 **Debug Log Window**:
-A window streaming the translation loop's per-pass stage timings in real time, so a slow stage (capture, OCR, translate, fused) can be identified at a glance. Diagnostic only — it never changes loop behavior.
+A window streaming the translation loop's per-pass stage timings in real time, so a slow stage (capture, OCR, translate, fused) can be identified at a glance, plus a read trace of what OCR saw and why each Text Block did or didn't translate. Diagnostic only — it never changes loop behavior.
 _Avoid_: perf panel, profiler, timing view, live log

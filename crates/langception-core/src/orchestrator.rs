@@ -58,6 +58,9 @@
 //! the translation work, and the pass total ride the same event stream as a
 //! [`LoopEvent::Timing`] — a few clock reads per pass, no behavior change —
 //! so the Timing Debug window can show which stage is slow in real time.
+//! The same event carries the pass's read trace (ticket 48): every Text
+//! Block the read produced with its words and the decision the loop made
+//! about it, built at the decision points themselves.
 
 use crate::glossary::Glossary;
 use crate::hash::{block_dhash, frame_checksum};
@@ -116,6 +119,76 @@ impl Stage {
 pub enum EventOrigin {
     Zone { id: String, name: String },
     OneShot,
+}
+
+/// What the loop decided about one Text Block a read pass produced (ticket
+/// 48), rendered by the Timing Debug window so "why didn't this
+/// translate?" is answerable on screen. Traces are built exactly where the
+/// decisions happen — [`Self::process_zone`], [`Self::fire_read`],
+/// [`Self::fire_matured`], [`Self::capture_once`] — so they cannot drift
+/// from the branch actually taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(tag = "disposition", rename_all = "snake_case")]
+pub enum ReadDisposition {
+    /// Shown: the Translate Engine answered this pass's own read.
+    TranslatedEngine,
+    /// Shown: a Glossary whole-block match pinned it (engine never called).
+    TranslatedGlossary,
+    /// Shown: the fused vision call answered read + translation together
+    /// (ticket 12) — a Glossary pin on the answer doesn't change that the
+    /// read itself was fused.
+    TranslatedFused,
+    /// Shown: a fast-path matured fire ([`Self::fire_matured`]) off the
+    /// read cached in the pending — no OCR ran this pass. Where the shown
+    /// Thai came from (engine / glossary) rides on the `Translated` event.
+    TranslatedCached,
+    /// Suppressed by the shared fire path's dedup: the trimmed text equals
+    /// the block's last SHOWN text, so nothing was re-requested or
+    /// re-emitted — the In-place Overlay already displays it (ticket 22).
+    Suppressed,
+    /// A change holding still inside the stability window (ticket 05), not
+    /// yet matured. Carries how long the pixels have held against the
+    /// configured window, so the UI can show the time remaining.
+    Waiting { elapsed_ms: u64, total_ms: u64 },
+    /// Pixels identical to what the currently shown translation was
+    /// rendered for (`fired_hash` match) — including a pending change that
+    /// reverted to the shown pixels, which this cancels.
+    Unchanged,
+    /// An Excluded Block covers it (ticket 04) — never translated, never
+    /// shown, and its tracking state is dropped.
+    Excluded,
+    /// The read text trimmed to nothing — whitespace noise, dropped
+    /// before tracking.
+    Empty,
+    /// Missing from this pass's read; `misses` counts consecutive passes
+    /// missing it, toward [`REMOVAL_MISSES`] (two in a row remove it).
+    Gone { misses: u32 },
+}
+
+/// One read's trace entry (ticket 48): the words the read stage saw plus
+/// the decision made about them. The words reuse the trimmed text the pass
+/// already allocated — where the loop needs its own copy still (a pending's
+/// cached read, the dedup record), the trace clones it; everywhere else it
+/// moves in. Built at the decision points, so it rides every `Timing`
+/// event whether or not the debug window is open.
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockTrace {
+    /// The block's trimmed read text — the words OCR read. Empty for an
+    /// [`ReadDisposition::Empty`] read.
+    pub text: String,
+    pub disposition: ReadDisposition,
+}
+
+impl From<Via> for ReadDisposition {
+    /// The classic fire path's route → its trace disposition (ticket 48).
+    /// Shared by `fire_read` and the one-shot pass so the engine/glossary
+    /// split has exactly one spelling.
+    fn from(via: Via) -> Self {
+        match via {
+            Via::Engine => Self::TranslatedEngine,
+            Via::Glossary => Self::TranslatedGlossary,
+        }
+    }
 }
 
 /// Everything the display layer needs, streamed per pipeline tick.
@@ -183,6 +256,18 @@ pub enum LoopEvent {
         /// Translations actually shown during this pass (suppressed
         /// deduped reads and failures do not count).
         blocks_translated: u32,
+        /// True when this pass skipped the read entirely — the fast path,
+        /// whose capture checksum matched the last OCR'd frame (ticket 48):
+        /// the row is marked "OCR skipped — frame unchanged" and `reads`
+        /// carries only its matured fast-path fires. A failed capture or
+        /// read is not a skip — the pass never got that far.
+        read_skipped: bool,
+        /// The per-block read trace (ticket 48): every Text Block this
+        /// pass's read produced, the words it read, and the decision the
+        /// loop made about each. Fast-path passes list only their matured
+        /// fires; failed reads and failed translations leave no entry —
+        /// the `Error` event naming the failure rides the same stream.
+        reads: Vec<BlockTrace>,
         at_ms: u64,
     },
 }
@@ -304,6 +389,22 @@ struct BlockState {
     misses: u32,
 }
 
+impl BlockState {
+    /// The last words this block was seen with — the words its gone-row
+    /// trace entry carries (ticket 48): a pending change's cached read if
+    /// one is holding, else the text of the translation last shown.
+    /// Copies, not moves — the loop keeps its state. Empty when the block
+    /// was never read to text (its only fire failed before anything was
+    /// shown).
+    fn last_known_text(&self) -> String {
+        self.pending
+            .as_ref()
+            .map(|p| p.text.clone())
+            .or_else(|| self.last_fired_text.clone())
+            .unwrap_or_default()
+    }
+}
+
 /// A change holding in the stability window.
 #[derive(Debug)]
 struct PendingChange {
@@ -345,12 +446,13 @@ impl ZoneState {
     }
 }
 
-/// Stage durations accumulated across one pipeline pass (ticket 47), then
-/// shipped as [`LoopEvent::Timing`]. The read stage fills `ocr_ms` or
-/// `fused_ms`; every Translate Engine call this pass made — matured
-/// fast-path fires included — adds to `translate_ms` and counts a shown
-/// block. Purely observational: nothing in the loop reads this struct, it
-/// only rides along.
+/// Stage durations and the read trace accumulated across one pipeline pass
+/// (tickets 47/48), then shipped as [`LoopEvent::Timing`]. The read stage
+/// fills `ocr_ms` or `fused_ms`; every Translate Engine call this pass
+/// made — matured fast-path fires included — adds to `translate_ms` and
+/// counts a shown block; every read decision pushes a [`BlockTrace`].
+/// Purely observational: nothing in the loop reads this struct, it only
+/// rides along.
 #[derive(Debug, Default)]
 struct PassTimings {
     capture_ms: u64,
@@ -358,6 +460,17 @@ struct PassTimings {
     fused_ms: Option<u64>,
     translate_ms: u64,
     blocks_translated: u32,
+    /// The fast path sets this instead of reading (ticket 48).
+    read_skipped: bool,
+    reads: Vec<BlockTrace>,
+}
+
+impl PassTimings {
+    /// Records one read's trace entry (ticket 48) — the single line every
+    /// decision point pushes, so the entry shape lives in one place.
+    fn trace(&mut self, text: String, disposition: ReadDisposition) {
+        self.reads.push(BlockTrace { text, disposition });
+    }
 }
 
 /// Evicts a Translation Context buffer's oldest pairs until it holds at
@@ -586,12 +699,14 @@ impl Orchestrator {
             for fused in fused_blocks {
                 let text = fused.block.text.trim().to_string();
                 if text.is_empty() {
+                    timings.trace(text, ReadDisposition::Empty);
                     continue;
                 }
                 if exclusions
                     .iter()
                     .any(|e| e.covers(&screen_block(&fused.block, region)))
                 {
+                    timings.trace(text, ReadDisposition::Excluded);
                     continue;
                 }
                 self.emit_fused_block(
@@ -603,6 +718,7 @@ impl Orchestrator {
                 )
                 .await;
                 timings.blocks_translated += 1;
+                timings.trace(text, ReadDisposition::TranslatedFused);
             }
             self.emit_timing(origin, timings, started, false);
             return;
@@ -627,13 +743,15 @@ impl Orchestrator {
         for block in merge_lines(blocks, self.config.source_language) {
             let text = block.text.trim().to_string();
             if text.is_empty() {
+                timings.trace(text, ReadDisposition::Empty);
                 continue;
             }
             let screen_block = screen_block(&block, region);
             if exclusions.iter().any(|e| e.covers(&screen_block)) {
+                timings.trace(text, ReadDisposition::Excluded);
                 continue;
             }
-            if self
+            if let Some((_, via)) = self
                 .translate_and_emit(
                     region,
                     &block,
@@ -646,9 +764,9 @@ impl Orchestrator {
                     &mut timings,
                 )
                 .await
-                .is_some()
             {
                 timings.blocks_translated += 1;
+                timings.trace(text, via.into());
             }
         }
         self.emit_timing(origin, timings, started, true);
@@ -690,6 +808,10 @@ impl Orchestrator {
 
         let frame = frame_checksum(&image);
         if state.last_frame == Some(frame) {
+            // Ticket 48: the fast path never reads — the timing row is
+            // marked "OCR skipped — frame unchanged" and carries only the
+            // matured fires' trace entries.
+            timings.read_skipped = true;
             self.fire_matured(
                 &mut state,
                 zone.region,
@@ -772,6 +894,7 @@ impl Orchestrator {
         for (block, fused_translation) in reads {
             let text = block.text.trim().to_string();
             if text.is_empty() {
+                timings.trace(text, ReadDisposition::Empty);
                 continue;
             }
             let key = block_key(&block);
@@ -785,6 +908,7 @@ impl Orchestrator {
                 // Dropping its tracking state right away means clearing the
                 // exclusion translates it again on the next read pass.
                 state.blocks.remove(&key);
+                timings.trace(text, ReadDisposition::Excluded);
                 continue;
             }
 
@@ -803,6 +927,7 @@ impl Orchestrator {
                 // dropped unread, and a pending change that reverted to the
                 // shown pixels is cancelled too.
                 entry.pending = None;
+                timings.trace(text, ReadDisposition::Unchanged);
             } else if entry.pending.as_ref().is_some_and(|p| p.hash == hash) {
                 // The same change as the previous pass: the block is holding
                 // still. Fire once the stability window has elapsed...
@@ -825,6 +950,9 @@ impl Orchestrator {
                             &label,
                             &image,
                             &recent,
+                            // This pass read the frame itself — the words
+                            // are fresh, not the pending's cached ones.
+                            false,
                             &mut timings,
                         )
                         .await
@@ -834,11 +962,20 @@ impl Orchestrator {
                 } else {
                     // ...otherwise keep waiting, refreshing the cached read
                     // to this frame — the newest one a fast-path fire could
-                    // use.
+                    // use. The trace's copy of the words is the pass's one
+                    // new allocation here: pending keeps its own text (the
+                    // cached read a future fast-path fire needs).
                     let pending = entry.pending.as_mut().expect("pending hash matched above");
                     pending.rect = block.clone();
-                    pending.text = text;
+                    pending.text = text.clone();
                     pending.translation = fused_translation;
+                    timings.trace(
+                        text,
+                        ReadDisposition::Waiting {
+                            elapsed_ms: now.saturating_sub(since),
+                            total_ms: stable_ms,
+                        },
+                    );
                 }
             } else {
                 // New or changed pixels: (re)start the stability window. A
@@ -864,12 +1001,24 @@ impl Orchestrator {
                             &label,
                             &image,
                             &recent,
+                            false,
                             &mut timings,
                         )
                         .await
                     {
                         record_recent(&mut state.recent, context_window, pair);
                     }
+                } else {
+                    // The window just started for these pixels — elapsed 0
+                    // of stable_ms. The local `text` moves into the trace;
+                    // the pending already holds its own clone.
+                    timings.trace(
+                        text,
+                        ReadDisposition::Waiting {
+                            elapsed_ms: 0,
+                            total_ms: stable_ms,
+                        },
+                    );
                 }
             }
         }
@@ -888,6 +1037,10 @@ impl Orchestrator {
                 continue;
             }
             entry.misses += 1;
+            timings.trace(
+                entry.last_known_text(),
+                ReadDisposition::Gone { misses: entry.misses },
+            );
             if entry.misses >= REMOVAL_MISSES {
                 gone.push(*key);
             }
@@ -953,6 +1106,9 @@ impl Orchestrator {
                     label,
                     image,
                     &recent,
+                    // The read is the pending's cached one — no OCR ran on
+                    // this fast-path tick (ticket 48's translated-cached).
+                    true,
                     timings,
                 )
                 .await
@@ -1079,7 +1235,13 @@ impl Orchestrator {
     /// zone's buffer alone. Pairs are flattened onto one line: the prompt
     /// section renders one `- source → translation` line per pair, and a
     /// multi-line answer would break that shape. Actual emissions count
-    /// into the pass's timings (ticket 47).
+    /// into the pass's timings (ticket 47). Every decision here pushes its
+    /// read-trace entry (ticket 48): a suppressed read names the text that
+    /// matched — today's most silent path — and a shown read names its
+    /// route (`cached` marks the fast-path matured fires, whose words are
+    /// the pending's cached read rather than this pass's OCR). A FAILED
+    /// translation pushes no entry — the `Error` event naming the failure
+    /// rides the same stream.
     #[allow(clippy::too_many_arguments)]
     async fn fire_read(
         &self,
@@ -1093,14 +1255,21 @@ impl Orchestrator {
         label: &str,
         image: &CapturedImage,
         recent: &[(String, String)],
+        cached: bool,
         timings: &mut PassTimings,
     ) -> Option<(String, String)> {
         if entry.last_fired_text.as_deref() == Some(text) {
-            return None; // suppressed: nothing shown, nothing recorded
+            // Suppressed: nothing shown, nothing recorded. The trace's
+            // words are a copy — `last_fired_text` keeps the block's own.
+            timings.trace(text.to_string(), ReadDisposition::Suppressed);
+            return None;
         }
         let style = self.sampled_style(image, rect);
         let shown = match fused_translation {
-            Some(thai) => Some(self.emit_fused_block(region, rect, thai, origin, style).await),
+            Some(thai) => Some((
+                self.emit_fused_block(region, rect, thai, origin, style).await,
+                ReadDisposition::TranslatedFused,
+            )),
             None => {
                 self.translate_and_emit(
                     region,
@@ -1113,12 +1282,21 @@ impl Orchestrator {
                     timings,
                 )
                 .await
+                .map(|(thai, via)| (thai, ReadDisposition::from(via)))
             }
         };
         entry.fired_hash = Some(hash);
-        let thai = shown?;
+        let (thai, disposition) = shown?;
         timings.blocks_translated += 1;
         entry.last_fired_text = Some(text.to_string());
+        timings.trace(
+            text.to_string(),
+            if cached {
+                ReadDisposition::TranslatedCached
+            } else {
+                disposition
+            },
+        );
         Some((one_line(text), one_line(&thai)))
     }
 
@@ -1153,14 +1331,15 @@ impl Orchestrator {
 
     /// Glossary short-circuit, engine translate, and the resulting event
     /// for one block read. `rect` is region-relative; the emitted block
-    /// carries screen coordinates. Returns the shown Thai — what
-    /// Translation Context (ticket 44) records — or `None` on engine
-    /// failure, so the caller records no shown text and the read is
-    /// retried when the pixels change again. A failed translation still
-    /// counts as handled (the caller records the change) so a dead engine
-    /// is not hammered every tick. The whole translation-production time
-    /// (Glossary lookup, engine call, scrub) accumulates into the pass's
-    /// translate stage (ticket 47).
+    /// carries screen coordinates. Returns the shown Thai with the route
+    /// that produced it (`Via`) — the pair Translation Context (ticket 44)
+    /// records, plus the trace's translated-engine/glossary split (ticket
+    /// 48) — or `None` on engine failure, so the caller records no shown
+    /// text and the read is retried when the pixels change again. A failed
+    /// translation still counts as handled (the caller records the change)
+    /// so a dead engine is not hammered every tick. The whole
+    /// translation-production time (Glossary lookup, engine call, scrub)
+    /// accumulates into the pass's translate stage (ticket 47).
     #[allow(clippy::too_many_arguments)]
     async fn translate_and_emit(
         &self,
@@ -1172,7 +1351,7 @@ impl Orchestrator {
         recent: &[(String, String)],
         style: Option<SampledStyle>,
         timings: &mut PassTimings,
-    ) -> Option<String> {
+    ) -> Option<(String, Via)> {
         let translate_started = self.clock.now_ms();
         let translated = match self.glossary.lookup(text) {
             Some(thai) => Ok((thai, Via::Glossary)),
@@ -1226,7 +1405,7 @@ impl Orchestrator {
         match translated {
             Ok((translation, via)) => {
                 self.emit_translated(region, rect, translation.clone(), via, origin, style);
-                Some(translation)
+                Some((translation, via))
             }
             Err(message) => {
                 self.emit(Stage::Translate, format!("{label}: {message}"));
@@ -1284,12 +1463,12 @@ impl Orchestrator {
             .ok();
     }
 
-    /// Ships one pass's [`PassTimings`] as a [`LoopEvent::Timing`] (ticket
-    /// 47). `total_ms` is measured pass start → pass end, so the stage
-    /// durations plus the pass's own hashing and bookkeeping sum to it
-    /// within rounding. `classic` decides the translate stage's presence:
-    /// on the fused path the stage never runs (the translation rides the
-    /// fused call's answer), so it reports `None` even though the
+    /// Ships one pass's [`PassTimings`] as a [`LoopEvent::Timing`]
+    /// (tickets 47/48). `total_ms` is measured pass start → pass end, so
+    /// the stage durations plus the pass's own hashing and bookkeeping sum
+    /// to it within rounding. `classic` decides the translate stage's
+    /// presence: on the fused path the stage never runs (the translation
+    /// rides the fused call's answer), so it reports `None` even though the
     /// accumulator stays at zero.
     fn emit_timing(
         &self,
@@ -1308,6 +1487,8 @@ impl Orchestrator {
                 fused_ms: timings.fused_ms,
                 total_ms: now.saturating_sub(started_ms),
                 blocks_translated: timings.blocks_translated,
+                read_skipped: timings.read_skipped,
+                reads: timings.reads,
                 at_ms: now,
             })
             .ok();

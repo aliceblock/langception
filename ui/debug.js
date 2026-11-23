@@ -1,8 +1,10 @@
-// Langception Debug Log window (ticket 47) — vanilla JS against the
+// Langception Debug Log window (tickets 47/48) — vanilla JS against the
 // Tauri global API. Purely observational: the page only listens to the
 // same "loop-event" stream the Results Window uses, rendering one row per
-// pipeline pass with per-stage durations plus the errors that ride the
-// stream. History starts when the window opens; no replay of the past.
+// pipeline pass with per-stage durations and the per-block read trace
+// (what OCR read, and why each block did or didn't translate) plus the
+// errors that ride the stream. History starts when the window opens; no
+// replay of the past.
 
 const { listen } = window.__TAURI__.event;
 
@@ -125,6 +127,14 @@ function rowSkeleton(atMs, origin) {
 
 function timingRow(event) {
   const li = rowSkeleton(event.at_ms, event.origin);
+  // A fast-path pass (ticket 48): capture ran, the read never did — its
+  // trace lists only the matured fires off the cached reads.
+  if (event.read_skipped) {
+    const skipped = document.createElement("span");
+    skipped.className = "no-read";
+    skipped.textContent = "OCR skipped — frame unchanged";
+    li.append(skipped);
+  }
   // capture always ran; the others only appear when they did.
   for (const name of STAGES) {
     const ms = event[`${name}_ms`];
@@ -137,9 +147,99 @@ function timingRow(event) {
     event.blocks_translated === 1 ? "" : "s"
   }`;
   li.append(blocks);
+  if (event.reads?.length) li.append(readsDetail(event.reads));
   // Last in the DOM, pushed to the row's right edge by the stylesheet.
   li.append(chip("total", event.total_ms));
   return li;
+}
+
+// ---- Read trace (ticket 48): what OCR read, and why each block did or
+// ---- didn't translate. Compact counts by default; clicking the pill
+// expands the per-block lines.
+
+// The compact grouping: every translated-* route reports as "translated".
+const COUNT_ORDER = [
+  "translated",
+  "suppressed",
+  "waiting",
+  "unchanged",
+  "excluded",
+  "empty",
+  "gone",
+];
+
+function countKey(disposition) {
+  return disposition.startsWith("translated_") ? "translated" : disposition;
+}
+
+function readsDetail(reads) {
+  const counts = new Map();
+  for (const read of reads) {
+    const key = countKey(read.disposition);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const parts = COUNT_ORDER.filter((k) => counts.has(k)).map(
+    (k) => `${counts.get(k)} ${k}`
+  );
+  const wrap = document.createElement("span");
+  wrap.className = "reads";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "reads-toggle";
+  toggle.textContent = `${reads.length} read${reads.length === 1 ? "" : "s"}: ${parts.join(" · ")}`;
+  const list = document.createElement("ul");
+  list.className = "read-lines";
+  list.hidden = true;
+  for (const read of reads) list.append(readLine(read));
+  toggle.addEventListener("click", () => {
+    list.hidden = !list.hidden;
+    toggle.classList.toggle("open");
+  });
+  wrap.append(toggle, list);
+  return wrap;
+}
+
+function readLine(read) {
+  const li = document.createElement("li");
+  const words = document.createElement("span");
+  words.className = "words";
+  words.textContent = read.text === "" ? "(nothing after trim)" : `“${read.text}”`;
+  const reason = document.createElement("span");
+  reason.className = `reason ${read.disposition}`;
+  reason.textContent = readReason(read);
+  li.append(words, reason);
+  return li;
+}
+
+// The disposition in plain words — the answer to "why didn't this
+// translate?", not the enum's spelling.
+function readReason(read) {
+  switch (read.disposition) {
+    case "translated_engine":
+      return "translated · engine";
+    case "translated_glossary":
+      return "translated · glossary";
+    case "translated_fused":
+      return "translated · fused read";
+    case "translated_cached":
+      return "translated · cached read (no OCR this pass)";
+    case "suppressed":
+      return "suppressed — identical text already shown";
+    case "waiting": {
+      const left = Math.max(0, read.total_ms - read.elapsed_ms);
+      return `waiting ${read.elapsed_ms}/${read.total_ms}ms — ${left}ms to go`;
+    }
+    case "unchanged":
+      return "unchanged — pixels match what is shown";
+    case "excluded":
+      return "excluded — marked not-to-be-translated";
+    case "empty":
+      return "empty — no text after trim";
+    case "gone":
+      return `gone from the read · miss ${read.misses}`;
+    default:
+      return read.disposition;
+  }
 }
 
 // One compact row per run of consecutive unchanged ticks; later ticks in
@@ -235,16 +335,13 @@ function handleTiming(event) {
   record("total", event.total_ms);
   renderSummary();
 
-  if (
-    event.blocks_translated === 0 &&
-    event.ocr_ms === null &&
-    (event.translate_ms === null || event.translate_ms === 0) &&
-    event.fused_ms === null
-  ) {
-    // A tick that only captured and checked (no read ran, no translation
-    // was produced — a failed read keeps its full row, the Error event
-    // beside it names the cause): collapse consecutive runs so an idle
-    // screen costs one compact row, not one row per pass.
+  if (event.read_skipped && event.blocks_translated === 0) {
+    // A tick that only captured and checked (the fast path: frame
+    // unchanged, no read ran, no translation was produced): collapse
+    // consecutive runs so an idle screen costs one compact row, not one
+    // row per pass. A pass that DIED before reading (failed capture) is
+    // not a skip — it keeps its full row, the Error event beside it
+    // naming the cause (ticket 48's explicit read_skipped flag).
     const row = unchangedRunRow(event);
     if (row.parentElement === null) {
       appendPinned(row);

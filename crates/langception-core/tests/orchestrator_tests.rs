@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use langception_core::glossary::Glossary;
 use langception_core::orchestrator::{
-    EventOrigin, LoopConfig, LoopEvent, Orchestrator, Stage, Via,
+    BlockTrace, EventOrigin, LoopConfig, LoopEvent, Orchestrator, ReadDisposition, Stage, Via,
 };
 use langception_core::ports::{
     CaptureError, CaptureSource, CapturedImage, Clock, ExcludedBlock, FusedBlock, FusedEngine,
@@ -3987,6 +3987,8 @@ async fn every_pass_emits_a_timing_event_with_pinned_stage_durations() {
             fused_ms,
             total_ms,
             blocks_translated,
+            read_skipped,
+            reads,
             ..
         } => {
             assert_eq!(
@@ -4001,6 +4003,11 @@ async fn every_pass_emits_a_timing_event_with_pinned_stage_durations() {
             assert_eq!(translate_ms, Some(30));
             assert_eq!(fused_ms, None);
             assert_eq!(blocks_translated, 1);
+            assert!(!read_skipped, "this pass read the frame");
+            // Ticket 48: the pass's read trace rides the timing event.
+            assert_eq!(reads.len(), 1);
+            assert_eq!(reads[0].text, "Hello");
+            assert_eq!(reads[0].disposition, ReadDisposition::TranslatedEngine);
             // capture + ocr + translate sum to the total, within rounding.
             assert_eq!(capture_ms + ocr_ms.unwrap() + translate_ms.unwrap(), total_ms);
             assert_eq!(total_ms, 75);
@@ -4239,4 +4246,361 @@ async fn translate_time_accumulates_across_a_pass_blocks() {
         }
         other => panic!("expected Timing, got {other:?}"),
     }
+}
+
+// ---- Per-pass read trace (ticket 48) ----
+//
+// Every block a read pass produced appears in that pass's Timing event
+// with its words and the disposition the loop decided. Each disposition
+// is pinned on the exact scenario whose silent suppression the trace
+// exists to expose (the ticket-05/22 paths), so a regression in a
+// suppression rule breaks its pinned entry here.
+
+/// The next Timing event's read trace, as `(read_skipped, reads)`.
+async fn next_reads(events: &mut mpsc::UnboundedReceiver<LoopEvent>) -> (bool, Vec<BlockTrace>) {
+    match next_timing(events).await {
+        LoopEvent::Timing {
+            read_skipped,
+            reads,
+            ..
+        } => (read_skipped, reads),
+        other => panic!("expected Timing, got {other:?}"),
+    }
+}
+
+/// Pins one trace entry: this exact text was read and exactly this
+/// disposition decided for it. Exact equality (not field-spot checks) so
+/// the Waiting/Gone payloads are pinned too.
+fn expect_read(reads: &[BlockTrace], text: &str, disposition: ReadDisposition) {
+    assert!(
+        reads
+            .iter()
+            .any(|r| r.text == text && r.disposition == disposition),
+        "expected a {disposition:?} trace for {text:?}, got {reads:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_read_pass_traces_every_block_with_its_disposition() {
+    let (mut h, mut orch) = harness().await;
+    let hello = block(100, 200, "Hello"); // fires (zero stability window)
+    let blocked = block(100, 400, "Skipped"); // under the exclusion below
+    // Exclusions are screen coordinates; the zone sits at (100, 100).
+    h.excluded_tx
+        .send(vec![exclusion("x1", 200, 500, 100, 20)])
+        .unwrap();
+
+    feed_tick(&h, 1, vec![hello.clone(), blocked.clone()]).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated Hello
+    let (read_skipped, reads) = next_reads(&mut h.events).await;
+    assert!(!read_skipped, "this pass read the frame");
+    assert_eq!(reads.len(), 2, "every block the read produced: {reads:?}");
+    expect_read(&reads, "Hello", ReadDisposition::TranslatedEngine);
+    expect_read(&reads, "Skipped", ReadDisposition::Excluded);
+
+    // Pass 2: the frame changes only at a corner (OCR must re-run), but
+    // Hello's pixels are identical to what its shown translation was
+    // rendered for → the trace names it "unchanged", the invisible skip
+    // that used to be the only unexplained zero.
+    let frame = frame_animated(&[hello.clone()], 1, text_mark("Hello"));
+    feed(&h, 1, &frame, Some(vec![hello.clone()])).await;
+    orch.tick().await;
+    let (_, reads) = next_reads(&mut h.events).await;
+    assert_eq!(reads.len(), 1);
+    expect_read(&reads, "Hello", ReadDisposition::Unchanged);
+}
+
+#[tokio::test]
+async fn a_suppressed_read_traces_its_text_and_reason() {
+    let (mut h, mut orch) = harness().await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Tick 1: "Hello" appears → translated once, traced as engine.
+    feed(&h, 1, &frame_animated(&blocks, 0, 7), Some(blocks.clone())).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated
+    let (_, reads) = next_reads(&mut h.events).await;
+    expect_read(&reads, "Hello", ReadDisposition::TranslatedEngine);
+
+    // Tick 2: the pixels jitter but the read says "Hello" again — the
+    // fire-path dedup suppresses it (no engine call, no event). The trace
+    // is the only place this read shows up.
+    let frame = frame_animated(&blocks, 8, 8);
+    feed(&h, 1, &frame, Some(blocks.clone())).await;
+    orch.tick().await;
+    assert_eq!(h.translate.calls(), ["Hello"], "no re-request");
+    let (_, reads) = next_reads(&mut h.events).await;
+    assert_eq!(reads.len(), 1);
+    expect_read(&reads, "Hello", ReadDisposition::Suppressed);
+}
+
+#[tokio::test]
+async fn waiting_traces_the_stability_window_then_flips_to_translated() {
+    let (mut h, mut orch) = harness_with_stability(1000).await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Pass 1 (t=0): the change is detected; the window just started.
+    h.clock.set_now_ms(0);
+    let frame_a = frame_animated(&blocks, 0, 7);
+    feed(&h, 1, &frame_a, Some(blocks.clone())).await;
+    orch.tick().await;
+    let (_, reads) = next_reads(&mut h.events).await;
+    expect_read(
+        &reads,
+        "Hello",
+        ReadDisposition::Waiting {
+            elapsed_ms: 0,
+            total_ms: 1000,
+        },
+    );
+
+    // Pass 2 (t=600): the block still holds (corner change so OCR re-runs,
+    // the block's own pixels identical to the pending's). Not matured yet —
+    // the trace carries the elapsed/total the UI counts down with.
+    h.clock.set_now_ms(600);
+    let frame_b = frame_animated(&blocks, 1, 7);
+    feed(&h, 1, &frame_b, Some(blocks.clone())).await;
+    orch.tick().await;
+    let (_, reads) = next_reads(&mut h.events).await;
+    expect_read(
+        &reads,
+        "Hello",
+        ReadDisposition::Waiting {
+            elapsed_ms: 600,
+            total_ms: 1000,
+        },
+    );
+
+    // Pass 3 (t=1000): the window has elapsed → the fire happens on THIS
+    // read pass, so the trace's final entry is translated-engine.
+    h.clock.set_now_ms(1000);
+    let frame_c = frame_animated(&blocks, 2, 7);
+    feed(&h, 1, &frame_c, Some(blocks.clone())).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated
+    let (_, reads) = next_reads(&mut h.events).await;
+    expect_read(&reads, "Hello", ReadDisposition::TranslatedEngine);
+}
+
+#[tokio::test]
+async fn a_fast_path_pass_is_marked_and_lists_only_its_matured_fires() {
+    let (mut h, mut orch) = harness_with_stability(400).await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Pass 1 (t=0): change detected, window starts (OCR ran).
+    h.clock.set_now_ms(0);
+    let frame_a = frame_animated(&blocks, 0, 7);
+    feed(&h, 1, &frame_a, Some(blocks.clone())).await;
+    orch.tick().await;
+    let (read_skipped, reads) = next_reads(&mut h.events).await;
+    assert!(!read_skipped);
+    expect_read(
+        &reads,
+        "Hello",
+        ReadDisposition::Waiting {
+            elapsed_ms: 0,
+            total_ms: 400,
+        },
+    );
+
+    // Pass 2 (t=500): pixel-identical screen → the fast path. The row is
+    // marked "OCR skipped — frame unchanged" and its only trace entry is
+    // the matured fire off the cached read.
+    h.clock.set_now_ms(500);
+    feed(&h, 1, &frame_a, None).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated
+    let (read_skipped, reads) = next_reads(&mut h.events).await;
+    assert!(read_skipped, "the fast path never reads");
+    assert_eq!(reads.len(), 1, "only the matured fire's entry: {reads:?}");
+    expect_read(&reads, "Hello", ReadDisposition::TranslatedCached);
+}
+
+#[tokio::test]
+async fn gone_traces_missing_blocks_with_miss_counts() {
+    let (mut h, mut orch) = harness().await;
+    let blocks = vec![block(0, 0, "Hello")];
+
+    // Pass 1: "Hello" fires.
+    feed_tick(&h, 1, blocks.clone()).await;
+    orch.tick().await;
+    let _ = next_event(&mut h.events).await; // Translated
+    let _ = next_reads(&mut h.events).await;
+
+    // Pass 2: OCR returns nothing (Windows OCR's intermittent empty) —
+    // the trace says the block is gone from the read, first miss.
+    feed_tick(&h, 1, Vec::new()).await;
+    orch.tick().await;
+    let (_, reads) = next_reads(&mut h.events).await;
+    assert_eq!(reads.len(), 1);
+    expect_read(
+        &reads,
+        "Hello",
+        ReadDisposition::Gone { misses: 1 },
+    );
+
+    // Pass 3: empty again — second miss removes the block (the
+    // BlocksRemoved event rides the same pass, before its timing row).
+    // The frame changes at a corner so this pass runs OCR (a pixel-proof
+    // screen would take the fast path, whose removals are advance-only
+    // and trace-free — the fast-path test pins that side).
+    let frame = frame_animated(&[], 1, 9);
+    feed(&h, 1, &frame, Some(Vec::new())).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::BlocksRemoved { keys, .. } => assert_eq!(keys, ["0,0"]),
+        other => panic!("expected BlocksRemoved, got {other:?}"),
+    }
+    let (_, reads) = next_reads(&mut h.events).await;
+    expect_read(&reads, "Hello", ReadDisposition::Gone { misses: 2 });
+}
+
+#[tokio::test]
+async fn a_failed_translation_pushes_no_trace_entry() {
+    let (mut h, mut orch) = harness().await;
+
+    // The engine call fails: the Error event names the failure and the
+    // trace stays empty — a failed read is the Error row's story, not a
+    // translated/suppressed entry.
+    h.responses
+        .send(Err(TranslateError::new("HTTP 429 rate limited")))
+        .await
+        .unwrap();
+    feed_tick(&h, 1, vec![block(0, 0, "Hello")]).await;
+    orch.tick().await;
+    match next_event(&mut h.events).await {
+        LoopEvent::Error { stage, .. } => assert_eq!(stage, Stage::Translate),
+        other => panic!("expected Error, got {other:?}"),
+    }
+    let (_, reads) = next_reads(&mut h.events).await;
+    assert!(
+        reads.is_empty(),
+        "a failed translation leaves the trace to the Error event: {reads:?}"
+    );
+}
+
+#[tokio::test]
+async fn one_shot_traces_only_translated_and_empty_dispositions() {
+    // The classic one-shot: no tracking state exists, so the only possible
+    // trace entries are translated / excluded / empty. (Whitespace noise
+    // never reaches it — merge_lines drops it first — so the empty entry
+    // is pinned on the fused path below.)
+    let (mut h, orch) = harness().await;
+    let hello = block(0, 0, "Hello");
+    h.images.send(frame_for(&[hello.clone()])).await.unwrap();
+    h.ocr_results.send(Ok(vec![hello.clone()])).await.unwrap();
+
+    orch.capture_once(REGION).await;
+
+    let _ = next_event(&mut h.events).await; // Translated
+    let (read_skipped, reads) = next_reads(&mut h.events).await;
+    assert!(!read_skipped);
+    assert_eq!(reads.len(), 1);
+    expect_read(&reads, "Hello", ReadDisposition::TranslatedEngine);
+}
+
+#[tokio::test]
+async fn a_fused_one_shot_traces_translated_and_empty() {
+    // The fused one-shot reads + answers in one call: the trace names the
+    // fused route, and a fused block whose text trims to nothing traces as
+    // empty — unlike the classic path, the fused answer skips merge_lines,
+    // so whitespace noise actually reaches the empty branch.
+    let (mut h, orch) = harness_with_fused(Glossary::default(), Duration::ZERO, false).await;
+    h.fused_responses
+        .send(Ok(vec![
+            FusedBlock {
+                block: block(0, 0, "Hello"),
+                translation: "[TH] Hello".into(),
+            },
+            FusedBlock {
+                block: block(200, 0, "   "),
+                translation: "   ".into(),
+            },
+        ]))
+        .await
+        .unwrap();
+    h.images
+        .send(frame_for(&[block(0, 0, "Hello"), block(200, 0, "   ")]))
+        .await
+        .unwrap();
+
+    orch.capture_once(REGION).await;
+
+    let _ = next_event(&mut h.events).await; // Translated
+    let (_, reads) = next_reads(&mut h.events).await;
+    assert_eq!(reads.len(), 2);
+    expect_read(&reads, "Hello", ReadDisposition::TranslatedFused);
+    expect_read(&reads, "", ReadDisposition::Empty);
+}
+
+#[test]
+fn disposition_serde_spellings_match_the_ui_labels() {
+    // The debug window switches on these exact strings (debug.js
+    // readReason/countKey): the serde tag and the JS must not drift.
+    use serde_json::json;
+    for (disposition, value) in [
+        (
+            ReadDisposition::TranslatedEngine,
+            json!({"disposition": "translated_engine"}),
+        ),
+        (
+            ReadDisposition::TranslatedGlossary,
+            json!({"disposition": "translated_glossary"}),
+        ),
+        (
+            ReadDisposition::TranslatedFused,
+            json!({"disposition": "translated_fused"}),
+        ),
+        (
+            ReadDisposition::TranslatedCached,
+            json!({"disposition": "translated_cached"}),
+        ),
+        (
+            ReadDisposition::Suppressed,
+            json!({"disposition": "suppressed"}),
+        ),
+        (
+            ReadDisposition::Waiting {
+                elapsed_ms: 40,
+                total_ms: 1000,
+            },
+            json!({"disposition": "waiting", "elapsed_ms": 40, "total_ms": 1000}),
+        ),
+        (
+            ReadDisposition::Unchanged,
+            json!({"disposition": "unchanged"}),
+        ),
+        (
+            ReadDisposition::Excluded,
+            json!({"disposition": "excluded"}),
+        ),
+        (ReadDisposition::Empty, json!({"disposition": "empty"})),
+        (
+            ReadDisposition::Gone { misses: 1 },
+            json!({"disposition": "gone", "misses": 1}),
+        ),
+    ] {
+        assert_eq!(serde_json::to_value(disposition).unwrap(), value);
+    }
+}
+
+#[tokio::test]
+async fn a_glossary_fire_traces_as_translated_glossary() {
+    // A Glossary whole-block match pins the shown Thai and the engine is
+    // never called — the trace names the route, not the engine.
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("VERTIN".to_string(), "เวอร์ติน".to_string());
+    let (mut h, mut orch) = harness_with(glossary, Duration::ZERO, false).await;
+
+    feed_tick(&h, 1, vec![block(0, 0, "  vertin  ")]).await;
+    orch.tick().await;
+
+    assert!(h.translate.calls().is_empty(), "engine must stay idle");
+    let _ = next_event(&mut h.events).await; // Translated
+    let (_, reads) = next_reads(&mut h.events).await;
+    // The words are the trimmed read, the route is the glossary's.
+    expect_read(&reads, "vertin", ReadDisposition::TranslatedGlossary);
 }

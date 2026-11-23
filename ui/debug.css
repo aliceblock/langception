@@ -139,6 +139,83 @@ body {
   font-weight: 600;
 }
 
+/* Read trace (ticket 48): the fast-path marker, the compact counts pill
+   (click to expand), and the per-block lines it reveals. */
+#rows .no-read {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+#rows .reads {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+#rows .reads-toggle {
+  font: inherit;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#rows .reads-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent-deep);
+}
+
+#rows .reads-toggle.open {
+  color: var(--text);
+}
+
+#rows .read-lines {
+  margin: 2px 0 0;
+  padding: 4px 8px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+}
+
+#rows .read-lines li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+#rows .read-lines .words {
+  color: var(--text);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+#rows .read-lines .reason {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Shown translations stand out; gone-from-read is the alarming one. */
+#rows .read-lines .reason[class*="translated_"] {
+  color: var(--accent);
+}
+
+#rows .read-lines .reason.gone {
+  color: var(--err);
+}
+
 /* Errors render alongside timings, same stream. */
 #rows li.error {
   border-left-color: var(--err);
