@@ -668,11 +668,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // The pin flips the same results_on_top flag the General tab saves.
+  // The pin is the single on-top control (the Settings checkboxes are
+  // gone): it moves BOTH windows' flags together.
   pinBtn.addEventListener("click", async () => {
     pinBtn.disabled = true;
     try {
-      await invoke("set_results_on_top", { on: !onTop });
+      await invoke("set_windows_on_top", { on: !onTop });
       renderStatus(await invoke("get_status"));
     } catch (e) {
       showError("pin", String(e));

@@ -758,10 +758,14 @@ const generalStability = document.getElementById("general-stability");
 const generalContext = document.getElementById("general-context");
 const generalGenderless = document.getElementById("general-genderless");
 const generalAutostart = document.getElementById("general-autostart");
-// The window on-top toggles (ticket 34): saved with General, applied to
-// the live windows immediately.
-const generalResultsOnTop = document.getElementById("general-results-on-top");
-const generalSettingsOnTop = document.getElementById("general-settings-on-top");
+// The window on-top state (ticket 34) is NOT editable here anymore
+// (ticket 61 reopened, the reporter's ask): the Results window's pin
+// button is the single control, and it moves both flags together. The
+// saved values are echoed back untouched on a General save — the DTO
+// fields are required, and echoing keeps a tab save from ever clobbering
+// what the pin set.
+let savedResultsOnTop = false;
+let savedSettingsOnTop = false;
 // Capture Visibility (ticket 46): saved with General, applied to the live
 // windows immediately (the loop's masking reads it per capture — no
 // restart).
@@ -779,8 +783,8 @@ function loadGeneral(status) {
   generalContext.value = status.contextTranslations;
   generalGenderless.checked = Boolean(status.genderless);
   generalAutostart.checked = Boolean(status.startWithWindows);
-  generalResultsOnTop.checked = Boolean(status.resultsOnTop);
-  generalSettingsOnTop.checked = Boolean(status.settingsOnTop);
+  savedResultsOnTop = Boolean(status.resultsOnTop);
+  savedSettingsOnTop = Boolean(status.settingsOnTop);
   generalCaptureVisible.checked = Boolean(status.captureVisible);
 }
 
@@ -803,8 +807,8 @@ async function saveGeneral() {
         contextTranslations: context,
         genderless: generalGenderless.checked,
         startWithWindows: generalAutostart.checked,
-        resultsOnTop: generalResultsOnTop.checked,
-        settingsOnTop: generalSettingsOnTop.checked,
+        resultsOnTop: savedResultsOnTop,
+        settingsOnTop: savedSettingsOnTop,
         captureVisible: generalCaptureVisible.checked,
       },
     });
@@ -1862,8 +1866,6 @@ const TRACKED_GENERAL = [
   generalContext,
   generalGenderless,
   generalAutostart,
-  generalResultsOnTop,
-  generalSettingsOnTop,
   generalCaptureVisible,
 ];
 const TRACKED_ENGINES = [

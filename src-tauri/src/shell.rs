@@ -505,7 +505,7 @@ pub fn run() {
             get_ui_language,
             toggle_pause_translation,
             set_source_language,
-            set_results_on_top,
+            set_windows_on_top,
             toggle_adjust_mode,
             set_capture_mode,
             rename_zone,
@@ -3377,15 +3377,18 @@ async fn set_source_language(app: AppHandle, language: String) -> Result<(), Str
     .await
 }
 
-/// The Results window's titlebar pin button (ticket 61, the redesign's):
-/// flips the same `results_on_top` config flag the General tab's checkbox
-/// saves, then applies it to the live window — so the checkbox, the tray,
-/// and the pin can never disagree about the state.
+/// The Results window's titlebar pin button (ticket 61, the redesign's;
+/// ticket 61 reopened made it the SINGLE control): flips the window
+/// on-top state for Langception as a whole — both `results_on_top` and
+/// `settings_on_top` move together, because the Settings tab no longer
+/// carries the checkboxes. Applies to the live windows immediately, so
+/// nothing else can drift out of sync with the pin.
 #[tauri::command]
-async fn set_results_on_top(app: AppHandle, on: bool) -> Result<(), String> {
+async fn set_windows_on_top(app: AppHandle, on: bool) -> Result<(), String> {
     run_off_main(app, move |app| {
         with_config_mut(app, |config| {
             config.windows.results_on_top = on;
+            config.windows.settings_on_top = on;
             Ok(())
         })?;
         apply_always_on_top_from_config(app);

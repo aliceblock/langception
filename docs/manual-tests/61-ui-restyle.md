@@ -210,3 +210,21 @@ The dead-origin diagnosis above remains valid for the stale-dev-build
 case only: a WebView2 "can't reach this page / 127.0.0.1 refused to
 connect" sheet means a `cargo tauri dev` build running without its
 server, not this bug.
+
+### Addendum 3 (2026-11-25, third feedback round)
+
+- **(?) tooltips**: every tooltip-carrying label/heading shows the
+  mock's small "(?)" after its text — UI Language, Translation Context,
+  OCR engine, Translation engine, Prompts (advanced), Genderless,
+  Screen-reading prompt, Windows OCR Language Packs, Glossary,
+  Profiles, Profile card, Font, Auto colors, Background cover source,
+  Text alignment, Placement, Hotkeys, Updates, Check on launch.
+  Hovering it shows the moved detail (verify in English and Thai);
+  inputs/selects keep their titles without a marker.
+- **One pin for both windows**: the General tab no longer carries "Keep
+  Results window on top" / "Keep Settings window on top" — the Results
+  titlebar's pin is the single control. Pinning raises BOTH windows
+  above other apps (check the Settings window follows), unpinning drops
+  both, and the state survives restart (the same two config flags,
+  written together by `set_windows_on_top`). A General save (e.g.
+  changing Cadence) must never alter the pin state.

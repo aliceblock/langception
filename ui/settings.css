@@ -119,6 +119,23 @@ h3 {
 
 .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
+/* The mock's (?) affordance (ticket 61 reopened, second round): every
+   LABEL or heading that carries a tooltip shows the small "(?)"
+   marker after its text — the detail lives there, cursor: help tells
+   you it's hoverable. Inputs/selects carry titles too but never show
+   the marker; only label spans, headings, prompt labels, and the
+   inline toggle do. */
+.form-row > span[data-i18n-title]::after,
+.form-row[data-i18n-title] > span:first-child::after,
+h2[data-i18n-title]::after,
+h3[data-i18n-title]::after,
+.prompt-label[data-i18n-title]::after,
+.inline-toggle[data-i18n-title]::after {
+  content: " (?)";
+  color: var(--muted);
+  cursor: help;
+}
+
 .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
 .mono { font-family: Consolas, monospace; font-size: 11px; }
