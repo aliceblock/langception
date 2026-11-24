@@ -9,7 +9,7 @@ body {
   height: 100vh;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.5 "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
+  font: 16px/1.5 "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
 }
 
 /* The top bar: the rolling summary chips plus the Export… button

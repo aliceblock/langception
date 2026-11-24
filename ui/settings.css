@@ -41,10 +41,10 @@ header {
    h1 titlebar 15px/600 · h2 page title 15px/600 · h3 section heading
    11px/600 uppercase muted · labels+values 12.5px · hints 11.5px muted. */
 
-h1 { font-size: 15px; font-weight: 600; }
-h2 { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+h1 { font-size: 18px; font-weight: 600; }
+h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
 h3 {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -53,7 +53,7 @@ h3 {
 }
 
 .chip {
-  font-size: 11px;
+  font-size: 13px;
   padding: 3px 9px;
   border-radius: 999px;
   font-weight: 600;
@@ -73,7 +73,7 @@ h3 {
 
 .btn {
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: 15px;
   border-radius: var(--radius-control);
   border: 1px solid var(--border);
   background: var(--panel-2);
@@ -86,13 +86,13 @@ h3 {
 .btn.primary:disabled { opacity: 0.5; cursor: default; }
 .btn:disabled:not(.primary) { opacity: 0.45; cursor: default; }
 .btn:disabled:not(.primary):hover { border-color: var(--border); color: var(--text); }
-.btn.small { padding: 4px 10px; font-size: 11.5px; }
+.btn.small { padding: 4px 10px; font-size: 14px; }
 
-.hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.hint { font-size: 14px; color: var(--muted); line-height: 1.5; }
 
 .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
-.mono { font-family: Consolas, monospace; font-size: 11.5px; }
+.mono { font-family: Consolas, monospace; font-size: 14px; }
 
 .hidden { display: none !important; }
 
@@ -126,8 +126,8 @@ h3 {
 /* One content width, centered when the window grows past it (same 680px
    cap as the tab pages). */
 .wizard > * { max-width: 680px; margin-left: auto; margin-right: auto; }
-.wizard h2 { font-size: 16px; margin-bottom: 8px; }
-.wizard-lede { font-size: 12.5px; color: var(--muted); line-height: 1.55; max-width: 640px; }
+.wizard h2 { font-size: 19px; margin-bottom: 8px; }
+.wizard-lede { font-size: 16px; color: var(--muted); line-height: 1.55; max-width: 640px; }
 
 .wizard-step {
   margin-top: 14px;
@@ -152,13 +152,13 @@ h3 {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 12.5px;
+  font-size: 16px;
 }
 .pack-row .pack-name { min-width: 90px; font-weight: 600; }
-.pack-row .pack-tag { font-family: Consolas, monospace; font-size: 11px; color: var(--muted); }
-.pack-row .pack-instructions { font-size: 11.5px; color: var(--muted); }
+.pack-row .pack-tag { font-family: Consolas, monospace; font-size: 13px; color: var(--muted); }
+.pack-row .pack-instructions { font-size: 14px; color: var(--muted); }
 .pill {
-  font-size: 11px;
+  font-size: 13px;
   padding: 3px 9px;
   border-radius: 999px;
   font-weight: 600;
@@ -177,7 +177,7 @@ h3 {
   margin-top: 12px;
 }
 .engine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.engine-title strong { font-size: 12.5px; }
+.engine-title strong { font-size: 16px; }
 
 /* Collapsible engine cards (ticket 54): the Engines tab's six cards carry
    data-engine + an .engine-body wrapper — only the SELECTED Translation
@@ -190,7 +190,7 @@ h3 {
   content: "▾";
   margin-left: auto;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 .engine-card[data-engine].collapsed > .engine-title::after { transform: rotate(-90deg); }
 .engine-card[data-engine].collapsed > .engine-title { margin-bottom: 0; }
@@ -212,7 +212,7 @@ h3 {
 }
 .tab {
   padding: 7px 13px;
-  font-size: 12.5px;
+  font-size: 15px;
   color: var(--muted);
   background: transparent;
   border: none;
@@ -242,7 +242,7 @@ h3 {
   column-gap: 12px;
   row-gap: 3px;
 }
-.form-row > span:first-child { font-size: 12.5px; color: var(--text); }
+.form-row > span:first-child { font-size: 16px; color: var(--text); }
 .form-row > .hint { grid-column: 2; }
 
 /* ---- Unified controls (ticket 41): one surface, one height, one focus ---- */
@@ -262,7 +262,7 @@ h3 {
   border-radius: var(--radius-control);
   color: var(--text);
   padding: 6px 9px;
-  font-size: 12.5px;
+  font-size: 16px;
   font-family: inherit;
 }
 .form-row input[type="text"],
@@ -344,7 +344,7 @@ input[type="color"] {
 }
 
 #style-preview-note {
-  font-size: 11px;
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.65);
 }
 
@@ -395,7 +395,7 @@ input[type="color"] {
   justify-content: space-between;
   gap: 8px;
 }
-.prompt-label { font-size: 12.5px; color: var(--text); }
+.prompt-label { font-size: 16px; color: var(--text); }
 .prompt-field textarea {
   line-height: 1.45;
   width: 100%;
@@ -426,7 +426,7 @@ input[type="color"] {
   border-radius: 6px;
   color: var(--text);
   padding: 4px 6px;
-  font-size: 12.5px;
+  font-size: 16px;
   min-width: 0;
 }
 .glossary-row input:hover { border-color: var(--border); }
@@ -440,7 +440,7 @@ input[type="color"] {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 16px;
   padding: 2px 6px;
   border-radius: 6px;
   flex: none;
@@ -456,7 +456,7 @@ input[type="color"] {
   padding: 16px 12px;
   border: 1px dashed var(--border);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 15px;
   color: var(--muted);
   text-align: center;
   line-height: 1.5;
@@ -468,7 +468,7 @@ input[type="color"] {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
   gap: 8px 12px;
-  font-size: 12.5px;
+  font-size: 16px;
   margin-bottom: 2px;
 }
 .about-grid > span:first-child { color: var(--muted); }
@@ -483,7 +483,7 @@ input[type="color"] {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 16px;
   color: var(--text);
   cursor: pointer;
 }
@@ -510,7 +510,7 @@ input[type="color"] {
 }
 .save-footer .btn.primary {
   padding: 8px 24px;
-  font-size: 12.5px;
+  font-size: 16px;
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(255, 201, 31, 0.25);
 }
@@ -527,7 +527,7 @@ input[type="color"] {
   color: var(--text);
   padding: 8px 14px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 15px;
   max-width: 80%;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   z-index: 2;

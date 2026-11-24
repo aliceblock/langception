@@ -52,7 +52,7 @@ html, body {
   transform: translateX(-50%);
   background: rgba(13, 14, 18, 0.92);
   color: #f2f3f7;
-  font: 13px "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
+  font: 16px "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
   padding: 8px 18px;
   border-radius: 999px;
   border: 1px solid rgba(255, 201, 31, 0.55);

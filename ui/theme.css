@@ -26,6 +26,16 @@
   font-style: normal;
 }
 
+/* Form controls don't inherit the page font in Chromium — button, select,
+   input, and textarea keep the UA default font unless told otherwise, so
+   without this every button (Settings tabs, .btn, the zone-row buttons,
+   the titlebar glyphs) rendered Thai in the system font instead of the
+   bundled Noto Sans Thai. Element-level: class rules that set their own
+   family (none do on controls) would still win. */
+button, input, select, textarea {
+  font-family: inherit;
+}
+
 :root {
   /* Black/yellow brand: near-black surfaces, yellow accent. --accent-ink is
      the text color ON yellow (11:1 contrast); --accent-deep is the dark end
