@@ -1,7 +1,8 @@
 //! The Tauri shell: tray-first control, global hotkeys (rebindable live from
 //! Settings → Hotkeys, or via config), the Capture Zone picker overlay
-//! (Alt+Z / Alt+Q), Adjust Mode (Alt+A: zone drag/resize + block exclusion,
-//! ticket 04), full-screen mode with monitor selection, the per-monitor
+//! (Alt+Shift+Z / Alt+Shift+Q), Adjust Mode (Alt+Shift+A: zone drag/resize
+//! plus block exclusion, ticket 04), full-screen mode with monitor
+//! selection, the per-monitor
 //! In-place Overlay (ticket 03), the Results Window event bridge, the
 //! Debug Log window (ticket 47), the config file lifecycle,
 //! single-instance behavior, and the cloud-engine privacy badge (ticket
@@ -328,7 +329,7 @@ pub(crate) struct AppState {
     pub(crate) config_path: PathBuf,
     pub(crate) running: Mutex<Option<RunningLoop>>,
     paused: Mutex<bool>,
-    /// Adjust Mode (Alt+A): click-through off, zones draggable/resizable,
+    /// Adjust Mode (Alt+Shift+A): click-through off, zones draggable/resizable,
     /// full-screen blocks clickable for exclusion.
     adjust_mode: Mutex<bool>,
     /// The shell pushes the active zone list here; a running loop picks it
@@ -2060,7 +2061,7 @@ pub(crate) fn push_warning(state: &AppState, message: String) {
 /// everything looks alive and nothing translates. Fixed text so the push
 /// dedup keeps one copy and [`apply_watching_nothing`] can clear it again
 /// once a real target exists.
-const WATCHING_NOTHING: &str = "Translation is running, but nothing is being watched — draw a Capture Zone (Alt+Z), turn on Full-Screen Mode, or focus an app that has a Profile.";
+const WATCHING_NOTHING: &str = "Translation is running, but nothing is being watched — draw a Capture Zone (Alt+Shift+Z), turn on Full-Screen Mode, or focus an app that has a Profile.";
 
 /// Adds or clears [`WATCHING_NOTHING`] to match the loop's target. Called
 /// wherever the target is (re)computed while the loop runs; stopping the
@@ -2086,7 +2087,7 @@ fn toggle_translation(app: &AppHandle) -> Result<(), String> {
     }
 }
 
-/// Alt+P / tray: hold the loop still without resetting per-block tracking.
+/// Alt+Shift+P / tray: hold the loop still without resetting per-block tracking.
 fn toggle_pause(app: &AppHandle) {
     let state = app.state::<AppState>();
     if state.running.lock().unwrap_or_else(|p| p.into_inner()).is_none() {
@@ -3293,7 +3294,7 @@ fn set_text_style(app: AppHandle, style: TextStyleDto) -> Result<(), String> {
 
 // ---- Adjust Mode, capture target, Excluded Blocks (ticket 04) ----
 
-/// Alt+A / tray / Results Window button.
+/// Alt+Shift+A / tray / Results Window button.
 #[tauri::command]
 async fn toggle_adjust_mode(app: AppHandle) {
     // set_adjust_mode creates/moves/hides overlay windows — off the main

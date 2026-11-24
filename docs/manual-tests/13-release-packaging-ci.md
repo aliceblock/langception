@@ -81,6 +81,14 @@ Windows 10** VM without WebView2 (worst case) and a **Windows 11** machine
       engine.
 - [ ] LM Studio guide: following it verbatim (start server, Check,
       pick model, set engine) produces working local translation.
+- [ ] Hotkeys: on a clean machine (fresh config), all five defaults from
+      the README's table — Alt+Shift+T / Z / P / A / Q (ticket 57) —
+      register at loop start and fire their actions; a chord taken by
+      another app warns in the Results Window instead of silently dying.
+      Alt+Shift alone is Windows' classic input-language swap, but the
+      three-key Alt+Shift+{Key} chords are distinct and never trigger it.
+      A config saved by an older build keeps its old bare Alt+{Key}
+      bindings — verify one upgrade path keeps them.
 - [ ] The anti-cheat caution section is present and honest.
 
 ## Notes

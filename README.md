@@ -13,7 +13,7 @@ names can be pinned so `Vertin` always renders as `เวอร์ติน`.
 ## Features
 
 - **Capture Targets** — draw Capture Zones over just the text you care about
-  (Alt+Z), translate an entire monitor (full-screen mode, with per-position
+  (Alt+Shift+Z), translate an entire monitor (full-screen mode, with per-position
   Excluded Blocks), or scope everything to one app with per-app **Profiles**
   that activate when their app comes to the foreground.
 - **Two display surfaces** — the In-place Overlay (translated text drawn over
@@ -22,7 +22,7 @@ names can be pinned so `Vertin` always renders as `เวอร์ติน`.
   banner).
 - **Auto-translate loop** — captures continuously, hashes each Text Block
   (dHash), and re-translates only what actually changed; a stability window
-  debounces animations. Pause with Alt+P.
+  debounces animations. Pause with Alt+Shift+P.
 - **Zero-config default engine** — works on first launch with no accounts and
   no keys (unofficial Google endpoint; see the engine table for the trade-off).
 - **Upgradeable engines** — Azure AI Translator, DeepL, Gemini API, any
@@ -37,10 +37,10 @@ names can be pinned so `Vertin` always renders as `เวอร์ติน`.
   pronouns (ครับ/ค่ะ, ผม/ฉัน) from output, via prompt instruction for LLM
   engines and a rule-based scrubber for the rest. Global toggle, per-Profile
   override.
-- **Adjust Mode** (Alt+A) — zones and overlays become draggable/resizable
+- **Adjust Mode** (Alt+Shift+A) — zones and overlays become draggable/resizable
   (click-through off) so you can fine-tune positions live; full-screen blocks
   can be marked as Excluded Blocks by clicking them.
-- **One-shot Capture** (Alt+Q) — translate an arbitrary screen area once,
+- **One-shot Capture** (Alt+Shift+Q) — translate an arbitrary screen area once,
   no zone setup.
 - **Text style** — font, size, color, outline, and a semi-transparent
   background pill, with auto-shrink so long Thai never covers the screen.
@@ -88,9 +88,9 @@ works with zero configuration). It:
 
 The wizard can be re-run any time from **Settings → About**. After that:
 
-1. Start translation (tray menu → *Start Translation*, or Alt+T).
-2. Draw a zone over some text (Alt+Z), or switch to full-screen mode in the
-   Results Window or tray menu.
+1. Start translation (tray menu → *Start Translation*, or Alt+Shift+T).
+2. Draw a zone over some text (Alt+Shift+Z), or switch to full-screen mode in
+   the Results Window or tray menu.
 3. Translations appear — in place over the original, and in the Results
    Window.
 
@@ -170,15 +170,22 @@ prompt.
 
 | Hotkey | Action |
 | --- | --- |
-| `Alt+T` | Start / stop translation |
-| `Alt+Z` | Draw a new Capture Zone (drag on the dimmed screen) |
-| `Alt+P` | Pause / resume Auto-translate |
-| `Alt+A` | Adjust Mode (drag/resize zones; click full-screen blocks to exclude them) |
-| `Alt+Q` | One-shot Capture (translate an area once) |
+| `Alt+Shift+T` | Start / stop translation |
+| `Alt+Shift+Z` | Draw a new Capture Zone (drag on the dimmed screen) |
+| `Alt+Shift+P` | Pause / resume Auto-translate |
+| `Alt+Shift+A` | Adjust Mode (drag/resize zones; click full-screen blocks to exclude them) |
+| `Alt+Shift+Q` | One-shot Capture (translate an area once) |
 
 All hotkeys are rebindable in **Settings → Hotkeys** and apply live. The
 tray menu exposes the same actions; left-clicking the tray icon focuses the
 Results Window.
+
+> The defaults use `Alt+Shift+{Key}` so they don't collide with games' and
+> apps' common `Alt+{Key}` menu shortcuts. If you remapped Windows'
+> input-language switch to Alt+Shift, note that the bare two-key chord
+> still swaps your layout — the three-key hotkeys above are distinct
+> chords and never trigger the swap. A config saved by an older version
+> keeps its old hotkeys; nothing is rewritten on upgrade.
 
 - **Capture Targets**: Capture Zones (global or per-Profile), or full-screen
   mode on a selected monitor. Exactly one target is active at a time;

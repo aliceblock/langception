@@ -517,10 +517,10 @@ function applyAdjustPayload(payload) {
     const note = payload.note
       ? payload.note
       : payload.fullscreen
-        ? "Adjust Mode — click a block to exclude it (it will not be translated again) · Alt+A to exit"
+        ? "Adjust Mode — click a block to exclude it (it will not be translated again) · Alt+Shift+A to exit"
         : adjust.profileId != null
-          ? "Adjust Mode — drag profile zones to move, handles to resize · Alt+A to exit"
-          : "Adjust Mode — drag zones to move, handles to resize · Alt+A to exit";
+          ? "Adjust Mode — drag profile zones to move, handles to resize · Alt+Shift+A to exit"
+          : "Adjust Mode — drag zones to move, handles to resize · Alt+Shift+A to exit";
     showAdjustNote(note, Boolean(payload.note));
   } else {
     adjust.rects = new Map();
@@ -532,7 +532,7 @@ function applyAdjustPayload(payload) {
 }
 
 document.addEventListener("keydown", (e) => {
-  // Esc is the visible affordance; Alt+A works too (global hotkey).
+  // Esc is the visible affordance; Alt+Shift+A works too (global hotkey).
   if (e.key === "Escape" && adjust.active) {
     invoke("toggle_adjust_mode").catch(() => {});
   }

@@ -50,11 +50,11 @@ let monitors = [];
 let mode = "zones";
 let fullscreenMonitor = "";
 let hotkeys = {
-  toggle: "Alt+T",
-  newZone: "Alt+Z",
-  pause: "Alt+P",
-  adjust: "Alt+A",
-  oneShot: "Alt+Q",
+  toggle: "Alt+Shift+T",
+  newZone: "Alt+Shift+Z",
+  pause: "Alt+Shift+P",
+  adjust: "Alt+Shift+A",
+  oneShot: "Alt+Shift+Q",
 };
 let lastError = null; // { stage, message } — stays visible until the next success
 
@@ -211,7 +211,7 @@ function renderExcluded() {
 
   if (excludedBlocks.length === 0) {
     excludedEmpty.textContent =
-      "Nothing excluded yet — switch to full-screen mode, press Adjust (Alt+A), and click a translation to hide that position permanently.";
+      `Nothing excluded yet — switch to full-screen mode, press Adjust (${hotkeys.adjust}), and click a translation to hide that position permanently.`;
     excludedEmpty.classList.remove("hidden");
   } else {
     excludedEmpty.classList.add("hidden");
@@ -358,7 +358,7 @@ function addEntry(block, translation, origin, atMs) {
   lastError = null;
   renderErrorBanner();
   // No `running` guard: One-shot Capture events legitimately arrive while
-  // the loop is stopped — that is the point of Alt+Q.
+  // the loop is stopped — that is the point of One-shot Capture.
 
   emptyState.classList.add("hidden");
 

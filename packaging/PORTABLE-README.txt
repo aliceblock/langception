@@ -35,10 +35,10 @@ First steps
 1. Start Langception.exe — the tray icon appears and the setup wizard
    opens on the very first launch (skippable; the app works with zero
    configuration).
-2. Choose how text is shown: draw a Capture Zone (Alt+Z) over the text
-   you want translated, or use full-screen mode.
-3. Press Alt+T to start translation, or "Start Translation" in the tray
-   menu.
+2. Choose how text is shown: draw a Capture Zone (Alt+Shift+Z) over the
+   text you want translated, or use full-screen mode.
+3. Press Alt+Shift+T to start translation, or "Start Translation" in the
+   tray menu.
 
 Full documentation: see the project's README.md on GitHub.
 

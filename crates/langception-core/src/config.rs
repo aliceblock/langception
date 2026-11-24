@@ -330,7 +330,7 @@ impl TextStyle {
 }
 
 /// Global hotkeys (spec: toggle / zone / adjust / pause / one-shot),
-/// rebindable here. Values are accelerator strings like "Alt+T" or
+/// rebindable here. Values are accelerator strings like "Alt+Shift+T" or
 /// "Ctrl+Shift+Z"; parsing happens where they are registered (the shell, at
 /// startup), so only non-emptiness is validated here. Changes apply on app
 /// restart.
@@ -411,11 +411,15 @@ impl Default for HotkeySettings {
     }
 }
 
-pub const DEFAULT_TOGGLE_HOTKEY: &str = "Alt+T";
-pub const DEFAULT_NEW_ZONE_HOTKEY: &str = "Alt+Z";
-pub const DEFAULT_PAUSE_HOTKEY: &str = "Alt+P";
-pub const DEFAULT_ADJUST_HOTKEY: &str = "Alt+A";
-pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Q";
+/// Fresh-config defaults (ticket 57): Alt+Shift+{Key} so they stop
+/// colliding with the common in-game/app Alt+{Key} menu shortcuts. A saved
+/// config keeps whatever it has — serde fills missing fields, it never
+/// rewrites present ones, so existing installs are not migrated.
+pub const DEFAULT_TOGGLE_HOTKEY: &str = "Alt+Shift+T";
+pub const DEFAULT_NEW_ZONE_HOTKEY: &str = "Alt+Shift+Z";
+pub const DEFAULT_PAUSE_HOTKEY: &str = "Alt+Shift+P";
+pub const DEFAULT_ADJUST_HOTKEY: &str = "Alt+Shift+A";
+pub const DEFAULT_ONE_SHOT_HOTKEY: &str = "Alt+Shift+Q";
 
 /// Which of the two ordinary windows stay pinned above other apps (ticket
 /// 34). The In-place Overlay and the one-shot picker are deliberately not
@@ -1018,14 +1022,14 @@ impl AppConfig {
         Ok(())
     }
 
-    /// The file written on first launch. Zones drawn with Alt+Z are appended
-    /// automatically as `[[zones]]` tables, Excluded Blocks (Adjust Mode,
-    /// full-screen mode) as `[[excluded_blocks]]`; the shape is documented
-    /// here so the file stays hand-editable.
+    /// The file written on first launch. Zones drawn with Alt+Shift+Z are
+    /// appended automatically as `[[zones]]` tables, Excluded Blocks
+    /// (Adjust Mode, full-screen mode) as `[[excluded_blocks]]`; the shape
+    /// is documented here so the file stays hand-editable.
     pub const DEFAULT_TEMPLATE: &str = r##"# Langception configuration.
-# Capture Zones you draw (Alt+Z) and Excluded Blocks you mark (Alt+A) are
-# saved into this file automatically. You can also edit it by hand; restart
-# the app after changing [hotkeys].
+# Capture Zones you draw (Alt+Shift+Z) and Excluded Blocks you mark
+# (Alt+Shift+A) are saved into this file automatically. You can also edit
+# it by hand; restart the app after changing [hotkeys].
 
 # Genderless Mode (CONTEXT.md): translated speech carries no speaker
 # gender — gendered politeness particles (ครับ/ค่ะ/จ้า …) and gendered
@@ -1173,15 +1177,15 @@ text_alignment = "left"
 text_v_alignment = "center"
 
 [hotkeys]
-# Global hotkeys, rebindable. Format: modifiers + key, e.g. "Alt+T",
-# "Ctrl+Shift+Z", "F9". They apply system-wide. Rebind them in
-# Settings → Hotkeys (applies immediately); hand edits apply after the
-# app restarts.
-toggle_translation = "Alt+T"
-new_zone = "Alt+Z"
-pause_translation = "Alt+P"
-adjust_mode = "Alt+A"
-one_shot_capture = "Alt+Q"
+# Global hotkeys, rebindable. Format: modifiers + key, e.g.
+# "Alt+Shift+T", "Ctrl+Shift+Z", "F9". They apply system-wide. Rebind
+# them in Settings → Hotkeys (applies immediately); hand edits apply
+# after the app restarts.
+toggle_translation = "Alt+Shift+T"
+new_zone = "Alt+Shift+Z"
+pause_translation = "Alt+Shift+P"
+adjust_mode = "Alt+Shift+A"
+one_shot_capture = "Alt+Shift+Q"
 
 [windows]
 # Which of the app's own windows stay pinned above other apps — both
@@ -1786,7 +1790,7 @@ language = "en"
             .replace("language = \"en\"", "language = \"ja\"")
             .replace("# Vertin = \"เวอร์ติน\"", "Vertin = \"เวอร์ติน\"")
             .replace(
-                "toggle_translation = \"Alt+T\"",
+                "toggle_translation = \"Alt+Shift+T\"",
                 "toggle_translation = \"F9\"",
             );
         let config = AppConfig::from_toml_str(&text).unwrap();
@@ -1971,7 +1975,7 @@ height = 180
     #[test]
     fn empty_hotkey_is_rejected() {
         let text = AppConfig::DEFAULT_TEMPLATE
-            .replace("pause_translation = \"Alt+P\"", "pause_translation = \" \"");
+            .replace("pause_translation = \"Alt+Shift+P\"", "pause_translation = \" \"");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(err.to_string().contains("pause_translation"), "was: {err}");
     }
@@ -2084,7 +2088,7 @@ language = "en"
         // A ticket-02/03 config: no zone monitor, no adjust_mode hotkey.
         // Slice-3 configs predate both fields; serde fills them from the
         // defaults instead of rejecting the file.
-        let legacy = template_with_zone().replace("\nadjust_mode = \"Alt+A\"", "");
+        let legacy = template_with_zone().replace("\nadjust_mode = \"Alt+Shift+A\"", "");
         let config = AppConfig::from_toml_str(&legacy).unwrap();
         assert_eq!(config.hotkeys.adjust_mode, DEFAULT_ADJUST_HOTKEY);
         assert_eq!(
@@ -2094,11 +2098,48 @@ language = "en"
 
         // An explicit rebind is still honored.
         let text = legacy.replace(
-            "pause_translation = \"Alt+P\"",
-            "pause_translation = \"Alt+P\"\nadjust_mode = \"Ctrl+Alt+A\"",
+            "pause_translation = \"Alt+Shift+P\"",
+            "pause_translation = \"Alt+Shift+P\"\nadjust_mode = \"Ctrl+Alt+A\"",
         );
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.hotkeys.adjust_mode, "Ctrl+Alt+A");
+    }
+
+    #[test]
+    fn saved_hotkeys_are_never_migrated_when_defaults_flip() {
+        // Ticket 57 moved the fresh-config defaults to Alt+Shift+{Key}.
+        // A config saved before the flip keeps its bare Alt+{Key}
+        // spellings verbatim: serde fills absent fields from the defaults
+        // and never rewrites present ones — same no-migration rule as the
+        // ticket-55 OCR-engine flip.
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("toggle_translation = \"Alt+Shift+T\"", "toggle_translation = \"Alt+T\"")
+            .replace("new_zone = \"Alt+Shift+Z\"", "new_zone = \"Alt+Z\"")
+            .replace("pause_translation = \"Alt+Shift+P\"", "pause_translation = \"Alt+P\"")
+            .replace("adjust_mode = \"Alt+Shift+A\"", "adjust_mode = \"Alt+A\"")
+            .replace("one_shot_capture = \"Alt+Shift+Q\"", "one_shot_capture = \"Alt+Q\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.hotkeys.toggle_translation, "Alt+T");
+        assert_eq!(config.hotkeys.new_zone, "Alt+Z");
+        assert_eq!(config.hotkeys.pause_translation, "Alt+P");
+        assert_eq!(config.hotkeys.adjust_mode, "Alt+A");
+        assert_eq!(config.hotkeys.one_shot_capture, "Alt+Q");
+
+        // The five new defaults must stay pairwise distinct — the
+        // registration side assumes no self-conflict.
+        let fresh = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        let defaults = [
+            &fresh.hotkeys.toggle_translation,
+            &fresh.hotkeys.new_zone,
+            &fresh.hotkeys.pause_translation,
+            &fresh.hotkeys.adjust_mode,
+            &fresh.hotkeys.one_shot_capture,
+        ];
+        for (i, first) in defaults.iter().enumerate() {
+            for second in &defaults[i + 1..] {
+                assert_ne!(first, second, "duplicate default hotkey");
+            }
+        }
     }
 
     // ---- Profiles (ticket 07) ----
