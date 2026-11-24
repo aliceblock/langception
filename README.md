@@ -140,7 +140,7 @@ tray tooltip while they are in flight.
 | **Google** *(default)* | none | Unofficial free endpoint (`translate.googleapis.com`); zero-config but unofficial — it can slow down or break without notice, and it sends screen text to Google. |
 | **Azure AI Translator** | key (+ optional region) | The recommended upgrade: free F0 tier, official and stable. Create a Translator resource in the [Azure portal](https://portal.azure.com) (Settings has this link) and paste the key; leave the region empty for a global resource. |
 | **DeepL** | key | [DeepL API](https://www.deepl.com/en/pro-api) — free tier available. Paste the key; free keys (ending `:fx`) are routed to DeepL's free host automatically. |
-| **Gemini** | key | Google AI Studio models. Get a key at [aistudio.google.com](https://aistudio.google.com/apikey), set a model id (e.g. `gemini-2.0-flash`). |
+| **Gemini** | key | Google AI Studio models. Get a key at [aistudio.google.com](https://aistudio.google.com/apikey), set a model id — `gemini-4-hydrogen` or `gemini-3.8-flash` are good picks. |
 | **OpenAI-compatible** | key | Any `/chat/completions` server: OpenAI (`https://api.openai.com/v1`), OpenRouter, or anything speaking the same API. Set base URL, key, and model. |
 | **LM Studio** | none (local) | Fully offline and private — see the next section. |
 
@@ -154,7 +154,8 @@ configuration.
 [LM Studio](https://lmstudio.ai/) lets you run open models on your own
 machine, so nothing ever leaves it:
 
-1. Install LM Studio, download a model, and start its server:
+1. Install LM Studio, download a model (`gemma-4-e4b` and
+   `qwen3-4b-instruct` are good picks), and start its server:
    **Developer tab → Start server** (default port 1234). Leave LM Studio
    running while you translate.
 2. In Langception: **Settings → Engines → LM Studio**. The default base URL

@@ -671,7 +671,7 @@ pub const LM_STUDIO_DEFAULT_BASE_URL: &str = "http://localhost:1234/v1";
 pub struct GeminiEngineSettings {
     /// The AI Studio API key ("AIza…").
     pub api_key: String,
-    /// Model id served under `v1beta` (e.g. "gemini-2.0-flash").
+    /// Model id served under `v1beta` (e.g. "gemini-4-hydrogen").
     pub model: String,
     /// Sampling temperature (0–2); low values keep translations stable
     /// across re-reads of unchanged text.
@@ -1122,7 +1122,7 @@ temperature = 0.2
 [engines.gemini]
 # Google Gemini (keyed LLM — bring your own key). Create a free key at
 # Google AI Studio (https://aistudio.google.com/apikey) and paste it below;
-# "model" is a Generative Language model id (e.g. "gemini-2.0-flash").
+# "model" is a Generative Language model id (e.g. "gemini-4-hydrogen").
 # When a Gemini or other LLM engine is active, Glossary entries whose term
 # appears in the block being translated are injected into the prompt, and
 # Genderless Mode is requested at prompt level too. temperature is 0–2.

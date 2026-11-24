@@ -214,7 +214,7 @@
           Sends every captured frame to the engine as an image — read and
           translate in one call. Slower per pass and billed per image on
           cloud engines; needs a vision-capable model (pick one in the
-          engine's card below, e.g. <code>gemini-2.0-flash</code>). Use it
+          engine's card below, e.g. <code>gemini-4-hydrogen</code>). Use it
           for stylized fonts the OCR engines cannot read.
         </p>
         </div>
@@ -240,6 +240,8 @@
               Local and offline — screen text never leaves this machine.
               Start LM Studio's server (Developer → Start server, default
               port 1234), load a model, then Check server here to pick it.
+              Recommended: <code>gemma-4-e4b</code> or
+              <code>qwen3-4b-instruct</code>.
             </p>
             <div class="row glossary-add">
               <input id="engines-lmstudio-base-url" type="text" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
@@ -262,15 +264,15 @@
           <div class="engine-body">
             <p class="hint">
               Google's LLM API: create a free API key at AI Studio with the
-              link, paste it, and type a model id (e.g.
-              <code>gemini-2.0-flash</code>).
+              link, paste it, and type a model id. Recommended:
+              <code>gemini-4-hydrogen</code> or <code>gemini-3.8-flash</code>.
             </p>
             <div class="row glossary-add">
               <input id="engines-gemini-key" type="password" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
               <button id="engines-gemini-link" class="btn small">Create a free key…</button>
             </div>
             <div class="row glossary-add">
-              <input id="engines-gemini-model" type="text" placeholder="Model name (e.g. gemini-2.0-flash)" spellcheck="false" />
+              <input id="engines-gemini-model" type="text" placeholder="Model name (e.g. gemini-4-hydrogen)" spellcheck="false" />
               <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
             </div>
           </div>

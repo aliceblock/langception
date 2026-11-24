@@ -14,7 +14,7 @@ round-trip. Run once on a real machine.
 1. A Google AI Studio API key: [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
    (free tier; the Generative Language API must be enabled for the key's
    project — it is by default for AI Studio keys).
-2. A model id served under `v1beta`, e.g. `gemini-2.0-flash`.
+2. A model id served under `v1beta`, e.g. `gemini-4-hydrogen`.
 3. `cargo run` from the repo root.
 
 ## Checklist
@@ -28,7 +28,7 @@ round-trip. Run once on a real machine.
       visible toast naming the key; config unchanged.
 - [ ] **Missing model rejected**: key pasted, model cleared, Save → toast
       naming the model; config unchanged.
-- [ ] **Save + test**: key + `gemini-2.0-flash`, default = Gemini, Save →
+- [ ] **Save + test**: key + `gemini-4-hydrogen`, default = Gemini, Save →
       config.toml gains `engine = "gemini"` under `[engines.gemini]`;
       "Test default engine" → note shows `works — "Hello" → สวัสดี…`.
 - [ ] **Invalid key classifies**: corrupt one character of the key, Save,

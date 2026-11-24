@@ -260,7 +260,7 @@ pub struct GeminiFusedEngine {
 
 impl GeminiFusedEngine {
     /// `model` is a Generative Language model id with vision capability
-    /// (e.g. `gemini-2.0-flash`); the key comes from AI Studio. Emptiness
+    /// (e.g. `gemini-4-hydrogen`); the key comes from AI Studio. Emptiness
     /// is the settings surface's / loop start's check — construction stays
     /// lenient (the translate engine's rule).
     pub fn new(api_key: &str, model: &str, temperature: f64) -> Result<Self, FusedError> {

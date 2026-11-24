@@ -179,7 +179,7 @@ pub struct GeminiEngine {
 }
 
 impl GeminiEngine {
-    /// `model` is a Generative Language model id (e.g. `gemini-2.0-flash`);
+    /// `model` is a Generative Language model id (e.g. `gemini-4-hydrogen`);
     /// the key comes from AI Studio. Emptiness is the settings surface's /
     /// loop start's check (like Azure's key) — construction stays lenient.
     pub fn new(api_key: &str, model: &str, temperature: f64) -> Result<Self, TranslateError> {

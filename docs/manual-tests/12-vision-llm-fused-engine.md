@@ -13,7 +13,7 @@ round-trip. Run once on a real machine.
 
 1. A vision-capable engine configured (Settings → Engines):
    - Gemini: an AI Studio key + a vision model id (e.g.
-     `gemini-2.0-flash`), or
+     `gemini-4-hydrogen`), or
    - LM Studio: its server running with a **vision** model loaded (e.g. a
      Qwen2-VL GGUF) + "Check server" picking it from the dropdown.
 2. Text on screen: ideally stylized/graphics-style text that Windows OCR
