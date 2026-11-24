@@ -297,3 +297,149 @@ async fn an_unresponsive_sidecar_hits_the_request_timeout() {
         error.message
     );
 }
+
+// ---- The unsupported-combination rule (ticket 05) ----
+//
+// Tiny cannot read kana: a Japanese pass with tiny selected must launch
+// the small model set and surface a one-line notice — once per
+// substituted session, not per pass. The stub keys its scripts on the
+// launch's (language, tier), so a differently-worded reply per script
+// proves exactly which model set each pass launched.
+
+fn substitution_engine(
+    program: PathBuf,
+    models_dir: PathBuf,
+    notices: &std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+) -> PpOcrv6Engine {
+    let notices = notices.clone();
+    fast_engine(program, models_dir, ModelTier::Tiny).with_substitution_notice(
+        std::sync::Arc::new(move |message| notices.lock().unwrap().push(message)),
+    )
+}
+
+#[tokio::test]
+async fn japanese_with_tiny_launches_the_small_model_and_notices_once() {
+    let dir = scratch_dir("substitution");
+    let models = fake_models(&dir, "ja", "tiny", &format!("OK\n{}", ok_reply("tiny-model text")));
+    fs::write(
+        models.join("stub-ja-small.txt"),
+        format!("OK\n{}", ok_reply("small-model text")),
+    )
+    .unwrap();
+    let notices = Default::default();
+
+    let engine = substitution_engine(stub_exe(), models.clone(), &notices);
+    let first = engine
+        .recognize(&tiny_image(), SourceLanguage::Ja)
+        .await
+        .unwrap();
+    let second = engine
+        .recognize(&tiny_image(), SourceLanguage::Ja)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        first[0].text, "small-model text",
+        "the launch must carry -tier=small, not the requested tiny"
+    );
+    assert_eq!(second[0].text, "small-model text");
+    assert_eq!(
+        spawn_count(&models, "ja", "tiny"),
+        0,
+        "the kana-less tiny model must never be launched for Japanese"
+    );
+    assert_eq!(spawn_count(&models, "ja", "small"), 1, "one substituted session");
+    let notices = notices.lock().unwrap();
+    assert_eq!(
+        notices.len(),
+        1,
+        "one notice per incident, not per pass: {notices:?}"
+    );
+    assert!(
+        notices[0].contains("tiny") && notices[0].contains("small"),
+        "the notice names both the selection and what actually runs: {notices:?}"
+    );
+}
+
+#[tokio::test]
+async fn leaving_and_reentering_the_pairing_notices_again() {
+    let dir = scratch_dir("substitution-reenter");
+    let models = fake_models(&dir, "ja", "tiny", &format!("OK\n{}", ok_reply("ja-tiny")));
+    fs::write(models.join("stub-ja-small.txt"), format!("OK\n{}", ok_reply("ja-small"))).unwrap();
+    fs::write(models.join("stub-en-tiny.txt"), format!("OK\n{}", ok_reply("en-tiny"))).unwrap();
+    let notices = Default::default();
+
+    let engine = substitution_engine(stub_exe(), models.clone(), &notices);
+    assert_eq!(
+        engine.recognize(&tiny_image(), SourceLanguage::Ja).await.unwrap()[0].text,
+        "ja-small"
+    );
+    assert_eq!(
+        engine.recognize(&tiny_image(), SourceLanguage::En).await.unwrap()[0].text,
+        "en-tiny",
+        "English is honored as selected (no substitution)"
+    );
+    assert_eq!(
+        engine.recognize(&tiny_image(), SourceLanguage::Ja).await.unwrap()[0].text,
+        "ja-small",
+        "re-entering the pairing substitutes again"
+    );
+
+    assert_eq!(spawn_count(&models, "en", "tiny"), 1);
+    assert_eq!(
+        spawn_count(&models, "ja", "small"),
+        2,
+        "each re-entry is its own substituted session (a model-switch restart)"
+    );
+    let notices = notices.lock().unwrap();
+    assert_eq!(
+        notices.len(),
+        2,
+        "each transition into the pairing gets its own notice: {notices:?}"
+    );
+}
+
+#[tokio::test]
+async fn korean_and_the_other_pairings_are_honored_without_a_notice() {
+    let dir = scratch_dir("no-substitution");
+    let models = fake_models(&dir, "ko", "tiny", &format!("OK\n{}", ok_reply("ko-tiny")));
+    fs::write(models.join("stub-en-tiny.txt"), format!("OK\n{}", ok_reply("en-tiny"))).unwrap();
+    fs::write(
+        models.join("stub-zh-tiny.txt"),
+        format!("OK\n{}", ok_reply("zh-tiny")),
+    )
+    .unwrap();
+    fs::write(
+        models.join("stub-ko-medium.txt"),
+        format!("OK\n{}", ok_reply("ko-medium")),
+    )
+    .unwrap();
+    let notices = Default::default();
+
+    let tiny = substitution_engine(stub_exe(), models.clone(), &notices);
+    let medium = fast_engine(stub_exe(), models.clone(), ModelTier::Medium)
+        .with_substitution_notice(std::sync::Arc::new(|_| {
+            panic!("no pairing of medium substitutes");
+        }));
+    // Korean reads the tier's models at every tier (tier-independent by
+    // definition, not a fallback) — tiny included.
+    assert_eq!(tiny.recognize(&tiny_image(), SourceLanguage::Ko).await.unwrap()[0].text, "ko-tiny");
+    assert_eq!(
+        medium.recognize(&tiny_image(), SourceLanguage::Ko).await.unwrap()[0].text,
+        "ko-medium"
+    );
+    // English and Chinese honor tiny (Latin + CJK ideographs are in its
+    // vocabulary).
+    assert_eq!(tiny.recognize(&tiny_image(), SourceLanguage::En).await.unwrap()[0].text, "en-tiny");
+    assert_eq!(tiny.recognize(&tiny_image(), SourceLanguage::Zh).await.unwrap()[0].text, "zh-tiny");
+
+    assert_eq!(spawn_count(&models, "ko", "tiny"), 1);
+    assert_eq!(spawn_count(&models, "ko", "medium"), 1);
+    assert_eq!(spawn_count(&models, "en", "tiny"), 1);
+    assert_eq!(spawn_count(&models, "zh", "tiny"), 1);
+    let notices = notices.lock().unwrap();
+    assert!(
+        notices.is_empty(),
+        "honored pairings fire no notice: {notices:?}"
+    );
+}

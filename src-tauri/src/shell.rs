@@ -1546,14 +1546,17 @@ fn build_ocr_engine(
     // An unexpected sidecar death healed between passes is worth one
     // app-log line (ticket 31: crashes surface, never silently heal); a
     // failure that degrades a pass is the fallback wrapper's warning
-    // instead.
+    // instead. The substitution notice (ticket 05: tiny + Japanese runs
+    // the small model) lands on the same `ocr` log surface.
     let notice: langception_core::sidecar::RestartNotice = Arc::new(move |message| {
         crate::logging::log("ocr", message);
     });
+    let substitution_notice = notice.clone();
     let v6: Arc<dyn langception_core::ports::OcrEngine> = match resolve_ppocrv6(app) {
         Some((program, models)) => Arc::new(
             langception_core::ppocr::PpOcrv6Engine::new(program, models, tier)
-                .with_restart_notice(notice),
+                .with_restart_notice(notice)
+                .with_substitution_notice(substitution_notice),
         ),
         None => Arc::new(
             langception_core::ppocr::PpOcrv6Engine::new(
@@ -1561,7 +1564,8 @@ fn build_ocr_engine(
                 PathBuf::from(langception_core::ppocr::BUNDLE_DIR_NAME),
                 tier,
             )
-            .with_restart_notice(notice),
+            .with_restart_notice(notice)
+            .with_substitution_notice(substitution_notice),
         ),
     };
     let windows = Arc::new(crate::ocr::WindowsOcrEngine::new(target.language));

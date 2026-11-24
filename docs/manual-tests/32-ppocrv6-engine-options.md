@@ -50,6 +50,16 @@ sidecar and the packaging — everything that needs a live desktop and the
       Language, switch tiers tiny → small → medium — Korean keeps
       working identically (the sidecar launch line names the same Korean
       recognizer each time) and fires no notice.
+- [ ] **tiny + Japanese surfaces the substitution notice (ticket 05,
+      story 10)**: select PP-OCRv6 tiny and set the Source Language to
+      ja — the app log (Debug Log Window) gets one `ocr` line saying
+      tiny cannot read Japanese (no kana) and the small model set runs
+      instead; kana text reads correctly. One line per substituted
+      session: switching to en and back to ja produces a second line
+      (each transition is its own incident), and so does saving any
+      setting that rebuilds the loop. A failing pass stays silent here —
+      the fallback warning covers broken bundles. en/zh with tiny fire
+      no line at all.
 - [ ] **No console flash**: the sidecar runs hidden — no terminal window
       appears with the app.
 - [ ] **Crash → surfaced, then recovery**: kill `pp-ocrv6-sidecar.exe` in

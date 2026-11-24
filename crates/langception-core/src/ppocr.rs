@@ -131,15 +131,39 @@ fn launch_command(
     Ok(command)
 }
 
+/// The unsupported-combination rule (ticket 05): tiny's vocabulary
+/// carries Latin + CJK ideographs but zero kana, so Japanese+tiny is the
+/// only pairing that cannot read as selected — it runs the nearest
+/// supported tier, the whole small model set (small detector included:
+/// mixing detectors across tiers would lose the per-tier tuned
+/// thresholds). Everything else is honored as selected: English and
+/// Chinese honor tiny, and Korean's v5 recognizer is tier-independent
+/// inside the sidecar — by definition, not a fallback.
+fn effective_selection(source: SourceLanguage, tier: ModelTier) -> ModelSelection {
+    match (source, tier) {
+        (SourceLanguage::Ja, ModelTier::Tiny) => (SourceLanguage::Ja, ModelTier::Small),
+        _ => (source, tier),
+    }
+}
+
 /// The PP-OCRv6 engine as an [`OcrEngine`]: a thin wrapper over the
 /// shared [`SidecarEngine`] state machine (lazy spawn, reuse across
 /// passes, respawn on death with a notice, restart on (language, tier)
-/// change). A pass whose request fails returns an error immediately (the
-/// shell's fallback wrapper surfaces it and covers the pass with Windows
-/// OCR); the next call spawns fresh.
+/// change), plus the unsupported-combination rule above. A pass whose
+/// request fails returns an error immediately (the shell's fallback
+/// wrapper surfaces it and covers the pass with Windows OCR); the next
+/// call spawns fresh.
 pub struct PpOcrv6Engine {
     tier: ModelTier,
     engine: SidecarEngine<ModelSelection>,
+    /// Fires when a pass launches a substituted model set (Japanese with
+    /// tiny selected) — see [`PpOcrv6Engine::with_substitution_notice`].
+    on_substitution: Option<crate::sidecar::RestartNotice>,
+    /// The substituted session a notice was already fired for: one
+    /// notice per incident (a transition into the pairing), never one
+    /// per pass. Reset by any honored pairing, so leaving Japanese and
+    /// re-entering it with tiny notices again.
+    noticed_substitution: std::sync::Mutex<Option<ModelSelection>>,
 }
 
 impl PpOcrv6Engine {
@@ -174,6 +198,8 @@ impl PpOcrv6Engine {
         Self {
             tier,
             engine: SidecarEngine::with_timeouts("PP-OCRv6", launch, init_timeout, request_timeout),
+            on_substitution: None,
+            noticed_substitution: std::sync::Mutex::new(None),
         }
     }
 
@@ -181,6 +207,16 @@ impl PpOcrv6Engine {
     /// [`crate::sidecar::RestartNotice`]).
     pub fn with_restart_notice(mut self, notice: crate::sidecar::RestartNotice) -> Self {
         self.engine = self.engine.with_restart_notice(notice);
+        self
+    }
+
+    /// Observes the unsupported-combination rule kicking in (ticket 05):
+    /// Japanese text with tiny selected runs on the small model set, and
+    /// this fires one line per transition into that pairing (the same
+    /// surface as the restart notice) so the loop never silently
+    /// degrades. Fired on the caller's async context, briefly.
+    pub fn with_substitution_notice(mut self, notice: crate::sidecar::RestartNotice) -> Self {
+        self.on_substitution = Some(notice);
         self
     }
 }
@@ -192,9 +228,44 @@ impl OcrEngine for PpOcrv6Engine {
         image: &CapturedImage,
         source: SourceLanguage,
     ) -> Result<Vec<TextBlock>, OcrError> {
-        self.engine
-            .recognize(image, (source, self.tier))
-            .await
+        let requested = (source, self.tier);
+        let effective = effective_selection(source, self.tier);
+        let substituted = effective != requested;
+        if !substituted {
+            // An honored pairing ran: reset so the next transition into
+            // the substituted pairing is a new incident worth its own
+            // notice.
+            *self
+                .noticed_substitution
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) = None;
+        }
+        let result = self.engine.recognize(image, effective).await;
+        // The notice claims the small model set RAN, so it fires after a
+        // pass that actually ran it — one per substituted session (the
+        // dedupe key is the selection itself, so continuous Japanese
+        // passes notice once while a language switch away and back
+        // re-notices: each marks a model restart). A failed pass stays
+        // silent here; the fallback wrapper's warning names why the
+        // engine could not run at all.
+        if substituted && result.is_ok() {
+            let mut noticed = self
+                .noticed_substitution
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if *noticed != Some(effective) {
+                *noticed = Some(effective);
+                if let Some(notice) = &self.on_substitution {
+                    notice(format!(
+                        "{} cannot read Japanese (its vocabulary has no kana) — \
+                         running the {} model set instead",
+                        self.tier.display_name(),
+                        ModelTier::Small.display_name(),
+                    ));
+                }
+            }
+        }
+        result
     }
 }
 
@@ -262,5 +333,43 @@ mod tests {
         assert_eq!(ModelTier::Tiny.config_value(), "pp-ocrv6-tiny");
         assert_eq!(ModelTier::Small.config_value(), "pp-ocrv6-small");
         assert_eq!(ModelTier::Medium.config_value(), "pp-ocrv6-medium");
+    }
+
+    #[test]
+    fn japanese_with_tiny_is_the_only_substituted_pairing() {
+        // The unsupported-combination rule (ticket 05): tiny's vocabulary
+        // has no kana, so Japanese runs on the nearest supported tier —
+        // the whole small pipeline (mixing detectors across tiers would
+        // lose the per-tier tuned thresholds).
+        assert_eq!(
+            effective_selection(SourceLanguage::Ja, ModelTier::Tiny),
+            (SourceLanguage::Ja, ModelTier::Small),
+        );
+        // Everything else is honored as selected: tiny is fine for
+        // English and Chinese (Latin + CJK ideographs), medium and small
+        // cover Japanese, and Korean's v5 recognizer is tier-independent
+        // inside the sidecar.
+        for tier in [ModelTier::Tiny, ModelTier::Small, ModelTier::Medium] {
+            assert_eq!(
+                effective_selection(SourceLanguage::En, tier),
+                (SourceLanguage::En, tier),
+            );
+            assert_eq!(
+                effective_selection(SourceLanguage::Zh, tier),
+                (SourceLanguage::Zh, tier),
+            );
+            assert_eq!(
+                effective_selection(SourceLanguage::Ko, tier),
+                (SourceLanguage::Ko, tier),
+            );
+        }
+        // Small and medium cover Japanese as selected; tiny is the only
+        // substitution (asserted above).
+        for tier in [ModelTier::Small, ModelTier::Medium] {
+            assert_eq!(
+                effective_selection(SourceLanguage::Ja, tier),
+                (SourceLanguage::Ja, tier),
+            );
+        }
     }
 }
