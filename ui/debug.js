@@ -79,7 +79,15 @@ function freshStats() {
   return { n: 0, sum: 0, min: Infinity, max: 0 };
 }
 
+// Records one stage measurement into the rolling summary. A 0ms reading
+// is not a datapoint: it is the Glossary short-circuit translating in no
+// measurable time (ticket 50 kept those honest on the per-pass rows —
+// they still show `translate 0ms`). Charting them would pin min to 0 and
+// drag the average down — the same misleading summary removing the
+// no-fire passes fixed. Reported at the user's ask: only readings above
+// 0ms are charted.
 function record(stage, ms) {
+  if (ms === 0) return;
   const s = stats[stage];
   s.n += 1;
   s.sum += ms;
@@ -211,6 +219,17 @@ const COUNT_ORDER = [
   "gone",
 ];
 
+// A read's decision as the loop serializes it (ticket 48): ReadDisposition
+// is an internally tagged enum, so a trace's `disposition` is an OBJECT —
+// its own `disposition` key carries the tag ("translated_engine",
+// "waiting", "gone", …) and a variant's fields sit beside it (waiting:
+// elapsed_ms + total_ms; gone: misses). Reading the tag as the field's
+// whole value threw on every event that carried reads at all — the row
+// never rendered and the export lost the pass (ticket 53).
+function dispositionTag(read) {
+  return read.disposition.disposition;
+}
+
 function countKey(disposition) {
   return disposition.startsWith("translated_") ? "translated" : disposition;
 }
@@ -218,7 +237,7 @@ function countKey(disposition) {
 function readsDetail(reads) {
   const counts = new Map();
   for (const read of reads) {
-    const key = countKey(read.disposition);
+    const key = countKey(dispositionTag(read));
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const parts = COUNT_ORDER.filter((k) => counts.has(k)).map(
@@ -248,7 +267,7 @@ function readLine(read) {
   words.className = "words";
   words.textContent = read.text === "" ? "(nothing after trim)" : `“${read.text}”`;
   const reason = document.createElement("span");
-  reason.className = `reason ${read.disposition}`;
+  reason.className = `reason ${dispositionTag(read)}`;
   reason.textContent = readReason(read);
   li.append(words, reason);
   return li;
@@ -257,7 +276,8 @@ function readLine(read) {
 // The disposition in plain words — the answer to "why didn't this
 // translate?", not the enum's spelling.
 function readReason(read) {
-  switch (read.disposition) {
+  const d = read.disposition;
+  switch (dispositionTag(read)) {
     case "translated_engine":
       return "translated · engine";
     case "translated_glossary":
@@ -269,8 +289,8 @@ function readReason(read) {
     case "suppressed":
       return "suppressed — identical text already shown";
     case "waiting": {
-      const left = Math.max(0, read.total_ms - read.elapsed_ms);
-      return `waiting ${read.elapsed_ms}/${read.total_ms}ms — ${left}ms to go`;
+      const left = Math.max(0, d.total_ms - d.elapsed_ms);
+      return `waiting ${d.elapsed_ms}/${d.total_ms}ms — ${left}ms to go`;
     }
     case "unchanged":
       return "unchanged — pixels match what is shown";
@@ -279,9 +299,9 @@ function readReason(read) {
     case "empty":
       return "empty — no text after trim";
     case "gone":
-      return `gone from the read · miss ${read.misses}`;
+      return `gone from the read · miss ${d.misses}`;
     default:
-      return read.disposition;
+      return d.disposition;
   }
 }
 
