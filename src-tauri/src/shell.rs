@@ -1437,8 +1437,8 @@ struct Pipeline {
     capture: Arc<dyn langception_core::ports::CaptureSource>,
     ocr: Arc<dyn langception_core::ports::OcrEngine>,
     /// The configured OCR engine's name, for the launch summary log line.
-    /// What ACTUALLY ran can differ (the paddle sidecar falls back to
-    /// Windows OCR per pass — the fallback notice says so); this is the
+    /// What ACTUALLY ran can differ (the configured bundled engine falls
+    /// back to Windows OCR per pass — the fallback notice says so); this is the
     /// choice the loop started with.
     ocr_name: &'static str,
     translate: Arc<dyn langception_core::ports::TranslateEngine>,
@@ -1637,41 +1637,6 @@ fn resolve_ppocrv6_from(
     }
     let program = programs.into_iter().find(|p| p.is_file())?;
     Some((program, models_dir))
-}
-
-/// Locates the OLD bundled PaddleOCR sidecar directory (containing
-/// [`langception_core::paddle::SIDECAR_EXE`] and its `models/`). Order:
-/// the `LANGCEPTION_PADDLEOCR_DIR` override (development/manual smoke),
-/// the installer's resource directory, then the executable's surroundings
-/// (cargo dev layout and a resources-beside-exe portable layout).
-/// Unused since ticket 04 — the config's "paddle" value now maps to the
-/// PP-OCRv6 engine — and kept only until ticket 06 deletes it with the
-/// old engine.
-#[allow(dead_code)]
-fn resolve_paddleocr(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(dir) = std::env::var("LANGCEPTION_PADDLEOCR_DIR") {
-        candidates.push(PathBuf::from(dir));
-    }
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        // bundle.resources preserves the `resources/` prefix (array form).
-        candidates.push(resource_dir.join("resources").join("paddleocr"));
-        candidates.push(resource_dir.join("paddleocr"));
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            // Dev run out of target/debug: the repo layout is
-            // <repo>/src-tauri/resources/paddleocr.
-            candidates.push(exe_dir.join("../../src-tauri/resources/paddleocr"));
-            candidates.push(exe_dir.join("resources").join("paddleocr"));
-            candidates.push(exe_dir.join("paddleocr"));
-        }
-    }
-    candidates.into_iter().find_map(|dir| {
-        let program = dir.join(langception_core::paddle::SIDECAR_EXE);
-        let models = dir.join(langception_core::paddle::MODELS_DIR);
-        (program.is_file() && models.is_dir()).then_some((program, models))
-    })
 }
 
 /// Builds the fused vision engine (ticket 12) for the effective target's

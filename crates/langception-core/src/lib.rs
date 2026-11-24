@@ -15,7 +15,6 @@ pub(crate) mod hash;
 pub mod merge;
 pub mod openai;
 pub mod orchestrator;
-pub mod paddle;
 pub mod ports;
 pub mod ppocr;
 pub mod profile;

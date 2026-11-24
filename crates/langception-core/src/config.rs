@@ -563,7 +563,7 @@ fn default_ocr_engine() -> String {
 }
 
 /// Which engine reads on-screen text (ticket 31). Only the engine name so
-/// far — the PaddleOCR sidecar's tunables (models dir, timeouts) are
+/// far — the bundled sidecar's tunables (models dir, timeouts) are
 /// deliberately not config: the bundled layout is fixed, and the fallback
 /// to Windows OCR covers a broken bundle. An `[ocr]` section missing from
 /// a config written before this feature parses as the current default

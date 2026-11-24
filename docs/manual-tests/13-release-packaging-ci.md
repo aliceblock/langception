@@ -77,7 +77,7 @@ Windows 10** VM without WebView2 (worst case) and a **Windows 11** machine
       lists the gap and the jump button opens Windows' Language & region
       page. A fresh config defaults to Windows OCR (ticket 55) —
       Settings → Engines shows it selected — and the README's
-      pack-less escape hatch (switch to the bundled Paddle OCR) actually
+      pack-less escape hatch (switch to a bundled PP-OCRv6 tier) actually
       reads text on this machine.
 - [ ] Engine key setup: each engine's Settings card has the same signup
       link the README lists; pasting a key + Test works for one keyed

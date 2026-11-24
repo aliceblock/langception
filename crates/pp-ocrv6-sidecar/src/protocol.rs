@@ -2,8 +2,8 @@
 //! with the bundled engine's JSON-lines shape so the app's existing sidecar
 //! machinery parses our replies unchanged.
 //!
-//! Request (one JSON line per task, exactly what `paddle.rs::encode_task`
-//! sends): `{"image_base64": "<base64 PNG>"}`.
+//! Request (one JSON line per task, exactly what the app's
+//! `langception_core::sidecar::encode_task` sends): `{"image_base64": "<base64 PNG>"}`.
 //! Reply (one JSON line per task): code 100 carries recognized text blocks
 //! (`box` quad + optional `score` + `text`, the recorded engine's field
 //! order), code 101 is the normal empty result, any other code is an error
@@ -101,7 +101,8 @@ struct PlainReply<'a> {
 mod tests {
     use super::*;
 
-    /// The client's view of a reply, mirrored from paddle.rs's parser: it
+    /// The client's view of a reply, mirrored from the core crate's
+    /// `sidecar::parse_reply`: it
     /// reads `code`, treats `data` by code, and reads each block's `box`
     /// and `text` (ignoring everything else, such as `score`).
     #[derive(Deserialize)]
@@ -158,7 +159,7 @@ mod tests {
         );
         let parsed: ClientReply = serde_json::from_str(&reply).unwrap();
         // The client's empty-result rule: code 101 + data starting with
-        // "No text found" (paddle.rs).
+        // "No text found" (sidecar.rs's parse_reply).
         assert_eq!(parsed.code, 101);
         assert!(
             parsed

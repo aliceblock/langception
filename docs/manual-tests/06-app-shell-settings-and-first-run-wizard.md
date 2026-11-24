@@ -31,7 +31,7 @@ the Windows autostart registry behavior. Run once on a real machine.
       without reopening the window.
 - [ ] **New default stated up front (ticket 55)**: the OCR step says
       Windows OCR is the default and that it needs a language pack for
-      the Source Language, and names the bundled Paddle OCR as the
+      the Source Language, and names the bundled PP-OCRv6 tier as the
       no-packs alternative in Settings → Engines — visible before any
       translation runs, not only after a failed read.
 - [ ] **"Open Windows language settings"** opens Time & Language →

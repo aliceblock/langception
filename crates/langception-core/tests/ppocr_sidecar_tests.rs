@@ -1,8 +1,8 @@
 //! The PP-OCRv6 sidecar state machine (pp-ocrv6-sidecar feature ticket
-//! 04), driven against the same scripted `paddle_stub` binary the old
-//! engine's tests use — the new engine launches it with its own contract
-//! (`-models_path -language -tier`, the stub keys its scripts on the
-//! language/tier pair). Covered here: lazy spawn + reuse across passes,
+//! 04), driven against the scripted `ocr_stub` binary — the engine
+//! launches it with its own contract (`-models_path -language -tier`;
+//! the stub keys its scripts on the language/tier pair). Covered here:
+//! lazy spawn + reuse across passes,
 //! restart on a tier change AND on a language change, crash detection
 //! with recovery on the next call, the restart notice, init-crash
 //! surfacing, and the request timeout. (Reply parsing and the launch
@@ -17,7 +17,7 @@ use std::time::Duration;
 /// CARGO_BIN_EXE_<name> is set for integration tests when the [[bin]] is
 /// built — the scripted sidecar stand-in.
 fn stub_exe() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_paddle_stub"))
+    PathBuf::from(env!("CARGO_BIN_EXE_ocr_stub"))
 }
 
 fn ok_reply(text: &str) -> String {

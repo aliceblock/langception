@@ -18,7 +18,7 @@
 //!   inside the sidecar; a (language, tier) change is a sidecar restart.
 //!
 //! Lifecycle behavior is integration-tested offline against the scripted
-//! `paddle_stub` binary — see `tests/ppocr_sidecar_tests.rs`. The real
+//! `ocr_stub` binary — see `tests/ppocr_sidecar_tests.rs`. The real
 //! sidecar is exercised by the manual smoke checklist, like every other
 //! live engine.
 

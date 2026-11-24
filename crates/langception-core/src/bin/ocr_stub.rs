@@ -1,16 +1,15 @@
-//! A scripted stand-in for both bundled OCR sidecars (PaddleOCR-json and
-//! pp-ocrv6-sidecar), speaking the same protocol (init banner → `OCR init
-//! completed.`, one-line tasks, one-line replies, `exit` to quit) so the
-//! sidecar state machine in `sidecar.rs` is integration-tested offline
-//! through both engines. Only std — no async runtime needed.
+//! A scripted stand-in for the bundled OCR sidecar (pp-ocrv6-sidecar),
+//! speaking its protocol (init banner → `OCR init completed.`, one-line
+//! tasks, one-line replies, `exit` to quit) so the sidecar state machine
+//! in `sidecar.rs` is integration-tested offline. Only std — no async
+//! runtime needed.
 //!
-//! Scripting: the stub locates its script from the engine's launch
-//! arguments — either `-config_path=<file>` (the old engine) or
-//! `-models_path=<dir>` with `-language=<l>` and `-tier=<t>`, for which
-//! it reads `<dir>/stub-<l>-<t>.txt` (the new engine; different model
-//! selections read different scripts, which is how tests prove a
-//! restart). The file's line 1 is a directive, the rest (joined) is the
-//! reply printed for every task. Directives:
+//! Scripting: the stub reads its script from the engine's launch
+//! arguments — `-models_path=<dir>` with `-language=<l>` and `-tier=<t>`
+//! select `<dir>/stub-<l>-<t>.txt`; different model selections read
+//! different scripts, which is how tests prove a restart. The file's
+//! line 1 is a directive, the rest (joined) is the reply printed for
+//! every task. Directives:
 //! - `OK` — normal operation (also the fallback when the file is missing)
 //! - `CRASH_INIT` — exit(1) before announcing readiness
 //! - `CRASH_FIRST_REPLY` — answer the first task, then exit
@@ -27,17 +26,12 @@ use std::time::Duration;
 
 const DEFAULT_REPLY: &str = "{\"code\":100,\"data\":[{\"box\":[[0,0],[10,0],[10,10],[0,10]],\"score\":1.0,\"text\":\"stub text\"}]}";
 
-/// The script file this launch reads: `-config_path=` wins; otherwise the
-/// new engine's `-models_path` + `-language` + `-tier` select
-/// `<models>/stub-<language>-<tier>.txt`. None when no known shape is
-/// present (the script then defaults to `OK`, no markers written).
+/// The script file this launch reads: the `-models_path` + `-language` +
+/// `-tier` launch arguments select `<models>/stub-<language>-<tier>.txt`.
+/// None when the known shape is absent (the script then defaults to `OK`,
+/// no markers written).
 fn script_path() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
-    if let Some(config) = args.iter().find_map(|arg| {
-        arg.strip_prefix("-config_path=").map(str::to_string)
-    }) {
-        return Some(config);
-    }
     let models = args
         .iter()
         .find_map(|arg| arg.strip_prefix("-models_path=").map(str::to_string))?;
@@ -50,15 +44,21 @@ fn script_path() -> Option<String> {
     Some(format!("{models}/stub-{language}-{tier}.txt"))
 }
 
-/// Appends one line to `<script>.exits` so tests can wait for the
+/// Appends one `x` line to `<path>` — the marker files
+/// (`<script>.spawns` / `<script>.exits`) are line counters tests read
+/// back to assert reuse, respawn, and real process death.
+fn append_marker(path: &str) {
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "x");
+    }
+}
+
+/// Records the exit in `<script>.exits` so tests can wait for the
 /// process to be REALLY gone (the exit marker is written before the
 /// process exits, closing the still-terminating race window).
 fn record_exit(script: &Option<String>) {
     if let Some(script) = script {
-        let exits = format!("{script}.exits");
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&exits) {
-            let _ = writeln!(file, "x");
-        }
+        append_marker(&format!("{script}.exits"));
     }
 }
 
@@ -82,10 +82,7 @@ fn main() {
     };
 
     if let Some(path) = &script_file {
-        let spawns = format!("{path}.spawns");
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&spawns) {
-            let _ = writeln!(file, "x");
-        }
+        append_marker(&format!("{path}.spawns"));
     }
 
     if directive == "CRASH_INIT" {

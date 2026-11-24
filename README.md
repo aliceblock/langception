@@ -58,7 +58,7 @@ names can be pinned so `Vertin` always renders as `เวอร์ติน`.
   portable build needs it present (see below).
 - An **OCR language pack** for your source language — the default OCR
   engine (Windows OCR) needs one (see next section). If you cannot install
-  packs, the bundled Paddle OCR engine works without any.
+  packs, the bundled PP-OCRv6 engine tiers work without any.
 - Internet access for every engine except LM Studio.
 
 ## Install
@@ -85,8 +85,7 @@ works with zero configuration). It:
    Windows OCR, which needs a pack for your source language. The wizard
    shows exactly which of the four source languages are readable, with a
    button that jumps to Windows' language settings if something is missing
-   (and points at the bundled Paddle OCR engine if you cannot install
-   packs).
+   (and points at the bundled PP-OCRv6 tiers if you cannot install packs).
 2. Walks through **choosing an engine** — the default needs nothing; keyed
    engines have links to their signup pages.
 3. Shows the **hotkeys** so the app is usable without touching a window.
@@ -124,10 +123,15 @@ pack you get no text at all, so this is the first thing to check:
 > when a Profile or config asks for generic `zh`, the Simplified pack wins.
 
 **No pack, or prefer offline reads?** Every release also bundles the
-**Paddle OCR** engine: select it in **Settings → Engines → OCR engine** and
-reads work with no Windows language packs at all, fully offline. It is
-heavier per pass (it runs a ~300 MB sidecar process), and if it cannot run
-a pass automatically falls back to Windows OCR.
+**PP-OCRv6** engine in three tiers: select **PP-OCRv6 tiny**, **PP-OCRv6
+small**, or **PP-OCRv6 medium** in **Settings → Engines → OCR engine** and
+reads work with no Windows language packs at all, fully offline — tiny is
+the fastest, medium the most accurate. They are heavier per pass than
+Windows OCR (the bundled models total ~190 MB), and if the engine cannot
+run a pass it automatically falls back to Windows OCR. One quirk: tiny's
+vocabulary has no kana, so a Japanese source runs the small model set
+instead (the app says so in its log); Korean reads through a dedicated
+Korean model at every tier.
 
 ## Translation engines
 

@@ -18,11 +18,13 @@ models (both stay out of CI).
 cargo install oar-ocr-cli
 ```
 
-The paddle half of the harness also needs the old engine's sidecar
-bundle (`src-tauri/resources/paddleocr/`, git-ignored). It predates the
-fetch-script rework (ticket 03 retired the old archive fetch): machines
-that fetched it keep it, fresh checkouts can extract it from the
-previous release's portable zip. It leaves entirely with ticket 06.
+The paddle half of the harness needs the old engine's sidecar bundle,
+which left the repo entirely with ticket 06 of the pp-ocrv6-sidecar
+feature (and no release ever shipped it). To re-run the paddle half,
+place a PaddleOCR-json v1.4.1 release archive (hiroi-sora's Umi-OCR
+distribution) at `src-tauri/resources/paddleocr/` yourself; otherwise
+scope the run with `-SkipPaddle`. The committed `summary.tsv` /
+`timing.tsv` stay as the recorded comparison evidence either way.
 
 The oar CLI fetches each model on first use into its cache (`~/.oar`,
 override with `$env:OAR_HOME`) with SHA-256 verification: the three

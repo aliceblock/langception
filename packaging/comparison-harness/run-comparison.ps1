@@ -80,7 +80,7 @@ function Run-PaddleConfig([string]$Config, [string]$Variant, $ImageFiles) {
 
     $exe = Join-Path $PaddleDir "PaddleOCR-json.exe"
     if (-not (Test-Path $exe)) {
-        throw "PaddleOCR-json.exe not found at $exe - the old engine bundle predates the fetch-script rework (pp-ocrv6-sidecar ticket 03): extract it from the previous release's portable zip"
+        throw "PaddleOCR-json.exe not found at $exe - the old engine bundle left the repo with pp-ocrv6-sidecar ticket 06 and no release ever shipped it: place a PaddleOCR-json v1.4.1 release archive (hiroi-sora's Umi-OCR distribution) here yourself, or run with -SkipPaddle"
     }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo

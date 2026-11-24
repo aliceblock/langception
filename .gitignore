@@ -3,19 +3,12 @@
 dist/
 src-tauri/gen/
 
-# The bundled PaddleOCR-json sidecar + models (ticket 31) — ~300 MB,
-# fetched from the release archive; never committed. The license
-# attribution file IS committed: it satisfies tauri's bundle.resources
-# glob (tauri-build rejects an empty match) and rides along in the
-# installer, as bundled Apache-2.0 code requires. The old engine and this
-# resources folder leave with the pp-ocrv6-sidecar feature's ticket 06.
-/src-tauri/resources/paddleocr/*
-!/src-tauri/resources/paddleocr/LICENSE-PaddleOCR-json.txt
-
-# The PP-OCRv6 models for the new OCR sidecar (pp-ocrv6-sidecar tickets
-# 02/03) — ~190 MB, fetched by packaging/fetch-pp-ocrv6.ps1 from the
-# official Apache-2.0 repos; never committed. The license attribution
-# file IS committed for the same glob/attributions reasons as above.
+# The PP-OCRv6 models for the bundled OCR sidecar (pp-ocrv6-sidecar
+# tickets 02/03) — ~190 MB, fetched by packaging/fetch-pp-ocrv6.ps1 from
+# the official Apache-2.0 repos; never committed. The license attribution
+# file IS committed: it satisfies tauri's bundle.resources glob
+# (tauri-build rejects an empty match) and rides along in the installer,
+# as bundled Apache-2.0 code requires.
 /src-tauri/resources/pp-ocrv6/*
 !/src-tauri/resources/pp-ocrv6/LICENSE-PP-OCRv6-models.txt
 

@@ -1,5 +1,5 @@
 //! The OCR engine fallback (ticket 31): when the configured engine — in
-//! practice the bundled PaddleOCR sidecar — cannot start or dies mid-pass,
+//! practice the bundled PP-OCRv6 sidecar — cannot start or dies mid-pass,
 //! the pass is covered by Windows OCR instead, with a visible notice about
 //! which engine actually ran. The choice itself never silently swaps: the
 //! primary engine is retried every pass (a sidecar crash recovers by
@@ -118,7 +118,7 @@ mod tests {
             Arc::new(Scripted {
                 results: StdMutex::new(primary_results),
             }),
-            "PaddleOCR",
+            "PP-OCRv6",
             Arc::new(Scripted {
                 results: StdMutex::new(fallback_results),
             }),
@@ -159,7 +159,7 @@ mod tests {
             1,
             "one notice per incident, not per failing pass: {notices:?}"
         );
-        assert!(notices[0].contains("PaddleOCR"));
+        assert!(notices[0].contains("PP-OCRv6"));
         assert!(notices[0].contains("Windows OCR"));
         assert!(notices[0].contains("missing"), "the cause is included");
     }
@@ -170,7 +170,7 @@ mod tests {
         let engine = engine(
             vec![
                 Err(ocr_error("crashed")),
-                Ok(vec![block("paddle text")]),
+                Ok(vec![block("primary text")]),
                 Err(ocr_error("crashed again")),
             ],
             vec![Ok(vec![block("windows text")])],
@@ -178,7 +178,7 @@ mod tests {
         );
 
         assert_eq!(engine.recognize(&image(), SourceLanguage::En).await.unwrap()[0].text, "windows text");
-        assert_eq!(engine.recognize(&image(), SourceLanguage::En).await.unwrap()[0].text, "paddle text");
+        assert_eq!(engine.recognize(&image(), SourceLanguage::En).await.unwrap()[0].text, "primary text");
         assert_eq!(engine.recognize(&image(), SourceLanguage::En).await.unwrap()[0].text, "windows text");
 
         let notices = notices.lock().unwrap();

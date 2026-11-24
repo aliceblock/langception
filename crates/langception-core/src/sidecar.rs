@@ -1,18 +1,17 @@
-//! The shared OCR sidecar machinery: everything both bundled engines have
-//! in common because they speak the same JSON-lines pipe protocol shape
-//! (captured frame in as base64 PNG, text blocks with positions out) and
-//! run as a long-lived child process (pp-ocrv6-sidecar feature ticket 04
-//! extracted it from `paddle.rs`, which still owns the old engine's
-//! launch arguments). The state machine: lazily spawned on the first OCR
-//! need, reused across passes, restarted when the model selection changes
-//! (the engine type supplies the key its launch arguments are built
-//! from), killed when dropped — it never outlives the app. Everything
-//! protocol-shaped here is testable offline: the reply parser (against
-//! recorded fixtures), the request encoding, and the process state
-//! machine (against the scripted `paddle_stub` binary — see
-//! `tests/paddle_sidecar_tests.rs` and `tests/ppocr_sidecar_tests.rs`).
-//! The real sidecars are exercised by the manual smoke checklists, like
-//! every other live engine.
+//! The shared OCR sidecar machinery (pp-ocrv6-sidecar feature ticket 04):
+//! the bundled engine speaks a JSON-lines pipe protocol shape (captured
+//! frame in as base64 PNG, text blocks with positions out) and runs as a
+//! long-lived child process, so everything protocol-shaped lives here and
+//! the engine modules own only their config surface and launch arguments.
+//! The state machine: lazily spawned on the first OCR need, reused across
+//! passes, restarted when the model selection changes (the engine type
+//! supplies the key its launch arguments are built from), killed when
+//! dropped — it never outlives the app. Everything protocol-shaped here
+//! is testable offline: the reply parser (against recorded fixtures), the
+//! request encoding, and the process state machine (against the scripted
+//! `ocr_stub` binary — see `tests/ppocr_sidecar_tests.rs`). The real
+//! sidecar is exercised by the manual smoke checklists, like every other
+//! live engine.
 
 use crate::fused::bgra_to_png_bytes;
 use crate::ports::{CapturedImage, OcrError, TextBlock};
@@ -124,7 +123,7 @@ pub fn parse_reply(line: &str) -> Result<Vec<TextBlock>, OcrError> {
     }
 }
 
-// ---- The sidecar process (integration-tested against paddle_stub) ----
+// ---- The sidecar process (integration-tested against ocr_stub) ----
 
 /// How many stderr lines are kept for error messages: the sidecars
 /// colorize and log a lot; the tail is enough to diagnose a crash.
@@ -477,7 +476,7 @@ mod tests {
 
     #[test]
     fn success_reply_becomes_blocks_with_bounding_boxes() {
-        let reply = include_str!("../fixtures/paddle/success.json");
+        let reply = include_str!("../fixtures/sidecar/success.json");
         let blocks = parse_reply(reply).unwrap();
         assert_eq!(blocks.len(), 2);
         assert_eq!(
@@ -497,7 +496,7 @@ mod tests {
 
     #[test]
     fn tilted_quad_becomes_the_axis_aligned_hull() {
-        let reply = include_str!("../fixtures/paddle/success_skewed_quad.json");
+        let reply = include_str!("../fixtures/sidecar/success_skewed_quad.json");
         let blocks = parse_reply(reply).unwrap();
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].x, 101);
@@ -509,13 +508,13 @@ mod tests {
 
     #[test]
     fn no_text_found_is_an_empty_result_not_an_error() {
-        let reply = include_str!("../fixtures/paddle/no_text.json");
+        let reply = include_str!("../fixtures/sidecar/no_text.json");
         assert_eq!(parse_reply(reply).unwrap(), Vec::new());
     }
 
     #[test]
     fn engine_errors_carry_the_sidecars_message() {
-        let reply = include_str!("../fixtures/paddle/bad_base64.json");
+        let reply = include_str!("../fixtures/sidecar/bad_base64.json");
         let error = parse_reply(reply).unwrap_err();
         assert!(
             error.message.contains("Failed to decode base64"),

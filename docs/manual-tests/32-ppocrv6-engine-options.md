@@ -4,7 +4,8 @@ The new engine's lifecycle (lazy spawn, reuse, restart on model change,
 crash recovery, timeouts) is covered offline by `cargo test` against the
 scripted stub (`ppocr_sidecar_tests`); this checklist exercises the REAL
 sidecar and the packaging — everything that needs a live desktop and the
-~200 MB fetched bundle (ticket 06 adds the installer/portable checks).
+~190 MB fetched bundle (the installer/portable artifact checks live in
+`31-bundle-verification.md`).
 
 ## Setup
 
