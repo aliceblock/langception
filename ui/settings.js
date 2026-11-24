@@ -1923,6 +1923,30 @@ async function saveAll() {
 }
 document.getElementById("save-all").addEventListener("click", saveAll);
 
+// Ticket 61 (the redesign's save bar): Discard puts every tracked field
+// back to its snapshot in one press — the same restoreFields each failed
+// save runs, for all five areas at once, with each area's derived-UI
+// refresh following (the fused-reading warning, the expanded engine card,
+// the profile picker's option set, the style preview and its disabled
+// color field). Pure client state: nothing is invoked, the config is
+// untouched, and updateSaveFooter re-hides the bar.
+function discardAll() {
+  restoreFields(TRACKED_ENGINES);
+  restoreFields(TRACKED_GENERAL);
+  restoreFields(TRACKED_PROFILE);
+  restoreFields(TRACKED_HOTKEYS);
+  restoreFields(TRACKED_STYLE);
+  enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
+  expandSelectedEngineCard();
+  profileExe.dataset.chosen = savedSnapshot.get(profileExe) ?? "";
+  renderExeOptions();
+  styleColor.disabled = styleAutoColors.checked;
+  updateAlignmentRowVisibility();
+  updateStylePreview();
+  updateSaveFooter();
+}
+document.getElementById("save-discard").addEventListener("click", discardAll);
+
 // Ticket 39: the close handshake's page side. CloseRequested (titlebar ✕,
 // Alt+F4) no longer hides this window directly — it pings the page, and the
 // page decides: a clean page hides immediately, a dirty page asks first and

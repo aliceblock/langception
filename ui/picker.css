@@ -33,8 +33,10 @@ html, body {
 
 #selection {
   position: fixed;
-  /* Brand yellow border (ticket 16) + white halo so it reads on any scene. */
-  border: 1px solid #ffc91f;
+  /* Brand amber border (ticket 61: the ramp from redesign.html; this
+     window loads no theme.css so the value is verbatim) + white halo so it
+     reads on any scene. */
+  border: 1px solid #f59e0b;
   outline: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow: 0 0 0 100000px rgba(0, 0, 0, 0.45);
 }
@@ -50,12 +52,12 @@ html, body {
   top: 18px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(13, 14, 18, 0.92);
-  color: #f2f3f7;
-  font: 16px "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
+  background: rgba(15, 17, 21, 0.92);
+  color: #e2e8f0;
+  font: 16px "Inter", "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
   padding: 8px 18px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 201, 31, 0.55);
+  border: 1px solid rgba(245, 158, 11, 0.55);
   pointer-events: none;
   white-space: nowrap;
   max-width: 90vw;
@@ -64,8 +66,8 @@ html, body {
 }
 
 #picker-bar.error {
-  color: #ff5566;
-  border-color: #ff5566;
+  color: #fb7185;
+  border-color: #fb7185;
 }
 
 .hidden { display: none; }

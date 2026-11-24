@@ -105,17 +105,46 @@
       </div>
     </div>
 
-    <nav id="tabs" class="tabs hidden">
-      <button class="tab active" data-tab="general" data-i18n="settings.tab.general">General</button>
-      <button class="tab" data-tab="engines" data-i18n="settings.tab.engines">Engines</button>
-      <button class="tab" data-tab="glossary" data-i18n="settings.tab.glossary">Glossary</button>
-      <button class="tab" data-tab="profiles" data-i18n="settings.tab.profiles">Profiles</button>
-      <button class="tab" data-tab="text-style" data-i18n="settings.tab.text_style">Text Style</button>
-      <button class="tab" data-tab="hotkeys" data-i18n="settings.tab.hotkeys">Hotkeys</button>
-      <button class="tab" data-tab="about" data-i18n="settings.tab.about">About</button>
-    </nav>
+    <!-- Ticket 61: the redesign's Settings shell — a left sidebar nav (icon
+         + label, About pinned to the bottom) beside the scrolling pages,
+         hosted together in .settings-body so the sidebar stays put while
+         the pages scroll. The icons are decorative inline SVGs (the Lucide
+         set the mock uses, vendored as markup — no CDN); the labels moved
+         into data-i18n spans because applyStatic writes textContent and
+         would otherwise wipe an icon sitting beside them. -->
+    <div id="settings-body" class="settings-body">
+      <nav id="tabs" class="tabs hidden">
+        <button class="tab active" data-tab="general">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>
+          <span data-i18n="settings.tab.general">General</span>
+        </button>
+        <button class="tab" data-tab="engines">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg>
+          <span data-i18n="settings.tab.engines">Engines</span>
+        </button>
+        <button class="tab" data-tab="glossary">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          <span data-i18n="settings.tab.glossary">Glossary</span>
+        </button>
+        <button class="tab" data-tab="profiles">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 4v4"/><path d="M2 8h20"/><path d="M6 4v4"/></svg>
+          <span data-i18n="settings.tab.profiles">Profiles</span>
+        </button>
+        <button class="tab" data-tab="text-style">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" x2="15" y1="20" y2="20"/><line x1="12" x2="12" y1="4" y2="20"/></svg>
+          <span data-i18n="settings.tab.text_style">Text Style</span>
+        </button>
+        <button class="tab" data-tab="hotkeys">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/></svg>
+          <span data-i18n="settings.tab.hotkeys">Hotkeys</span>
+        </button>
+        <button class="tab about" data-tab="about">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          <span data-i18n="settings.tab.about">About</span>
+        </button>
+      </nav>
 
-    <main id="tab-pages" class="pages hidden">
+      <main id="tab-pages" class="pages hidden">
       <section id="tab-general" class="page active">
         <h2 data-i18n="settings.general.title">General</h2>
         <!-- Ticket 41: one concern (the global settings) — the whole body
@@ -788,14 +817,25 @@
         </div>
       </section>
     </main>
+    </div>
 
     <!-- Ticket 39: one Save for every explicit-save tab (General, Engines,
          Profiles, Hotkeys), shown only while some tracked field differs from
          its saved snapshot — regardless of which tab is open. Sits at the
          window bottom so it stays reachable from any tab; ticket 41 restyles
-         this footer. -->
+         this footer. Ticket 61: the redesign's sticky save bar — an
+         unsaved-changes note with a pulsing dot on the left, Discard (one
+         press restores every tracked field's snapshot, settings.js) beside
+         Save on the right, an amber-tinted top edge. -->
     <footer id="save-footer" class="save-footer hidden">
-      <button id="save-all" class="btn primary" data-i18n="settings.footer.save">Save changes</button>
+      <span class="save-note">
+        <span class="save-dot" aria-hidden="true"></span>
+        <span data-i18n="settings.footer.unsaved">You have unsaved changes</span>
+      </span>
+      <span class="save-actions">
+        <button id="save-discard" class="btn" data-i18n="settings.footer.discard">Discard</button>
+        <button id="save-all" class="btn primary" data-i18n="settings.footer.save">Save changes</button>
+      </span>
     </footer>
 
     <div id="toast" class="toast hidden"></div>

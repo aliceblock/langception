@@ -1,17 +1,34 @@
-/* Langception shared theme (ticket 16): the black/yellow token block, the
-   focus ring, dark scrollbars, and the frameless title-bar chrome. Linked
-   by every normal window (Results, Settings) before its own stylesheet, so
-   a page can override anything here. The overlay pills and the picker keep
-   their own chrome (overlay.css, picker.css) but share the same palette. */
+/* Langception shared theme — the token block, the focus ring, the
+   scrollbars, keycaps, and the frameless title-bar chrome. Linked by every
+   normal window (Results, Settings, Debug Log) before its own stylesheet,
+   so a page can override anything here. The overlay pills and the picker
+   keep their own chrome (overlay.css, picker.css) but share the same
+   palette.
 
-/* Bundled Noto Sans Thai (SIL OFL 1.1, see fonts/LICENSE.txt) in both
-   weights (ticket 63): with only the Regular declared, Chromium would
-   synthesize faux bold for the 600/700 weights the UI labels use. This is
-   the canonical copy — every normal window (Results, Settings, Debug Log)
-   links theme.css; the overlay and the picker don't, so overlay.css and
-   picker.css each carry a verbatim duplicate. Window font stacks name the
-   face after "Segoe UI" — Latin renders in Segoe UI, Thai glyphs fall
-   through to this face. */
+   Ticket 61: the token ramp follows the redesign prototype (redesign.html
+   at the repo root) — a slightly blue-dark surface ramp (#0f1115 …), a
+   deeper amber accent (#f59e0b, hover #fbbf24) replacing the old brighter
+   yellow, a --border-strong step for control hover, thin pill scrollbars,
+   and bundled Inter for Latin. Variable names are unchanged from ticket 16,
+   so the page styles move with the ramp instead of re-deriving it. */
+
+/* Latin: bundled Inter (SIL OFL 1.1, see fonts/LICENSE-inter.txt), the
+   redesign prototype's UI face, as ONE variable font — the opsz+wght axes
+   cover every weight the UI uses from a single file. Thai: bundled Noto
+   Sans Thai in both weights (ticket 63, fonts/LICENSE.txt) — with only the
+   Regular declared, Chromium would synthesize faux bold for the 600/700
+   weights the UI labels use. Window stacks are "Inter", "Segoe UI",
+   "Noto Sans Thai": Latin renders in Inter, Thai glyphs fall through to
+   the bundled face. theme.css's Noto pair stays the canonical declaration
+   — overlay.css and picker.css each carry a verbatim duplicate because
+   they don't load theme.css. */
+@font-face {
+  font-family: "Inter";
+  src: url("fonts/Inter-Variable.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+}
+
 @font-face {
   font-family: "Noto Sans Thai";
   src: url("fonts/NotoSansThai-Regular.ttf") format("truetype");
@@ -37,56 +54,100 @@ button, input, select, textarea {
 }
 
 :root {
-  /* Black/yellow brand: near-black surfaces, yellow accent. --accent-ink is
-     the text color ON yellow (11:1 contrast); --accent-deep is the dark end
-     of the accent ramp; --info keeps the cyan identity for interactive
-     geometry (Adjust Mode, zone rectangles). color-scheme: dark keeps native
-     select/datalist/scrollbars dark even when Windows itself runs light —
-     the app is dark-only by design. */
+  /* Black/amber brand on a near-black blue-grey ramp (ticket 61 values,
+     same names as ticket 16). --accent-ink is the text color ON amber
+     (~8.5:1), --ok-ink the ink on the emerald toast (the raw hex
+     tokenized at review); --accent-deep is the dark end of the accent ramp (Debug Log
+     borders/headings); --border-strong sits between --border and --muted
+     for control hover; --info keeps the cyan identity for interactive
+     geometry (Adjust Mode, zone rectangles — the overlay's zone-rect
+     hardcodes the same value); --panel-3 is the elevated-hover step above
+     --panel-2 (button hover ground); --glossary keeps the old yellow so warning/
+     privacy/glossary chips still read apart from the now-orange accent.
+     color-scheme: dark keeps native select/datalist/scrollbars dark even
+     when Windows itself runs light — the app is dark-only by design. */
   color-scheme: dark;
-  --bg: #0d0e12;
-  --panel: #15171d;
-  --panel-2: #1e212a;
-  --border: #2d303b;
-  --text: #f2f3f7;
-  --muted: #9aa2b5;
-  --accent: #ffc91f;
-  --accent-2: #ffd95c;
-  --accent-deep: #d99e00;
-  --accent-ink: #191302;
+  --bg: #0f1115;
+  --panel: #16181d;
+  --panel-2: #1e2128;
+  --panel-3: #252932;
+  --border: #262932;
+  --border-strong: #363b47;
+  --text: #e2e8f0;
+  --muted: #a1a1aa;
+  --accent: #f59e0b;
+  --accent-2: #fbbf24;
+  --accent-deep: #b45309;
+  --accent-ink: #09090b;
   --info: #6cc7ff;
-  --ok: #3ecf7a;
-  --err: #ff5566;
+  --ok: #34d399;
+  --ok-ink: #08251a;
+  --err: #fb7185;
   --glossary: #f2b63c;
 }
 
-/* Keyboard focus is always visible: a yellow ring nothing else paints over. */
+/* Keyboard focus is always visible: an amber ring nothing else paints over. */
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-/* Thin dark scrollbars (the default Windows ones glare on near-black). */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+/* PRODUCT.md, Accessibility: "any future motion needs a reduced-motion
+   fallback" — ticket 61 introduced the app's first animations (the
+   translation-card slide-in, the save bar's pulsing dot), so here is the
+   fallback: one neutralizer collapsing every animation/transition to
+   effectively nothing, covering both plus whatever comes next. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Thin pill scrollbars (ticket 61, the redesign's desktop-app feel): 6px
+   rounded-full thumbs, no track, no separating border — the default
+   Windows ones glare on near-black. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--border);
-  border-radius: 5px;
-  border: 2px solid var(--bg);
+  border-radius: 999px;
 }
-::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+
+/* Keycap (ticket 61): the Results empty state renders its hotkey hints as
+   pressed keys. The mock's JetBrains Mono maps to the app's mono stack —
+   no extra bundled face for five key names. */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  padding: 1px 7px;
+  background: linear-gradient(180deg, #232730 0%, #191c23 100%);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 2px 0 #111318;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  color: var(--text);
+}
 
 /* Frameless window chrome: the title-bar row carries
    data-tauri-drag-region (drag + double-click maximize) — so does every
    child that is not interactive, because Tauri starts a drag only when the
    mousedown target itself has the attribute and a plain span would consume
    the event. .titlebar-buttons (filled by titlebar.js) is the one zone that
-   opts back out so clicks always reach the controls. */
+   opts back out so clicks always reach the controls. Ticket 61: 52px tall
+   like the redesign's header. */
 .titlebar-row {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 44px;
+  height: 52px;
 }
 
 .brand {
@@ -100,9 +161,11 @@ button, input, select, textarea {
 /* The real brand artwork (ticket 32): ui/logo.png is the bundled 128px icon
    verbatim — same file the exe/taskbar use — downscaled by the browser to
    titlebar size. The border just separates the artwork's black ground from
-   the panel behind it; the attribute work (drag region) stays in the HTML. */
+   the panel behind it; the attribute work (drag region) stays in the HTML.
+   (The redesign mock draws an "LC" gradient square; the real window keeps
+   the actual icon.) */
 .logo {
-  width: 26px; height: 26px;
+  width: 28px; height: 28px;
   flex: none;
   border-radius: 7px;
   border: 1px solid var(--border);
@@ -117,16 +180,16 @@ button, input, select, textarea {
 }
 
 .tb-btn {
-  width: 34px;
-  height: 26px;
+  width: 38px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--muted);
   cursor: pointer;
 }
 .tb-btn:hover { background: var(--panel-2); color: var(--text); }
-.tb-btn.close:hover { background: var(--err); color: #fff; }
+.tb-btn.close:hover { background: rgba(251, 113, 133, 0.2); color: var(--err); }

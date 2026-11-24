@@ -27,7 +27,7 @@ const profileName = document.getElementById("profile-name");
 const errorBanner = document.getElementById("error-banner");
 const resultsList = document.getElementById("results");
 const emptyState = document.getElementById("empty-state");
-const emptyHint = document.getElementById("empty-hint");
+const emptyShortcuts = document.getElementById("empty-shortcuts");
 const copiedToast = document.getElementById("copied-toast");
 const zonesPanel = document.getElementById("zones-panel");
 const zonesTitle = document.getElementById("zones-title");
@@ -98,7 +98,15 @@ function renderStatus(status) {
 
   toggleBtn.textContent = running ? t("results.toggle.stop") : t("results.toggle.start");
   toggleBtn.classList.toggle("primary", !running);
+  // Ticket 61: the redesign's Stop reads as destructive — a rose-tint
+  // variant, mirroring the primary amber on the Start side.
+  toggleBtn.classList.toggle("danger", running);
   pauseBtn.disabled = !running;
+  // The empty-state Start CTA repeats the header's start side; the card is
+  // gone once translations exist, but a slow first pass leaves it visible
+  // while the loop already runs — disabled, it can't double-start.
+  const emptyStartBtn = document.getElementById("empty-start");
+  if (emptyStartBtn) emptyStartBtn.disabled = running;
   pauseBtn.textContent = paused ? t("results.pause.resume") : t("results.pause.pause");
 
   // Ticket 19: the title bar tells you at a glance what the loop is
@@ -133,21 +141,51 @@ function renderStatus(status) {
     warningsLine.classList.add("hidden");
   }
 
-  // Ticket 21: one action per line — a run-on sentence doesn't scan. The
-  // hotkeys stay dynamic (live-rebindable from Settings), same as everywhere
-  // else in this file.
-  emptyHint.textContent = [
-    t("results.empty_hint.zone", { hotkey: hotkeys.newZone }),
-    t("results.empty_hint.oneshot", { hotkey: hotkeys.oneShot }),
-    t("results.empty_hint.toggle", { hotkey: hotkeys.toggle }),
-    t("results.empty_hint.pause", { hotkey: hotkeys.pause }),
-    t("results.empty_hint.adjust", { hotkey: hotkeys.adjust }),
-  ].join("\n");
+  // Ticket 61 (redesign empty-state card): one shortcut row per action —
+  // the action label on the left, the hotkey rendered as pressed keys
+  // (<kbd>) on the right. The hotkeys stay dynamic (live-rebindable from
+  // Settings), same as everywhere else in this file. Label-only strings
+  // (results.empty_shortcut.*) keep the {hotkey} interpolation out of the
+  // sentence so the keycaps can carry it instead.
+  emptyShortcuts.replaceChildren(
+    shortcutRow(t("results.empty_shortcut.zone"), hotkeys.newZone),
+    shortcutRow(t("results.empty_shortcut.oneshot"), hotkeys.oneShot),
+    shortcutRow(t("results.empty_shortcut.toggle"), hotkeys.toggle),
+    shortcutRow(t("results.empty_shortcut.pause"), hotkeys.pause),
+    shortcutRow(t("results.empty_shortcut.adjust"), hotkeys.adjust),
+  );
 
   renderModeControls();
   renderZones();
   renderExcluded();
   renderErrorBanner();
+}
+
+// One row of the empty-state shortcut card: the label, then the hotkey's
+// modifier/key parts as individual keycaps joined by "+" glyphs.
+function shortcutRow(label, hotkey) {
+  const row = document.createElement("div");
+  row.className = "shortcut-row";
+
+  const name = document.createElement("span");
+  name.textContent = label;
+
+  const keys = document.createElement("span");
+  keys.className = "shortcut-keys";
+  hotkey.split("+").forEach((part, index) => {
+    if (index > 0) {
+      const plus = document.createElement("span");
+      plus.className = "shortcut-plus";
+      plus.textContent = "+";
+      keys.append(plus);
+    }
+    const key = document.createElement("kbd");
+    key.textContent = part;
+    keys.append(key);
+  });
+
+  row.append(name, keys);
+  return row;
 }
 
 // ---- Capture Target (zones vs full-screen + monitor) ----
@@ -377,7 +415,7 @@ function addEntry(block, translation, origin, atMs) {
   emptyState.classList.add("hidden");
 
   const li = document.createElement("li");
-  li.className = "entry";
+  li.className = "entry slide-in";
   li.title = t("results.entry.copy_title");
 
   const meta = document.createElement("div");
@@ -391,6 +429,7 @@ function addEntry(block, translation, origin, atMs) {
     badge.textContent = (origin && origin.name) || t("results.entry.zone_badge");
   }
   const time = document.createElement("span");
+  time.className = "entry-time";
   time.textContent = new Date(atMs).toLocaleTimeString();
   meta.append(badge, time);
 
@@ -479,6 +518,17 @@ window.addEventListener("DOMContentLoaded", async () => {
     } finally {
       newZoneBtn.disabled = false;
     }
+  });
+
+  // Ticket 61: the empty-state card repeats the two starting actions so a
+  // first-run window has them where the eye lands. Same invocations as the
+  // header buttons; the Start CTA starts only (the card disappears once
+  // translations exist, so its stop side is never reachable).
+  document.getElementById("empty-new-zone").addEventListener("click", () => {
+    invoke("open_zone_picker", { mode: "zone" }).catch((e) => showError("zone", String(e)));
+  });
+  document.getElementById("empty-start").addEventListener("click", () => {
+    invoke("start_translation").catch((e) => showError("config", String(e)));
   });
 
   adjustBtn.addEventListener("click", async () => {

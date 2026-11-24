@@ -44,14 +44,20 @@
         <span class="hint" id="mode-hint"></span>
       </summary>
       <div class="mode-grid">
-        <label class="mode-row">
-          <input type="radio" name="capture-target" value="zones" id="mode-zones" />
-          <span data-i18n="results.mode_zones">Capture Zones — watch the zones listed below</span>
-        </label>
-        <label class="mode-row">
-          <input type="radio" name="capture-target" value="fullscreen" id="mode-fullscreen" />
-          <span data-i18n="results.mode_fullscreen">Full screen — every Text Block on one monitor (minus Excluded Blocks)</span>
-        </label>
+        <!-- Ticket 61: the redesign's segmented Capture-Mode control. The
+             radios stay the real controls (keyboard arrow switching, the
+             change events main.js listens on) — CSS hides them and styles
+             the checked label as the active segment (:has). -->
+        <div class="segmented">
+          <label class="mode-row">
+            <input type="radio" name="capture-target" value="zones" id="mode-zones" />
+            <span data-i18n="results.mode_zones">Capture Zones — watch the zones listed below</span>
+          </label>
+          <label class="mode-row">
+            <input type="radio" name="capture-target" value="fullscreen" id="mode-fullscreen" />
+            <span data-i18n="results.mode_fullscreen">Full screen — every Text Block on one monitor (minus Excluded Blocks)</span>
+          </label>
+        </div>
         <label class="mode-row monitor-row" id="monitor-row">
           <span class="monitor-label" data-i18n="results.monitor_label">Monitor</span>
           <select id="monitor-select" class="monitor-select"></select>
@@ -81,9 +87,20 @@
 
     <main>
       <ul id="results" class="results"></ul>
+      <!-- Ticket 61: the redesign's empty-state card — icon, title, the
+           hotkey list as pressed-key rows (main.js builds them from the
+           live hotkey config), and two quick actions mirroring the header's
+           Start and + New Zone. -->
       <div id="empty-state" class="empty-state">
+        <div class="empty-glyph" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="14" x="3" y="5" rx="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/></svg>
+        </div>
         <p data-i18n="results.empty_state.title">No translations yet.</p>
-        <p class="hint" id="empty-hint"></p>
+        <div id="empty-shortcuts" class="empty-shortcuts"></div>
+        <div class="empty-cta">
+          <button id="empty-new-zone" class="btn" data-i18n="results.new_zone_btn">+ New Zone</button>
+          <button id="empty-start" class="btn primary" data-i18n="results.empty_cta.start">Start now</button>
+        </div>
       </div>
     </main>
 

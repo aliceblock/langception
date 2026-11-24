@@ -123,7 +123,7 @@ body.adjust .overlay-block:hover {
   border-radius: 3px 3px 0 0;
   background: #6cc7ff;
   color: #10222c;
-  font-family: "Segoe UI", "Noto Sans Thai", sans-serif;
+  font-family: "Inter", "Segoe UI", "Noto Sans Thai", sans-serif;
   font-size: 13px;
   white-space: nowrap;
   pointer-events: none;

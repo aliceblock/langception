@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="th" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Langception — UI/UX Redesign Prototype</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts: Inter & Noto Sans Thai + JetBrains Mono for shortcuts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'Noto Sans Thai', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            app: {
+              bg: '#0f1115',
+              surface: '#16181d',
+              elevated: '#1e2128',
+              border: '#262932',
+              borderHover: '#363b47',
+              amber: '#f59e0b',
+              amberHover: '#fbbf24',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom Scrollbar for Desktop App Feel */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #262932;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #363b47;
+    }
+
+    /* Keycap Styling */
+    kbd {
+      background: linear-gradient(180deg, #232730 0%, #191c23 100%);
+      border: 1px solid #323642;
+      box-shadow: 0 2px 0 #111318;
+      border-radius: 6px;
+      padding: 2px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: #e2e8f0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+    }
+
+    /* Subtle fade-in animation for new translation items */
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .animate-slide-in {
+      animation: slideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    /* Game Scene Background for Text Style Preview */
+    .game-bg-preview {
+      background: linear-gradient(135deg, #2c1e16 0%, #5c3a21 45%, #1e293b 100%);
+    }
+  </style>
+</head>
+
+<body class="bg-[#090a0d] text-slate-200 min-h-screen flex flex-col items-center justify-center p-2 sm:p-6 select-none antialiased">
+
+  <!-- Prototype Helper Banner (Outside Tauri Window) -->
+  <div class="w-full max-w-4xl mb-3 flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90">
+    <div class="flex items-center gap-2">
+      <i data-lucide="sparkles" class="w-4 h-4 text-amber-400 shrink-0"></i>
+      <span><strong>Interactive Prototype:</strong> ลองกดปุ่ม <span class="text-amber-400 font-semibold">Start</span> เพื่อจำลองการแปล, สลับโหมด <span class="underline">Capture Zones / Full Screen</span> หรือคลิกไอคอน <span class="text-amber-400 font-semibold">Settings</span></span>
+    </div>
+    <button onclick="simulateSingleTranslation()" class="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-medium transition flex items-center gap-1.5 cursor-pointer">
+      <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+      <span>One-shot Test</span>
+    </button>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- TAURI DESKTOP APPLICATION WINDOW FRAME                                -->
+  <!-- ===================================================================== -->
+  <div id="app-window" class="relative w-full max-w-4xl h-[680px] max-h-[88vh] bg-app-bg border border-app-border rounded-2xl shadow-2xl shadow-black/80 flex flex-col overflow-hidden transition-all duration-300">
+
+    <!-- 1. CUSTOM TITLEBAR / HEADER (data-tauri-drag-region) -->
+    <header data-tauri-drag-region class="h-13 min-h-[52px] px-3.5 bg-app-surface border-b border-app-border flex items-center justify-between gap-2 shrink-0">
+      
+      <!-- Left: App Brand, Status Pill & Language Selector -->
+      <div class="flex items-center gap-2.5 min-w-0">
+        <!-- App Icon -->
+        <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-zinc-950 font-bold text-xs shadow-sm shrink-0">
+          LC
+        </div>
+        
+        <!-- Title -->
+        <span class="font-semibold text-sm tracking-tight text-white truncate hidden sm:inline">Langception</span>
+
+        <!-- Status Badge -->
+        <div id="status-badge" class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-800/90 text-zinc-400 border border-zinc-700/60 transition-colors">
+          <span id="status-dot" class="w-1.5 h-1.5 rounded-full bg-zinc-500"></span>
+          <span id="status-text">Stopped</span>
+        </div>
+
+        <!-- Divider -->
+        <div class="h-4 w-[1px] bg-app-border mx-0.5 hidden sm:block"></div>
+
+        <!-- Interactive Language Pair Dropdown -->
+        <div class="relative" id="lang-dropdown-container">
+          <button onclick="toggleLangMenu()" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border hover:border-app-borderHover text-xs font-medium text-sky-300 transition cursor-pointer">
+            <i data-lucide="languages" class="w-3.5 h-3.5 text-sky-400"></i>
+            <span id="selected-lang">EN → TH</span>
+            <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-zinc-400"></i>
+          </button>
+
+          <!-- Dropdown Menu -->
+          <div id="lang-menu" class="hidden absolute left-0 mt-1.5 w-44 rounded-xl bg-app-elevated border border-app-border shadow-xl shadow-black/60 py-1.5 z-50">
+            <div class="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Translation Pair</div>
+            <button onclick="selectLang('EN → TH')" class="w-full px-3 py-1.5 text-left text-xs hover:bg-white/5 flex items-center justify-between text-slate-200 cursor-pointer">
+              <span>English → ไทย</span>
+              <span class="text-[10px] text-amber-400 font-mono">EN→TH</span>
+            </button>
+            <button onclick="selectLang('JP → TH')" class="w-full px-3 py-1.5 text-left text-xs hover:bg-white/5 flex items-center justify-between text-slate-200 cursor-pointer">
+              <span>日本語 → ไทย</span>
+              <span class="text-[10px] text-zinc-400 font-mono">JP→TH</span>
+            </button>
+            <button onclick="selectLang('CN → TH')" class="w-full px-3 py-1.5 text-left text-xs hover:bg-white/5 flex items-center justify-between text-slate-200 cursor-pointer">
+              <span>中文 → ไทย</span>
+              <span class="text-[10px] text-zinc-400 font-mono">CN→TH</span>
+            </button>
+            <button onclick="selectLang('KR → TH')" class="w-full px-3 py-1.5 text-left text-xs hover:bg-white/5 flex items-center justify-between text-slate-200 cursor-pointer">
+              <span>한국어 → ไทย</span>
+              <span class="text-[10px] text-zinc-400 font-mono">KR→TH</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Contextual Actions & Window Controls -->
+      <div class="flex items-center gap-1.5">
+        
+        <!-- Contextual Playback Controls -->
+        <div id="playback-controls" class="flex items-center gap-1.5">
+          <!-- State: Stopped -> Show Primary Start Button -->
+          <button id="btn-start" onclick="setAppState('running')" class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-app-amber hover:bg-app-amberHover text-zinc-950 font-semibold text-xs shadow-sm shadow-amber-500/20 transition cursor-pointer">
+            <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+            <span>Start</span>
+          </button>
+
+          <!-- State: Running / Paused -> Show Pause/Resume & Stop -->
+          <button id="btn-pause" onclick="togglePause()" class="hidden items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 font-medium text-xs transition cursor-pointer">
+            <i id="icon-pause" data-lucide="pause" class="w-3.5 h-3.5"></i>
+            <span id="text-pause">Pause</span>
+          </button>
+
+          <button id="btn-stop" onclick="setAppState('stopped')" class="hidden items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 font-medium text-xs transition cursor-pointer" title="Stop Capture">
+            <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i>
+            <span class="hidden sm:inline">Stop</span>
+          </button>
+        </div>
+
+        <!-- Adjust Overlay Toggle -->
+        <button id="btn-adjust" onclick="toggleAdjustMode()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-zinc-300 text-xs font-medium transition cursor-pointer" title="Toggle Overlay Adjust Mode (Alt+Shift+A)">
+          <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5 text-zinc-400"></i>
+          <span class="hidden md:inline">Adjust</span>
+        </button>
+
+        <!-- Settings Modal Trigger -->
+        <button onclick="openSettings()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-zinc-300 text-xs font-medium transition cursor-pointer" title="Settings">
+          <i data-lucide="settings" class="w-3.5 h-3.5 text-zinc-400"></i>
+          <span class="hidden sm:inline">Settings</span>
+        </button>
+
+        <!-- Window Controls Divider -->
+        <div class="h-4 w-[1px] bg-app-border mx-1"></div>
+
+        <!-- Always on Top Pin Button -->
+        <button id="btn-pin" onclick="toggleAlwaysOnTop()" class="p-1.5 rounded-lg hover:bg-white/5 text-zinc-400 transition cursor-pointer" title="Always on Top (ปักหมุดหน้าต่างให้อยู่บนสุด)">
+          <i data-lucide="pin" class="w-3.5 h-3.5"></i>
+        </button>
+
+        <!-- Minimize -->
+        <button onclick="showToast('Minimize Window (Tauri API)')" class="p-1.5 rounded-lg hover:bg-white/5 text-zinc-400 hover:text-white transition cursor-pointer" title="Minimize">
+          <i data-lucide="minus" class="w-3.5 h-3.5"></i>
+        </button>
+
+        <!-- Close -->
+        <button onclick="showToast('Close Application (Tauri API)')" class="p-1.5 rounded-lg hover:bg-rose-500/20 text-zinc-400 hover:text-rose-400 transition cursor-pointer" title="Close">
+          <i data-lucide="x" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- ===================================================================== -->
+    <!-- 2. COLLAPSIBLE & CONDITIONAL CONFIGURATION PANEL                      -->
+    <!-- ===================================================================== -->
+    <section class="bg-app-surface/60 border-b border-app-border shrink-0">
+      
+      <!-- Panel Top Bar: Segmented Mode Switcher + Collapse Toggle -->
+      <div class="px-4 py-2.5 flex flex-wrap items-center justify-between gap-2">
+        
+        <!-- Left: Mode Segmented Control -->
+        <div class="flex items-center gap-3">
+          <span class="text-xs font-medium text-zinc-400 hidden sm:inline">Capture Mode:</span>
+          
+          <div class="inline-flex p-0.5 rounded-xl bg-app-bg border border-app-border">
+            <button id="tab-zones" onclick="switchCaptureMode('zones')" class="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-app-elevated text-amber-400 shadow-sm border border-app-borderHover transition cursor-pointer">
+              <i data-lucide="scan" class="w-3.5 h-3.5"></i>
+              <span>Capture Zones</span>
+              <span id="zone-count-badge" class="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500/20 text-amber-300">0</span>
+            </button>
+            
+            <button id="tab-fullscreen" onclick="switchCaptureMode('fullscreen')" class="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 border border-transparent transition cursor-pointer">
+              <i data-lucide="monitor" class="w-3.5 h-3.5"></i>
+              <span>Full Screen</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Right: Quick Action + Collapse Config Button -->
+        <div class="flex items-center gap-2">
+          <!-- Dynamic Action Button based on Mode -->
+          <button id="btn-add-zone-header" onclick="addSampleZone()" class="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border hover:border-amber-500/40 text-xs font-medium text-slate-200 transition cursor-pointer">
+            <i data-lucide="plus" class="w-3.5 h-3.5 text-amber-400"></i>
+            <span>New Zone</span>
+          </button>
+
+          <button id="btn-add-exclusion-header" onclick="addSampleExclusion()" class="hidden items-center gap-1 px-2.5 py-1 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border hover:border-amber-500/40 text-xs font-medium text-slate-200 transition cursor-pointer">
+            <i data-lucide="ban" class="w-3.5 h-3.5 text-rose-400"></i>
+            <span>Exclude Area</span>
+          </button>
+
+          <!-- Collapse / Expand Toggle -->
+          <button onclick="toggleConfigPanel()" class="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-white/5 text-xs text-zinc-400 hover:text-zinc-200 transition cursor-pointer" title="ซ่อน/แสดงแผงตั้งค่าเพื่อเพิ่มพื้นที่อ่านคำแปล">
+            <span id="config-toggle-text" class="hidden sm:inline">Hide</span>
+            <i id="config-toggle-icon" data-lucide="chevron-up" class="w-4 h-4 transition-transform duration-200"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- Collapsible Body -->
+      <div id="config-panel-body" class="px-4 pb-3 pt-0.5 transition-all duration-200">
+        
+        <!-- VIEW A: CAPTURE ZONES (Shown when mode === 'zones') -->
+        <div id="view-zones" class="rounded-xl bg-app-bg/80 border border-app-border p-3">
+          <div id="zones-empty" class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-zinc-400">
+            <div class="flex items-center gap-2">
+              <i data-lucide="crosshair" class="w-4 h-4 text-zinc-500 shrink-0"></i>
+              <span>ยังไม่มีพื้นที่จับภาพ — กด <kbd>Alt</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> หรือคลิก <strong>+ New Zone</strong> เพื่อลากครอบข้อความบนหน้าจอ</span>
+            </div>
+          </div>
+
+          <!-- Dynamic Zones List -->
+          <div id="zones-list" class="hidden grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <!-- Populated via JS -->
+          </div>
+        </div>
+
+        <!-- VIEW B: FULL SCREEN & EXCLUDED BLOCKS (Shown when mode === 'fullscreen') -->
+        <div id="view-fullscreen" class="hidden rounded-xl bg-app-bg/80 border border-app-border p-3 space-y-2.5">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-app-border/70">
+            <div class="flex items-center gap-2 text-xs">
+              <span class="text-zinc-400">Target Display:</span>
+              <select class="bg-app-elevated border border-app-border rounded-lg px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-amber-500">
+                <option>Monitor 1 — 2560×1440 (Primary)</option>
+                <option>Monitor 2 — 1920×1080</option>
+              </select>
+            </div>
+            <span class="text-[11px] text-zinc-500">แปลทุกข้อความบนหน้าจอ ยกเว้นพื้นที่ใน Excluded Blocks</span>
+          </div>
+
+          <!-- Excluded Blocks Area -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <span class="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                <i data-lucide="shield-off" class="w-3.5 h-3.5 text-rose-400"></i>
+                Excluded Blocks (<span id="exclusion-count">0</span>)
+              </span>
+            </div>
+            <div id="exclusions-empty" class="text-xs text-zinc-500 italic">
+              ไม่มีพื้นที่ยกเว้น (เช่น แถบ Taskbar, Minimap ในเกม หรือ Chat Box)
+            </div>
+            <div id="exclusions-list" class="hidden flex flex-wrap gap-2">
+              <!-- Populated via JS -->
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ===================================================================== -->
+    <!-- 3. MAIN TRANSLATION WORKSPACE (Empty State & Live Translation Feed)   -->
+    <!-- ===================================================================== -->
+    <main class="flex-1 flex flex-col min-h-0 bg-app-bg relative">
+      
+      <!-- Active Log Toolbar (Only visible when translations exist) -->
+      <div id="log-toolbar" class="hidden px-4 py-2 border-b border-app-border/60 bg-app-surface/30 flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2 text-xs text-zinc-400">
+          <i data-lucide="history" class="w-3.5 h-3.5 text-amber-400"></i>
+          <span>Translation History (<span id="log-count" class="text-slate-200 font-medium">0</span>)</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="simulateSingleTranslation()" class="px-2.5 py-1 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-xs text-zinc-300 transition flex items-center gap-1 cursor-pointer">
+            <i data-lucide="plus-circle" class="w-3 h-3 text-amber-400"></i>
+            <span>Simulate Capture</span>
+          </button>
+          <button onclick="clearTranslations()" class="px-2.5 py-1 rounded-lg hover:bg-rose-500/15 text-xs text-zinc-400 hover:text-rose-300 transition flex items-center gap-1 cursor-pointer">
+            <i data-lucide="trash-2" class="w-3 h-3"></i>
+            <span>Clear</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- STATE A: IMPROVED EMPTY STATE (2-Column Shortcut Card + Quick CTA) -->
+      <div id="empty-state" class="flex-1 flex flex-col items-center justify-center p-6 text-center overflow-y-auto">
+        <div class="w-full max-w-md rounded-2xl bg-app-surface/60 border border-app-border/80 p-5 shadow-lg">
+          
+          <div class="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-3">
+            <i data-lucide="subtitles" class="w-5 h-5 text-amber-400"></i>
+          </div>
+          
+          <h2 class="text-sm font-semibold text-white mb-1">พร้อมแปลข้อความบนหน้าจอ</h2>
+          <p class="text-xs text-zinc-400 mb-4">เลือกพื้นที่ที่ต้องการแปล หรือกด Start เพื่อเริ่มตรวจจับข้อความอัตโนมัติ</p>
+
+          <!-- Clean 2-Column Shortcut Reference -->
+          <div class="space-y-2 text-left bg-app-bg/90 rounded-xl p-3.5 border border-app-border/80 mb-4">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-zinc-300">Draw Capture Zone</span>
+              <div class="flex items-center gap-1"><kbd>Alt</kbd><span class="text-zinc-600">+</span><kbd>Shift</kbd><span class="text-zinc-600">+</span><kbd>Z</kbd></div>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-zinc-300">One-shot Capture</span>
+              <div class="flex items-center gap-1"><kbd>Alt</kbd><span class="text-zinc-600">+</span><kbd>Shift</kbd><span class="text-zinc-600">+</span><kbd>Q</kbd></div>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-zinc-300">Toggle Translation</span>
+              <div class="flex items-center gap-1"><kbd>Alt</kbd><span class="text-zinc-600">+</span><kbd>Shift</kbd><span class="text-zinc-600">+</span><kbd>T</kbd></div>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-zinc-300">Pause / Resume</span>
+              <div class="flex items-center gap-1"><kbd>Alt</kbd><span class="text-zinc-600">+</span><kbd>Shift</kbd><span class="text-zinc-600">+</span><kbd>P</kbd></div>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-zinc-300">Toggle Adjust Mode</span>
+              <div class="flex items-center gap-1"><kbd>Alt</kbd><span class="text-zinc-600">+</span><kbd>Shift</kbd><span class="text-zinc-600">+</span><kbd>A</kbd></div>
+            </div>
+          </div>
+
+          <!-- Quick Primary Action inside Empty State -->
+          <div class="flex items-center justify-center gap-2">
+            <button onclick="addSampleZone(); showToast('จำลองการสร้าง Capture Zone สำเร็จ')" class="flex-1 py-2 px-3 rounded-xl bg-app-elevated hover:bg-[#262a34] border border-app-border hover:border-amber-500/40 text-xs font-medium text-slate-200 transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <i data-lucide="scan" class="w-3.5 h-3.5 text-amber-400"></i>
+              <span>+ Draw Capture Zone</span>
+            </button>
+            <button onclick="setAppState('running')" class="py-2 px-4 rounded-xl bg-app-amber hover:bg-app-amberHover text-zinc-950 text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+              <span>Start Now</span>
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- STATE B: LIVE TRANSLATION FEED -->
+      <div id="translation-feed" class="hidden flex-1 overflow-y-auto p-4 space-y-2.5">
+        <!-- Translation cards inserted here dynamically -->
+      </div>
+
+      <!-- Adjust Mode Banner (Overlay indicator when Adjust Mode is toggled) -->
+      <div id="adjust-banner" class="hidden absolute bottom-3 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-amber-500 text-zinc-950 font-semibold text-xs shadow-lg flex items-center gap-2 z-20">
+        <i data-lucide="move" class="w-3.5 h-3.5"></i>
+        <span>Overlay Adjust Mode Active — ลากปรับตำแหน่งกล่องข้อความบนหน้าจอได้</span>
+        <button onclick="toggleAdjustMode()" class="ml-1 underline font-bold cursor-pointer">Done</button>
+      </div>
+
+    </main>
+
+    <!-- ===================================================================== -->
+    <!-- 4. COMPACT FOOTER STATUS BAR                                          -->
+    <!-- ===================================================================== -->
+    <footer class="h-7 px-3.5 bg-app-surface border-t border-app-border flex items-center justify-between text-[11px] text-zinc-500 shrink-0">
+      <div class="flex items-center gap-3">
+        <span class="flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+          OCR Engine: <span class="text-zinc-300">Windows OCR (Fast)</span>
+        </span>
+        <span class="hidden sm:inline">•</span>
+        <span class="hidden sm:inline">Overlay: <span id="overlay-status-text" class="text-zinc-300">Visible</span></span>
+      </div>
+      <div>
+        <span>v0.1.0 • Tauri</span>
+      </div>
+    </footer>
+
+    <!-- ===================================================================== -->
+    <!-- 5. FULL SETTINGS OVERLAY VIEW (7 Tabs + Sidebar + Sticky Save Bar)    -->
+    <!-- ===================================================================== -->
+    <div id="settings-modal" class="hidden absolute inset-0 bg-app-bg z-40 flex flex-col">
+      <!-- Settings Header -->
+      <div class="h-13 min-h-[52px] px-4 bg-app-surface border-b border-app-border flex items-center justify-between shrink-0">
+        <div class="flex items-center gap-2.5">
+          <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center text-zinc-950 font-bold text-[10px] shadow-sm">
+            LC
+          </div>
+          <span class="font-semibold text-sm text-white">Langception — Settings</span>
+          <span class="text-[11px] px-2 py-0.5 rounded-md bg-app-elevated text-zinc-400 border border-app-border">Global</span>
+        </div>
+        <button onclick="closeSettings()" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-white/5 text-xs text-zinc-400 hover:text-white transition cursor-pointer" title="Close Settings (Esc)">
+          <span class="hidden sm:inline text-[11px] text-zinc-500">ESC</span>
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <!-- Settings Body: Left Sidebar + Right Content -->
+      <div class="flex-1 flex min-h-0 overflow-hidden">
+        <!-- Left Sidebar -->
+        <aside class="w-44 sm:w-48 bg-app-surface/60 border-r border-app-border p-2.5 flex flex-col gap-1 shrink-0">
+          <button onclick="switchSettingsTab('general')" data-tab="general" class="settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 bg-amber-500/15 text-amber-400 border border-amber-500/30 transition cursor-pointer">
+            <i data-lucide="sliders" class="w-4 h-4 shrink-0"></i>
+            <span>General</span>
+          </button>
+          <button onclick="switchSettingsTab('engines')" data-tab="engines" class="settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-app-elevated/70 border border-transparent transition cursor-pointer">
+            <i data-lucide="cpu" class="w-4 h-4 shrink-0"></i>
+            <span>Engines & OCR</span>
+          </button>
+          <button onclick="switchSettingsTab('glossary')" data-tab="glossary" class="settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-app-elevated/70 border border-transparent transition cursor-pointer">
+            <i data-lucide="book-open" class="w-4 h-4 shrink-0"></i>
+            <span>Glossary</span>
+          </button>
+          <button onclick="switchSettingsTab('profiles')" data-tab="profiles" class="settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-app-elevated/70 border border-transparent transition cursor-pointer">
+            <i data-lucide="app-window" class="w-4 h-4 shrink-0"></i>
+            <span>Profiles</span>
+          </button>
+          <button onclick="switchSettingsTab('textstyle')" data-tab="textstyle" class="settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-app-elevated/70 border border-transparent transition cursor-pointer">
+            <i data-lucide="type" class="w-4 h-4 shrink-0"></i>
+            <span>Text Style</span>
+          </button>
+          <button onclick="switchSettingsTab('hotkeys')" data-tab="hotkeys" class="settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-app-elevated/70 border border-transparent transition cursor-pointer">
+            <i data-lucide="keyboard" class="w-4 h-4 shrink-0"></i>
+            <span>Hotkeys</span>
+          </button>
+          <div class="mt-auto pt-2 border-t border-app-border">
+            <button onclick="switchSettingsTab('about')" data-tab="about" class="settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-app-elevated/70 border border-transparent transition cursor-pointer">
+              <i data-lucide="info" class="w-4 h-4 shrink-0"></i>
+              <span>About</span>
+            </button>
+          </div>
+        </aside>
+
+        <!-- Right Content Area -->
+        <div class="flex-1 overflow-y-auto p-5 space-y-5">
+
+          <!-- TAB 1: GENERAL -->
+          <section id="settings-tab-general" class="settings-section space-y-4">
+            <div>
+              <h3 class="text-base font-semibold text-white">General</h3>
+              <p class="text-xs text-zinc-400">Capture timing, default source language, and window behavior.</p>
+            </div>
+
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-4">
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs font-medium text-slate-200">Source language</label>
+                <div class="col-span-2">
+                  <select onchange="markDirty()" class="w-full bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                    <option selected>English</option>
+                    <option>Japanese</option>
+                    <option>Chinese (Simplified)</option>
+                    <option>Korean</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <div>
+                  <label class="text-xs font-medium text-slate-200 flex items-center gap-1">
+                    Cadence
+                    <span title="How often Langception scans the screen for text changes." class="text-zinc-500 cursor-help">(?)</span>
+                  </label>
+                </div>
+                <div class="col-span-2 relative">
+                  <input type="number" value="500" oninput="markDirty()" class="w-full bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 pr-10 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                  <span class="absolute right-3 top-1.5 text-xs text-zinc-500">ms</span>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <div>
+                  <label class="text-xs font-medium text-slate-200 flex items-center gap-1">
+                    Stability
+                    <span title="Wait time for animated/typewriter text to finish appearing before translating." class="text-zinc-500 cursor-help">(?)</span>
+                  </label>
+                </div>
+                <div class="col-span-2 relative">
+                  <input type="number" value="400" oninput="markDirty()" class="w-full bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 pr-10 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                  <span class="absolute right-3 top-1.5 text-xs text-zinc-500">ms</span>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <div>
+                  <label class="text-xs font-medium text-slate-200 flex items-center gap-1">
+                    Translation Context
+                    <span title="Number of previous lines sent to LLM engines for better dialogue continuity." class="text-zinc-500 cursor-help">(?)</span>
+                  </label>
+                </div>
+                <div class="col-span-2 relative">
+                  <input type="number" value="0" min="0" max="10" oninput="markDirty()" class="w-full bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 pr-12 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                  <span class="absolute right-3 top-1.5 text-xs text-zinc-500">lines</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-3">
+              <label class="flex items-center justify-between cursor-pointer">
+                <span class="text-xs text-slate-200">Start with Windows</span>
+                <input type="checkbox" onchange="markDirty()" class="accent-amber-500 w-4 h-4 rounded">
+              </label>
+              <label class="flex items-center justify-between cursor-pointer">
+                <span class="text-xs text-slate-200">Keep Results window on top</span>
+                <input type="checkbox" checked onchange="markDirty()" class="accent-amber-500 w-4 h-4 rounded">
+              </label>
+              <label class="flex items-center justify-between cursor-pointer">
+                <span class="text-xs text-slate-200">Keep Settings window on top</span>
+                <input type="checkbox" checked onchange="markDirty()" class="accent-amber-500 w-4 h-4 rounded">
+              </label>
+              <label class="flex items-center justify-between cursor-pointer">
+                <div>
+                  <div class="text-xs text-slate-200">Show Langception in screen captures</div>
+                  <div class="text-[11px] text-zinc-500">Useful when streaming overlays on OBS / Discord</div>
+                </div>
+                <input type="checkbox" checked onchange="markDirty()" class="accent-amber-500 w-4 h-4 rounded">
+              </label>
+            </div>
+          </section>
+
+          <!-- TAB 2: ENGINES & OCR -->
+          <section id="settings-tab-engines" class="settings-section hidden space-y-4">
+            <div>
+              <h3 class="text-base font-semibold text-white">Engines & OCR</h3>
+              <p class="text-xs text-zinc-400">Configure OCR reader and active translation provider.</p>
+            </div>
+
+            <!-- Pipeline Selection -->
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-3.5">
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs font-medium text-slate-200">Processing Mode</label>
+                <select onchange="markDirty()" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                  <option selected>Classic — OCR reads, then engine translates</option>
+                  <option>Vision Model — Single fused VLM call</option>
+                </select>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs font-medium text-slate-200">OCR Engine</label>
+                <select onchange="markDirty()" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                  <option selected>Windows OCR — fast, uses OS language packs</option>
+                  <option>PP-OCRv6 (Small) — offline, balanced</option>
+                  <option>PP-OCRv6 (Medium) — offline, highest accuracy</option>
+                </select>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs font-medium text-slate-200">Translation Engine</label>
+                <select id="engineSelector" onchange="updateEngineCard(); markDirty();" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                  <option value="google" selected>Google Translate (unofficial) — free, no key</option>
+                  <option value="lmstudio">LM Studio — Local · offline</option>
+                  <option value="gemini">Gemini API — Cloud LLM</option>
+                  <option value="deepl">DeepL — Cloud</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Active Engine Dynamic Configuration Card -->
+            <div id="activeEngineConfig" class="bg-app-surface border border-app-border rounded-xl p-4 space-y-3">
+              <!-- Google Config -->
+              <div id="cfg-google" class="space-y-2">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-semibold text-white">Google Translate (unofficial)</span>
+                  <span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">☁ cloud</span>
+                </div>
+                <p class="text-xs text-zinc-400">Ready to use out of the box. Sends extracted screen text to Google Translate without requiring an API key.</p>
+              </div>
+
+              <!-- LM Studio Config -->
+              <div id="cfg-lmstudio" class="hidden space-y-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-semibold text-white">LM Studio</span>
+                  <span class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">Local · offline</span>
+                </div>
+                <p class="text-xs text-zinc-400">Screen text never leaves this machine. Start LM Studio's server (default port 1234) and load a model.</p>
+                <div class="flex gap-2">
+                  <input type="text" value="http://localhost:1234/v1" oninput="markDirty()" class="flex-1 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200">
+                  <button onclick="checkLmServer(this)" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-slate-200 transition cursor-pointer">
+                    Check server
+                  </button>
+                </div>
+                <div class="flex gap-2">
+                  <select class="flex-1 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                    <option>gemma-4-e4b-it</option>
+                    <option>qwen3-4b-instruct</option>
+                  </select>
+                  <div class="w-24 relative">
+                    <input type="text" value="0.2" title="Temperature" class="w-full bg-app-elevated border border-app-border rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
+                    <span class="absolute right-2 top-1.5 text-[10px] text-zinc-500">temp</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Gemini Config -->
+              <div id="cfg-gemini" class="hidden space-y-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-semibold text-white">Google Gemini API</span>
+                  <span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">☁ cloud</span>
+                </div>
+                <input type="password" placeholder="AIzaSy..." oninput="markDirty()" class="w-full bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200">
+                <select class="w-full bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                  <option>gemini-2.5-flash (Recommended)</option>
+                  <option>gemini-2.5-flash-lite</option>
+                </select>
+              </div>
+
+              <!-- DeepL Config -->
+              <div id="cfg-deepl" class="hidden space-y-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-semibold text-white">DeepL API</span>
+                  <span class="px-2 py-0.5 text-[10px] rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">☁ cloud</span>
+                </div>
+                <input type="password" placeholder="DeepL Authentication Key" oninput="markDirty()" class="w-full bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200">
+              </div>
+            </div>
+
+            <!-- Collapsible Advanced Prompts -->
+            <details class="bg-app-surface border border-app-border rounded-xl p-4 group">
+              <summary class="text-xs font-semibold text-slate-200 cursor-pointer flex items-center justify-between list-none">
+                <span>Prompts & LLM Behavior (Advanced)</span>
+                <span class="text-zinc-500 text-[11px] group-open:rotate-180 transition-transform">▼</span>
+              </summary>
+              <div class="mt-3 pt-3 border-t border-app-border space-y-3">
+                <label class="flex items-center justify-between cursor-pointer">
+                  <span class="text-xs text-slate-200">Genderless Mode (avoid assuming speaker gender pronouns)</span>
+                  <input type="checkbox" checked onchange="markDirty()" class="accent-amber-500 w-4 h-4 rounded">
+                </label>
+                <div>
+                  <label class="block text-xs text-zinc-400 mb-1">Custom Translation Prompt</label>
+                  <textarea rows="2" placeholder="Leave empty to use built-in translation instruction..." oninput="markDirty()" class="w-full bg-app-elevated border border-app-border rounded-lg p-2.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none"></textarea>
+                </div>
+              </div>
+            </details>
+
+            <!-- Windows OCR Language Packs -->
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-slate-200">Windows OCR Language Packs</span>
+                <button onclick="recheckOcrPacks(this)" class="px-2.5 py-1 text-[11px] rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-slate-300 cursor-pointer">Re-check</button>
+              </div>
+              <div class="divide-y divide-app-border/60 text-xs">
+                <div class="py-1.5 flex items-center justify-between">
+                  <span class="text-slate-200">English <span class="text-zinc-500 font-mono text-[11px]">(en-US)</span></span>
+                  <span class="px-2 py-0.5 text-[10px] rounded-full bg-emerald-500/15 text-emerald-400">installed</span>
+                </div>
+                <div class="py-1.5 flex items-center justify-between">
+                  <span class="text-slate-200">Japanese <span class="text-zinc-500 font-mono text-[11px]">(ja-JP)</span></span>
+                  <span class="px-2 py-0.5 text-[10px] rounded-full bg-rose-500/15 text-rose-400">missing</span>
+                </div>
+                <div class="py-1.5 flex items-center justify-between">
+                  <span class="text-slate-200">Chinese <span class="text-zinc-500 font-mono text-[11px]">(zh-CN)</span></span>
+                  <span class="px-2 py-0.5 text-[10px] rounded-full bg-rose-500/15 text-rose-400">missing</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- TAB 3: GLOSSARY -->
+          <section id="settings-tab-glossary" class="settings-section hidden space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-base font-semibold text-white">Global Glossary</h3>
+                <p class="text-xs text-zinc-400">Pinned translations applied across all apps and games.</p>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <button onclick="showToast('Import Glossary JSON')" class="px-2.5 py-1.5 text-xs rounded-lg bg-app-surface hover:bg-app-elevated border border-app-border text-slate-300 cursor-pointer">Import</button>
+                <button onclick="showToast('Exported glossary.json')" class="px-2.5 py-1.5 text-xs rounded-lg bg-app-surface hover:bg-app-elevated border border-app-border text-slate-300 cursor-pointer">Export JSON</button>
+              </div>
+            </div>
+
+            <!-- Add + Search Bar -->
+            <div class="bg-app-surface border border-app-border rounded-xl p-3 space-y-2.5">
+              <div class="flex gap-2">
+                <input id="newTermInput" type="text" placeholder="Term (e.g. Vertin)" class="flex-1 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                <input id="newThaiInput" type="text" placeholder="Thai (e.g. เวอร์ติน)" class="flex-1 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-amber-500 focus:outline-none">
+                <button onclick="addGlossaryTerm()" class="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-app-amber hover:bg-app-amberHover text-zinc-950 transition cursor-pointer">Add</button>
+              </div>
+              <div class="relative">
+                <input id="glossarySearch" type="text" oninput="renderGlossary()" placeholder="Filter terms..." class="w-full bg-app-bg border border-app-border rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-300 focus:border-amber-500 focus:outline-none">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-zinc-500 absolute left-2.5 top-2"></i>
+              </div>
+            </div>
+
+            <!-- Glossary Table -->
+            <div id="glossaryList" class="bg-app-surface border border-app-border rounded-xl divide-y divide-app-border/70 overflow-hidden"></div>
+          </section>
+
+          <!-- TAB 4: PROFILES -->
+          <section id="settings-tab-profiles" class="settings-section hidden space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-base font-semibold text-white">Per-app Profiles</h3>
+                <p class="text-xs text-zinc-400">Auto-switch engine, zones, and glossary when a specific window is focused.</p>
+              </div>
+              <button onclick="createNewProfile()" class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-app-amber hover:bg-app-amberHover text-zinc-950 cursor-pointer">
+                + New Profile
+              </button>
+            </div>
+
+            <!-- Profile Selector Strip -->
+            <div class="flex items-center gap-2 bg-app-surface border border-app-border rounded-xl p-2.5">
+              <select id="profileSelect" onchange="switchProfile()" class="flex-1 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs font-medium text-white">
+                <option value="r1999">Reverse: 1999 (reverse1999.exe)</option>
+                <option value="ffxiv">FINAL FANTASY XIV (ffxiv_dx11.exe)</option>
+              </select>
+              <button onclick="showToast('Profile deleted')" class="px-2.5 py-1.5 text-xs rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 cursor-pointer">Delete</button>
+            </div>
+
+            <!-- Profile Details -->
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-3">
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-300">Profile Name</label>
+                <input id="profNameInput" type="text" value="Reverse: 1999" oninput="markDirty()" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-white">
+              </div>
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-300">Target Window</label>
+                <select id="profExeSelect" onchange="markDirty()" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                  <option value="reverse1999.exe">🎮 reverse1999.exe — Reverse: 1999</option>
+                  <option value="ffxiv_dx11.exe">🎮 ffxiv_dx11.exe — FINAL FANTASY XIV</option>
+                  <option value="chrome.exe">🌐 chrome.exe — Google Chrome</option>
+                </select>
+              </div>
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-300">Translate Engine</label>
+                <select onchange="markDirty()" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                  <option>Inherit global engine</option>
+                  <option>LM Studio (Local)</option>
+                  <option>Gemini API</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Profile Capture Zones -->
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <span class="text-xs font-semibold text-white">Window-Relative Capture Zones</span>
+                <button onclick="addProfileZone()" class="px-2.5 py-1 text-xs rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-slate-200 cursor-pointer">+ Draw Zone</button>
+              </div>
+              <div id="profileZonesList" class="space-y-1.5">
+                <div class="flex items-center justify-between bg-app-elevated px-3 py-2 rounded-lg text-xs">
+                  <span><strong class="text-amber-400">Zone 1</strong> <span class="text-zinc-400 font-mono ml-2">515, 1110 · 1792×328</span></span>
+                  <button onclick="this.parentElement.remove(); markDirty();" class="text-zinc-500 hover:text-rose-400 cursor-pointer">✕</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- TAB 5: TEXT STYLE -->
+          <section id="settings-tab-textstyle" class="settings-section hidden space-y-4">
+            <div>
+              <h3 class="text-base font-semibold text-white">Overlay Text Style</h3>
+              <p class="text-xs text-zinc-400">Customize how translated Thai text renders on the in-place screen overlay.</p>
+            </div>
+
+            <!-- Interactive Live Preview Box -->
+            <div class="bg-app-surface border border-app-border rounded-xl p-3 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-medium text-zinc-400">LIVE PREVIEW</span>
+                <div class="flex items-center gap-1 bg-app-bg p-0.5 rounded-md border border-app-border text-[11px]">
+                  <button onclick="setPreviewBg('dark')" id="prevBgDark" class="px-2 py-0.5 rounded bg-app-elevated text-white cursor-pointer">Dark</button>
+                  <button onclick="setPreviewBg('light')" id="prevBgLight" class="px-2 py-0.5 rounded text-zinc-400 cursor-pointer">Light</button>
+                  <button onclick="setPreviewBg('game')" id="prevBgGame" class="px-2 py-0.5 rounded text-zinc-400 cursor-pointer">Game Scene</button>
+                </div>
+              </div>
+              <div id="previewCanvas" class="h-28 rounded-lg bg-[#090a0c] border border-app-border flex items-center justify-center p-4 transition-all">
+                <div id="previewPill" class="px-3.5 py-1.5 rounded bg-black/80 transition-all">
+                  <p id="previewText" style="font-size: 24px; color: #ffffff; text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;" class="font-medium leading-snug">
+                    เรือลำนี้ไม่อาจรอดชีวิตในปี 1999
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Style Controls -->
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-3.5">
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-200">Font Family</label>
+                <select id="styleFont" onchange="updateTextPreview(); markDirty();" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                  <option value="'Noto Sans Thai', sans-serif" selected>Noto Sans Thai</option>
+                  <option value="'Inter', sans-serif">Inter / System UI</option>
+                  <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
+                </select>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-200">Font Size (<span id="fontSizeVal">24</span>px)</label>
+                <input id="styleSize" type="range" min="14" max="42" value="24" oninput="updateTextPreview(); markDirty();" class="col-span-2 accent-amber-500">
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-200">Text Color & Outline</label>
+                <div class="col-span-2 flex items-center gap-3">
+                  <input id="styleColor" type="color" value="#ffffff" oninput="updateTextPreview(); markDirty();" class="w-8 h-7 rounded bg-app-elevated border border-app-border cursor-pointer">
+                  <label class="flex items-center gap-1.5 text-xs text-slate-300 cursor-pointer">
+                    <input id="styleOutline" type="checkbox" checked onchange="updateTextPreview(); markDirty();" class="accent-amber-500">
+                    Text Outline (2px)
+                  </label>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-200">Background Pill</label>
+                <div class="col-span-2 flex items-center gap-3">
+                  <input id="stylePillCheck" type="checkbox" checked onchange="updateTextPreview(); markDirty();" class="accent-amber-500 w-4 h-4 cursor-pointer">
+                  <input id="stylePillOpacity" type="range" min="20" max="100" value="80" oninput="updateTextPreview(); markDirty();" class="flex-1 accent-amber-500">
+                </div>
+              </div>
+
+              <div class="grid grid-cols-3 items-center gap-4">
+                <label class="text-xs text-slate-200">Placement</label>
+                <select onchange="markDirty()" class="col-span-2 bg-app-elevated border border-app-border rounded-lg px-3 py-1.5 text-xs text-slate-200">
+                  <option>Over the original (in-place)</option>
+                  <option>Below original block</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <!-- TAB 6: HOTKEYS -->
+          <section id="settings-tab-hotkeys" class="settings-section hidden space-y-4">
+            <div>
+              <h3 class="text-base font-semibold text-white">Global Hotkeys</h3>
+              <p class="text-xs text-zinc-400">Click any shortcut box and press your desired key combination to record it.</p>
+            </div>
+
+            <div class="bg-app-surface border border-app-border rounded-xl divide-y divide-app-border/70">
+              <div class="p-3.5 flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-200">Toggle Translation</span>
+                <button onclick="recordHotkey(this)" class="px-3 py-1.5 min-w-[140px] text-center font-mono text-xs bg-app-elevated hover:border-amber-500 border border-app-border rounded-lg text-amber-400 transition cursor-pointer">Alt+Shift+T</button>
+              </div>
+              <div class="p-3.5 flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-200">New Capture Zone</span>
+                <button onclick="recordHotkey(this)" class="px-3 py-1.5 min-w-[140px] text-center font-mono text-xs bg-app-elevated hover:border-amber-500 border border-app-border rounded-lg text-amber-400 transition cursor-pointer">Alt+Shift+Z</button>
+              </div>
+              <div class="p-3.5 flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-200">Pause / Resume</span>
+                <button onclick="recordHotkey(this)" class="px-3 py-1.5 min-w-[140px] text-center font-mono text-xs bg-app-elevated hover:border-amber-500 border border-app-border rounded-lg text-amber-400 transition cursor-pointer">Alt+Shift+P</button>
+              </div>
+              <div class="p-3.5 flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-200">Adjust Mode</span>
+                <button onclick="recordHotkey(this)" class="px-3 py-1.5 min-w-[140px] text-center font-mono text-xs bg-app-elevated hover:border-amber-500 border border-app-border rounded-lg text-amber-400 transition cursor-pointer">Alt+Shift+A</button>
+              </div>
+              <div class="p-3.5 flex items-center justify-between">
+                <span class="text-xs font-medium text-slate-200">One-shot Capture</span>
+                <button onclick="recordHotkey(this)" class="px-3 py-1.5 min-w-[140px] text-center font-mono text-xs bg-app-elevated hover:border-amber-500 border border-app-border rounded-lg text-amber-400 transition cursor-pointer">Alt+Shift+Q</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- TAB 7: ABOUT -->
+          <section id="settings-tab-about" class="settings-section hidden space-y-4">
+            <div>
+              <h3 class="text-base font-semibold text-white">About Langception</h3>
+              <p class="text-xs text-zinc-400">Local-first screen translation tool built with Tauri & Rust.</p>
+            </div>
+
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 space-y-2.5 text-xs">
+              <div class="flex justify-between py-1 border-b border-app-border/50">
+                <span class="text-zinc-400">Version</span>
+                <span class="font-mono text-white">0.1.0</span>
+              </div>
+              <div class="flex justify-between py-1 border-b border-app-border/50">
+                <span class="text-zinc-400">Config File</span>
+                <span class="font-mono text-zinc-300 text-[11px]">...\Roaming\langception\config.toml</span>
+              </div>
+              <div class="flex justify-between py-1">
+                <span class="text-zinc-400">Logs Directory</span>
+                <span class="font-mono text-zinc-300 text-[11px]">...\Roaming\langception\logs</span>
+              </div>
+              <div class="pt-2 flex flex-wrap gap-2">
+                <button onclick="showToast('Opened config directory')" class="px-3 py-1.5 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-slate-200 cursor-pointer">Open config folder</button>
+                <button onclick="showToast('Opened logs directory')" class="px-3 py-1.5 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-slate-200 cursor-pointer">Go to logs directory</button>
+                <button onclick="showToast('Launching setup wizard...')" class="px-3 py-1.5 rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-slate-200 cursor-pointer">Run setup wizard</button>
+              </div>
+            </div>
+
+            <div class="bg-app-surface border border-app-border rounded-xl p-4 flex items-center justify-between">
+              <div>
+                <div class="text-xs font-semibold text-white">Updates</div>
+                <div id="updateStatusText" class="text-[11px] text-zinc-400 mt-0.5">Check-only: never downloads automatically.</div>
+              </div>
+              <button onclick="checkUpdates()" class="px-3 py-1.5 text-xs font-medium rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-slate-200 cursor-pointer">
+                Check for new version
+              </button>
+            </div>
+          </section>
+
+        </div>
+      </div>
+
+      <!-- Sticky Save Footer (Appears when changes are made) -->
+      <div id="stickySaveBar" class="hidden h-12 px-4 bg-app-surface border-t border-amber-500/40 flex items-center justify-between shrink-0">
+        <span class="text-xs text-amber-400 font-medium flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          You have unsaved changes
+        </span>
+        <div class="flex items-center gap-2">
+          <button onclick="discardChanges()" class="px-3 py-1.5 text-xs rounded-lg bg-app-elevated hover:bg-[#252932] border border-app-border text-zinc-300 cursor-pointer">Discard</button>
+          <button onclick="saveChanges()" class="px-4 py-1.5 text-xs font-semibold rounded-lg bg-app-amber hover:bg-app-amberHover text-zinc-950 shadow-sm cursor-pointer">Save Changes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custom Toast Notification -->
+    <div id="toast" class="pointer-events-none fixed bottom-6 right-6 px-3.5 py-2 rounded-xl bg-zinc-800 border border-zinc-700 text-xs text-white shadow-xl opacity-0 transition-opacity duration-200 flex items-center gap-2 z-50">
+      <i data-lucide="info" class="w-3.5 h-3.5 text-amber-400"></i>
+      <span id="toast-message">Notification</span>
+    </div>
+
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- INTERACTIVE PROTOTYPE JAVASCRIPT                                      -->
+  <!-- ===================================================================== -->
+  <script>
+    // Initialize Lucide Icons
+    lucide.createIcons();
+
+    // Application State
+    const state = {
+      status: 'stopped', // 'stopped' | 'running' | 'paused'
+      mode: 'zones',     // 'zones' | 'fullscreen'
+      isConfigCollapsed: false,
+      isAlwaysOnTop: false,
+      isAdjustMode: false,
+      langPair: 'EN → TH',
+      zones: [],
+      exclusions: [],
+      translations: [],
+      simulationTimer: null
+    };
+
+    // Sample Translation Mock Data
+    const sampleData = [
+      {
+        zone: 'Zone 1 (Dialogue)',
+        source: 'The Storm is approaching. Everyone, return to the suitcase immediately!',
+        translated: 'พายุกำลังจะมาแล้ว ทุกคน รีบกลับเข้าไปในกระเป๋าเดินทางเดี๋ยวนี้!'
+      },
+      {
+        zone: 'Zone 1 (Dialogue)',
+        source: 'So you are the Timekeeper. Vertin told me much about your journey.',
+        translated: 'เธอคือ Timekeeper สินะ เวอร์ตินเล่าเรื่องการเดินทางของเธอให้ฉันฟังเยอะเลย'
+      },
+      {
+        zone: 'Zone 2 (Quest Log)',
+        source: 'Manus Vindictae will not stop until the pure Arcanists reclaim this era.',
+        translated: 'เมนัส วินดิกเท จะไม่หยุดจนกว่าเหล่าอาร์เคนิสต์สายเลือดบริสุทธิ์จะทวงคืนยุคสมัยนี้'
+      },
+      {
+        zone: 'Full Screen',
+        source: 'Do not look back at the rain. Keep your eyes on the horizon.',
+        translated: 'อย่าหันกลับไปมองสายฝน จงจับจ้องไปไปที่เส้นขอบฟ้าข้างหน้า'
+      }
+    ];
+
+    // Glossary Data
+    let glossaryData = [
+      { term: "Storm", thai: "พายุ" },
+      { term: "Timekeeper", thai: "Timekeeper" },
+      { term: "Arcana", thai: "อาร์คาน่า" },
+      { term: "Arcanist", thai: "อาร์เคนิสต์" },
+      { term: "Manus Vindictae", thai: "เมนัส วินดิกเท" },
+      { term: "Regulus", thai: "เรกูลัส" },
+      { term: "Rhiannon", thai: "ริอาน่อน" },
+      { term: "Merel", thai: "เมเรล" }
+    ];
+
+    let sampleIndex = 0;
+
+    // 1. Contextual Playback Controls (Start / Pause / Stop)
+    function setAppState(newStatus) {
+      state.status = newStatus;
+      
+      const badge = document.getElementById('status-badge');
+      const dot = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+      
+      const btnStart = document.getElementById('btn-start');
+      const btnPause = document.getElementById('btn-pause');
+      const btnStop = document.getElementById('btn-stop');
+      const textPause = document.getElementById('text-pause');
+      const iconPause = document.getElementById('icon-pause');
+
+      if (state.simulationTimer) {
+        clearInterval(state.simulationTimer);
+        state.simulationTimer = null;
+      }
+
+      if (newStatus === 'stopped') {
+        badge.className = 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-zinc-800/90 text-zinc-400 border border-zinc-700/60 transition-colors';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-zinc-500';
+        text.textContent = 'Stopped';
+
+        btnStart.classList.remove('hidden');
+        btnStart.classList.add('flex');
+        btnPause.classList.add('hidden');
+        btnPause.classList.remove('flex');
+        btnStop.classList.add('hidden');
+        btnStop.classList.remove('flex');
+      } 
+      else if (newStatus === 'running') {
+        badge.className = 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 transition-colors';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse';
+        text.textContent = 'Translating';
+
+        btnStart.classList.add('hidden');
+        btnStart.classList.remove('flex');
+        btnPause.classList.remove('hidden');
+        btnPause.classList.add('flex');
+        btnStop.classList.remove('hidden');
+        btnStop.classList.add('flex');
+
+        textPause.textContent = 'Pause';
+        iconPause.setAttribute('data-lucide', 'pause');
+        lucide.createIcons();
+
+        if (state.translations.length === 0) {
+          simulateSingleTranslation();
+        }
+        state.simulationTimer = setInterval(() => {
+          simulateSingleTranslation();
+        }, 3800);
+      } 
+      else if (newStatus === 'paused') {
+        badge.className = 'flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 transition-colors';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-400';
+        text.textContent = 'Paused';
+
+        textPause.textContent = 'Resume';
+        iconPause.setAttribute('data-lucide', 'play');
+        lucide.createIcons();
+      }
+    }
+
+    function togglePause() {
+      if (state.status === 'running') {
+        setAppState('paused');
+      } else if (state.status === 'paused') {
+        setAppState('running');
+      }
+    }
+
+    // 2. Conditional Capture Mode Switcher ('zones' vs 'fullscreen')
+    function switchCaptureMode(mode) {
+      state.mode = mode;
+
+      const tabZones = document.getElementById('tab-zones');
+      const tabFull = document.getElementById('tab-fullscreen');
+      const viewZones = document.getElementById('view-zones');
+      const viewFull = document.getElementById('view-fullscreen');
+      const btnAddZone = document.getElementById('btn-add-zone-header');
+      const btnAddExcl = document.getElementById('btn-add-exclusion-header');
+
+      if (state.isConfigCollapsed) {
+        toggleConfigPanel();
+      }
+
+      if (mode === 'zones') {
+        tabZones.className = 'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-app-elevated text-amber-400 shadow-sm border border-app-borderHover transition cursor-pointer';
+        tabFull.className = 'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 border border-transparent transition cursor-pointer';
+        
+        viewZones.classList.remove('hidden');
+        viewFull.classList.add('hidden');
+        
+        btnAddZone.classList.remove('hidden');
+        btnAddZone.classList.add('flex');
+        btnAddExcl.classList.add('hidden');
+        btnAddExcl.classList.remove('flex');
+      } else {
+        tabFull.className = 'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-app-elevated text-amber-400 shadow-sm border border-app-borderHover transition cursor-pointer';
+        tabZones.className = 'flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 border border-transparent transition cursor-pointer';
+        
+        viewFull.classList.remove('hidden');
+        viewZones.classList.add('hidden');
+
+        btnAddExcl.classList.remove('hidden');
+        btnAddExcl.classList.add('flex');
+        btnAddZone.classList.add('hidden');
+        btnAddZone.classList.remove('flex');
+      }
+    }
+
+    // 3. Collapsible Configuration Panel
+    function toggleConfigPanel() {
+      state.isConfigCollapsed = !state.isConfigCollapsed;
+      const body = document.getElementById('config-panel-body');
+      const icon = document.getElementById('config-toggle-icon');
+      const text = document.getElementById('config-toggle-text');
+
+      if (state.isConfigCollapsed) {
+        body.classList.add('hidden');
+        icon.style.transform = 'rotate(180deg)';
+        text.textContent = 'Show';
+      } else {
+        body.classList.remove('hidden');
+        icon.style.transform = 'rotate(0deg)';
+        text.textContent = 'Hide';
+      }
+    }
+
+    // 4. Zone & Exclusion Management
+    function addSampleZone() {
+      if (state.mode !== 'zones') switchCaptureMode('zones');
+      if (state.isConfigCollapsed) toggleConfigPanel();
+
+      const id = state.zones.length + 1;
+      const presets = [
+        { name: `Zone ${id} (Subtitle Box)`, dims: '1120 × 180' },
+        { name: `Zone ${id} (Dialogue Window)`, dims: '840 × 320' },
+        { name: `Zone ${id} (Item Tooltip)`, dims: '420 × 510' }
+      ];
+      const preset = presets[(id - 1) % presets.length];
+      state.zones.push({ id: Date.now(), name: preset.name, dims: preset.dims, active: true });
+      renderZones();
+    }
+
+    function removeZone(id) {
+      state.zones = state.zones.filter(z => z.id !== id);
+      renderZones();
+    }
+
+    function renderZones() {
+      const emptyEl = document.getElementById('zones-empty');
+      const listEl = document.getElementById('zones-list');
+      const badgeEl = document.getElementById('zone-count-badge');
+
+      badgeEl.textContent = state.zones.length;
+
+      if (state.zones.length === 0) {
+        emptyEl.classList.remove('hidden');
+        listEl.classList.add('hidden');
+        return;
+      }
+
+      emptyEl.classList.add('hidden');
+      listEl.classList.remove('hidden');
+
+      listEl.innerHTML = state.zones.map(zone => `
+        <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-app-surface border border-app-border hover:border-app-borderHover transition">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
+            <div class="truncate">
+              <div class="text-xs font-medium text-slate-200 truncate">${zone.name}</div>
+              <div class="text-[10px] font-mono text-zinc-500">${zone.dims} px</div>
+            </div>
+          </div>
+          <button onclick="removeZone(${zone.id})" class="p-1 rounded hover:bg-rose-500/20 text-zinc-500 hover:text-rose-400 transition cursor-pointer" title="Remove Zone">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    function addSampleExclusion() {
+      if (state.isConfigCollapsed) toggleConfigPanel();
+      const names = ['Minimap (Top-Right)', 'Windows Taskbar', 'Party Chat Frame', 'FPS Counter'];
+      const name = names[state.exclusions.length % names.length];
+      state.exclusions.push({ id: Date.now(), name });
+      renderExclusions();
+    }
+
+    function removeExclusion(id) {
+      state.exclusions = state.exclusions.filter(e => e.id !== id);
+      renderExclusions();
+    }
+
+    function renderExclusions() {
+      const emptyEl = document.getElementById('exclusions-empty');
+      const listEl = document.getElementById('exclusions-list');
+      const countEl = document.getElementById('exclusion-count');
+
+      countEl.textContent = state.exclusions.length;
+
+      if (state.exclusions.length === 0) {
+        emptyEl.classList.remove('hidden');
+        listEl.classList.add('hidden');
+        return;
+      }
+
+      emptyEl.classList.add('hidden');
+      listEl.classList.remove('hidden');
+
+      listEl.innerHTML = state.exclusions.map(item => `
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/25 text-xs text-rose-200">
+          <span>${item.name}</span>
+          <button onclick="removeExclusion(${item.id})" class="hover:text-white cursor-pointer">
+            <i data-lucide="x" class="w-3 h-3"></i>
+          </button>
+        </span>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    // 5. Simulate Translation Feed
+    function simulateSingleTranslation() {
+      const item = sampleData[sampleIndex % sampleData.length];
+      sampleIndex++;
+
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+
+      state.translations.unshift({
+        id: Date.now(),
+        time: timeStr,
+        zone: state.mode === 'fullscreen' ? 'Full Screen' : (state.zones[0]?.name || item.zone),
+        source: item.source,
+        translated: item.translated
+      });
+
+      renderTranslations();
+    }
+
+    function clearTranslations() {
+      state.translations = [];
+      renderTranslations();
+    }
+
+    function renderTranslations() {
+      const emptyEl = document.getElementById('empty-state');
+      const feedEl = document.getElementById('translation-feed');
+      const toolbarEl = document.getElementById('log-toolbar');
+      const countEl = document.getElementById('log-count');
+
+      countEl.textContent = state.translations.length;
+
+      if (state.translations.length === 0) {
+        emptyEl.classList.remove('hidden');
+        feedEl.classList.add('hidden');
+        toolbarEl.classList.add('hidden');
+        return;
+      }
+
+      emptyEl.classList.add('hidden');
+      feedEl.classList.remove('hidden');
+      toolbarEl.classList.remove('hidden');
+
+      feedEl.innerHTML = state.translations.map((entry, idx) => `
+        <div class="p-3.5 rounded-xl bg-app-surface border ${idx === 0 ? 'border-amber-500/40 shadow-md shadow-amber-500/5' : 'border-app-border'} transition group animate-slide-in">
+          <div class="flex items-center justify-between gap-2 mb-1.5">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded-md bg-app-elevated border border-app-border text-[10px] font-medium text-amber-300">
+                ${entry.zone}
+              </span>
+              <span class="text-[11px] font-mono text-zinc-500">${entry.time}</span>
+            </div>
+            <button onclick="copyText('${entry.translated.replace(/'/g, "\\'")}')" class="opacity-70 group-hover:opacity-100 p-1 rounded-lg hover:bg-white/10 text-zinc-400 hover:text-white transition cursor-pointer" title="คัดลอกคำแปล">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+            </button>
+          </div>
+          <p class="text-xs text-zinc-400 mb-1.5 leading-relaxed">${entry.source}</p>
+          <p class="text-sm font-medium text-slate-100 leading-relaxed">${entry.translated}</p>
+        </div>
+      `).join('');
+
+      lucide.createIcons();
+    }
+
+    // 6. Header Utilities (Language Dropdown, Always-on-Top, Adjust Mode)
+    function toggleLangMenu() {
+      document.getElementById('lang-menu').classList.toggle('hidden');
+    }
+
+    function selectLang(pair) {
+      state.langPair = pair;
+      document.getElementById('selected-lang').textContent = pair;
+      document.getElementById('lang-menu').classList.add('hidden');
+      showToast(`เปลี่ยนภาษาเป็น ${pair}`);
+    }
+
+    window.addEventListener('click', (e) => {
+      const container = document.getElementById('lang-dropdown-container');
+      if (container && !container.contains(e.target)) {
+        document.getElementById('lang-menu').classList.add('hidden');
+      }
+    });
+
+    function toggleAlwaysOnTop() {
+      state.isAlwaysOnTop = !state.isAlwaysOnTop;
+      const btn = document.getElementById('btn-pin');
+      if (state.isAlwaysOnTop) {
+        btn.classList.add('bg-amber-500/20', 'text-amber-400');
+        btn.classList.remove('text-zinc-400');
+        showToast('Always on Top: เปิดใช้งาน (ปักหมุดหน้าต่างบนสุด)');
+      } else {
+        btn.classList.remove('bg-amber-500/20', 'text-amber-400');
+        btn.classList.add('text-zinc-400');
+        showToast('Always on Top: ปิดใช้งาน');
+      }
+    }
+
+    function toggleAdjustMode() {
+      state.isAdjustMode = !state.isAdjustMode;
+      const btn = document.getElementById('btn-adjust');
+      const banner = document.getElementById('adjust-banner');
+
+      if (state.isAdjustMode) {
+        btn.classList.add('border-amber-500/50', 'text-amber-300', 'bg-amber-500/10');
+        banner.classList.remove('hidden');
+      } else {
+        btn.classList.remove('border-amber-500/50', 'text-amber-300', 'bg-amber-500/10');
+        banner.classList.add('hidden');
+      }
+    }
+
+    // =====================================================================
+    // 7. FULL SETTINGS OVERLAY LOGIC
+    // =====================================================================
+    function openSettings() {
+      document.getElementById('settings-modal').classList.remove('hidden');
+      renderGlossary();
+      lucide.createIcons();
+    }
+
+    function closeSettings() {
+      document.getElementById('settings-modal').classList.add('hidden');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !document.getElementById('settings-modal').classList.contains('hidden')) {
+        closeSettings();
+      }
+    });
+
+    function switchSettingsTab(tabName) {
+      document.querySelectorAll('.settings-section').forEach(el => el.classList.add('hidden'));
+      document.getElementById(`settings-tab-${tabName}`).classList.remove('hidden');
+
+      document.querySelectorAll('.settings-nav-btn').forEach(btn => {
+        if (btn.dataset.tab === tabName) {
+          btn.className = "settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 bg-amber-500/15 text-amber-400 border border-amber-500/30 transition cursor-pointer";
+        } else {
+          btn.className = "settings-nav-btn w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center gap-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-app-elevated/70 border border-transparent transition cursor-pointer";
+        }
+      });
+    }
+
+    function markDirty() {
+      document.getElementById('stickySaveBar').classList.remove('hidden');
+    }
+
+    function discardChanges() {
+      document.getElementById('stickySaveBar').classList.add('hidden');
+      showToast('ยกเลิกการแก้ไขแล้ว');
+    }
+
+    function saveChanges() {
+      document.getElementById('stickySaveBar').classList.add('hidden');
+      showToast('บันทึกการตั้งค่าแล้ว');
+    }
+
+    // Engines Tab
+    function updateEngineCard() {
+      const val = document.getElementById('engineSelector').value;
+      ['google', 'lmstudio', 'gemini', 'deepl'].forEach(id => {
+        document.getElementById(`cfg-${id}`).classList.toggle('hidden', id !== val);
+      });
+    }
+
+    function checkLmServer(btn) {
+      btn.textContent = "Checking...";
+      setTimeout(() => {
+        btn.textContent = "✓ Connected (2 models)";
+        btn.classList.add('text-emerald-400', 'border-emerald-500/40');
+      }, 600);
+    }
+
+    function recheckOcrPacks(btn) {
+      btn.textContent = "Scanning...";
+      setTimeout(() => {
+        btn.textContent = "Re-check";
+        showToast('ตรวจสอบ OCR Language Packs เสร็จสิ้น');
+      }, 500);
+    }
+
+    // Glossary Tab
+    function renderGlossary() {
+      const filter = (document.getElementById('glossarySearch')?.value || '').toLowerCase();
+      const container = document.getElementById('glossaryList');
+      const filtered = glossaryData.filter(g => g.term.toLowerCase().includes(filter) || g.thai.toLowerCase().includes(filter));
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="p-4 text-center text-xs text-zinc-500">No matching glossary terms found.</div>`;
+        return;
+      }
+
+      container.innerHTML = filtered.map((item, idx) => `
+        <div class="px-3.5 py-2 flex items-center justify-between gap-3 hover:bg-app-elevated/40 transition">
+          <span class="text-xs font-medium text-slate-200 w-2/5 truncate">${item.term}</span>
+          <input type="text" value="${item.thai}" onchange="glossaryData[${idx}].thai = this.value; markDirty();" class="flex-1 bg-transparent hover:bg-app-elevated focus:bg-app-elevated border border-transparent focus:border-app-border rounded px-2 py-1 text-xs text-amber-400 focus:outline-none">
+          <button onclick="glossaryData.splice(${idx}, 1); renderGlossary(); markDirty();" class="text-zinc-500 hover:text-rose-400 text-xs px-1 cursor-pointer">✕</button>
+        </div>
+      `).join('');
+    }
+
+    function addGlossaryTerm() {
+      const tInput = document.getElementById('newTermInput');
+      const thInput = document.getElementById('newThaiInput');
+      if (!tInput.value.trim() || !thInput.value.trim()) return;
+      glossaryData.unshift({ term: tInput.value.trim(), thai: thInput.value.trim() });
+      tInput.value = '';
+      thInput.value = '';
+      renderGlossary();
+      markDirty();
+    }
+
+    // Profiles Tab
+    function switchProfile() {
+      const val = document.getElementById('profileSelect').value;
+      if (val === 'r1999') {
+        document.getElementById('profNameInput').value = 'Reverse: 1999';
+        document.getElementById('profExeSelect').value = 'reverse1999.exe';
+      } else {
+        document.getElementById('profNameInput').value = 'FINAL FANTASY XIV';
+        document.getElementById('profExeSelect').value = 'ffxiv_dx11.exe';
+      }
+    }
+
+    function createNewProfile() {
+      const sel = document.getElementById('profileSelect');
+      const opt = document.createElement('option');
+      opt.value = 'new';
+      opt.text = 'New Game Profile (game.exe)';
+      sel.add(opt);
+      sel.value = 'new';
+      document.getElementById('profNameInput').value = 'New Game Profile';
+      markDirty();
+    }
+
+    function addProfileZone() {
+      const list = document.getElementById('profileZonesList');
+      const count = list.children.length + 1;
+      const div = document.createElement('div');
+      div.className = "flex items-center justify-between bg-app-elevated px-3 py-2 rounded-lg text-xs";
+      div.innerHTML = `<span><strong class="text-amber-400">Zone ${count}</strong> <span class="text-zinc-400 font-mono ml-2">300, 820 · 1200×210</span></span><button onclick="this.parentElement.remove(); markDirty();" class="text-zinc-500 hover:text-rose-400 cursor-pointer">✕</button>`;
+      list.appendChild(div);
+      markDirty();
+    }
+
+    // Text Style Tab
+    function setPreviewBg(type) {
+      const canvas = document.getElementById('previewCanvas');
+      ['prevBgDark', 'prevBgLight', 'prevBgGame'].forEach(id => {
+        document.getElementById(id).className = "px-2 py-0.5 rounded text-zinc-400 cursor-pointer";
+      });
+      canvas.classList.remove('game-bg-preview');
+      if (type === 'dark') {
+        canvas.style.background = '#090a0c';
+        document.getElementById('prevBgDark').className = "px-2 py-0.5 rounded bg-app-elevated text-white cursor-pointer";
+      } else if (type === 'light') {
+        canvas.style.background = '#e2e8f0';
+        document.getElementById('prevBgLight').className = "px-2 py-0.5 rounded bg-app-elevated text-white cursor-pointer";
+      } else {
+        canvas.style.background = '';
+        canvas.classList.add('game-bg-preview');
+        document.getElementById('prevBgGame').className = "px-2 py-0.5 rounded bg-app-elevated text-white cursor-pointer";
+      }
+    }
+
+    function updateTextPreview() {
+      const font = document.getElementById('styleFont').value;
+      const size = document.getElementById('styleSize').value;
+      const color = document.getElementById('styleColor').value;
+      const outline = document.getElementById('styleOutline').checked;
+      const pillOn = document.getElementById('stylePillCheck').checked;
+      const pillOp = document.getElementById('stylePillOpacity').value / 100;
+
+      document.getElementById('fontSizeVal').textContent = size;
+      const txt = document.getElementById('previewText');
+      const pill = document.getElementById('previewPill');
+
+      txt.style.fontFamily = font;
+      txt.style.fontSize = `${size}px`;
+      txt.style.color = color;
+      txt.style.textShadow = outline ? '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000' : 'none';
+      pill.style.backgroundColor = pillOn ? `rgba(0, 0, 0, ${pillOp})` : 'transparent';
+    }
+
+    // Hotkeys Recorder
+    function recordHotkey(btn) {
+      btn.textContent = "Press keys...";
+      btn.classList.add('border-amber-500', 'animate-pulse');
+
+      const handler = (e) => {
+        e.preventDefault();
+        if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+        const parts = [];
+        if (e.ctrlKey) parts.push('Ctrl');
+        if (e.altKey) parts.push('Alt');
+        if (e.shiftKey) parts.push('Shift');
+        parts.push(e.key.toUpperCase());
+        btn.textContent = parts.join('+');
+        btn.classList.remove('animate-pulse');
+        markDirty();
+        window.removeEventListener('keydown', handler);
+      };
+      window.addEventListener('keydown', handler);
+    }
+
+    // About Tab
+    function checkUpdates() {
+      const el = document.getElementById('updateStatusText');
+      el.textContent = "Checking GitHub releases...";
+      setTimeout(() => {
+        el.innerHTML = `<span class="text-emerald-400">✓ You are on the latest version (v0.1.0).</span>`;
+      }, 700);
+    }
+
+    function copyText(text) {
+      const tempInput = document.createElement('textarea');
+      tempInput.value = text;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempInput);
+      showToast('คัดลอกคำแปลไปยังคลิปบอร์ดแล้ว');
+    }
+
+    let toastTimeout;
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      const toastMsg = document.getElementById('toast-message');
+      toastMsg.textContent = msg;
+      toast.classList.remove('opacity-0');
+      
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toast.classList.add('opacity-0');
+      }, 2400);
+    }
+  </script>
+</body>
+</html>
