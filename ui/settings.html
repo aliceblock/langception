@@ -40,10 +40,9 @@
       <section class="wizard-step">
         <h3>1 · OCR language packs</h3>
         <p class="hint">
-          Windows OCR silently finds nothing for a language whose pack is not
-          installed. You only need the pack for the language you will read
-          (English is usually preinstalled); missing packs for other languages
-          never block anything.
+          Windows OCR needs a language pack for the language you will read —
+          English is usually preinstalled; the others install through the
+          button below if missing.
         </p>
         <ul id="wizard-packs" class="packs"></ul>
         <div class="row">
@@ -64,10 +63,9 @@
             <span class="chip ok">active by default</span>
           </div>
           <p class="hint">
-            Free, no key, no setup (ADR-0002). It is a cloud engine: whenever
-            translation runs, screen text is sent to Google's endpoint — a ☁
-            badge shows this in the tray tooltip and the Results Window. It
-            can rate-limit or break; every failure surfaces visibly.
+            Free, no key, no setup. Cloud engine: screen text is sent to
+            Google while translating — the ☁ badge shows when. Unofficial,
+            so it can rate-limit or break.
           </p>
         </div>
         <div class="engine-card">
@@ -76,10 +74,10 @@
             <span class="chip privacy">☁ cloud</span>
           </div>
           <p class="hint">
-            A keyed, reliable engine on a permanent free tier (F0, 2M
-            chars/month). Click the link to create a Translator resource in
-            the Azure portal (pricing tier "Free F0", region "Global"), then
-            paste its key here — or skip: Google works with zero setup.
+            Keyed and reliable, with a permanent free tier (F0, 2M
+            chars/month). Create a free key with the link (tier "Free F0",
+            region "Global") and paste it here — or skip: Google works
+            with no setup.
           </p>
           <div class="row glossary-add">
             <input id="wizard-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
@@ -133,11 +131,11 @@
             <span>Stability (ms)</span>
             <input id="general-stability" type="number" min="0" max="10000" step="50" />
           </label>
-          <label class="form-row" title="Translation Context (CONTEXT.md): feed the Capture Zone's last successful translations into each LLM prompt, so consecutive dialogue keeps a consistent tone, register, and naming. 0 = off. Applies to the LLM engines only (Gemini, OpenAI-compatible, LM Studio), and on the very next translation — no restart.">
+          <label class="form-row" title="Feeds the last translations back into each LLM prompt so consecutive dialogue keeps a consistent tone. LLM engines only (Gemini, OpenAI-compatible, LM Studio); 0 = off.">
             <span>Translation Context</span>
             <input id="general-context" type="number" min="0" max="20" step="1" />
           </label>
-          <label class="form-row" title="Translated speech carries no speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns (ผม/ฉัน/หนู → เรา) are scrubbed from engine output">
+          <label class="form-row" title="Translates without speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns are removed from the output">
             <span>Genderless Mode</span>
             <input id="general-genderless" type="checkbox" />
           </label>
@@ -145,27 +143,24 @@
             <span>Start with Windows</span>
             <input id="general-autostart" type="checkbox" />
           </label>
-          <label class="form-row" title="Keep the Results Window above other apps — translations stay readable while a game fills the screen. Applies with Save.">
+          <label class="form-row" title="Keep the Results Window above other apps — translations stay readable while a game fills the screen">
             <span>Keep Results window on top</span>
             <input id="general-results-on-top" type="checkbox" />
           </label>
-          <label class="form-row" title="Keep the Settings window above other apps — useful for tweaking while the game keeps focus. Applies with Save.">
+          <label class="form-row" title="Keep the Settings window above other apps — useful for tweaking while the game keeps focus">
             <span>Keep Settings window on top</span>
             <input id="general-settings-on-top" type="checkbox" />
           </label>
-          <label class="form-row" title="Capture Visibility: when checked, the Settings window, Results Window, and Capture Zone picker appear in screenshots, recordings, and remote-desktop sessions — so you can capture or share your own UI. The translation loop stays safe: it masks those two windows' pixels out of every frame and pauses while the picker is open, so Langception never translates or uploads its own output. The In-place Overlay stays invisible to captures in both modes. Applies with Save.">
+          <label class="form-row" title="Capture Visibility: when checked, Langception's windows appear in screenshots, recordings, and remote-desktop sessions — handy for sharing your setup. Applies with Save.">
             <span>Show Langception in screen captures</span>
             <input id="general-capture-visible" type="checkbox" />
           </label>
         </div>
         <div class="row">
           <span class="hint">
-            Language, cadence, stability and Genderless Mode apply when
-            translation (re)starts — a running loop restarts automatically.
-            Translation context applies on the very next translation, with
-            no restart. Start-with-Windows applies immediately; the window
-            on-top and capture-visibility toggles apply with Save. Per-app
-            Profiles can override Genderless Mode (Settings → Profiles).
+            Changes apply with Save — Translation Context on the very next
+            translation. Start-with-Windows applies immediately. Per-app
+            Profiles can override some of these (Settings → Profiles).
           </span>
         </div>
         </div>
@@ -178,15 +173,9 @@
         <div class="settings-section">
         <h3>Translate Engine</h3>
         <p class="hint">
-          The default engine translates every Text Block; per-app Profiles can
-          override it (Settings → Profiles). Google, Azure, DeepL and the
-          OpenAI-compatible endpoint are cloud engines: whenever translation
-          runs, screen text leaves the machine — the ☁ badge shows this in
-          the tray tooltip and the Results Window. LM Studio runs on this
-          machine (offline; text never leaves it), and even it keeps the
-          badge honest: point its URL at another computer and the ☁ badge
-          returns. Quota, key, network and parsing failures surface in the
-          Results Window and as tray notifications.
+          The engine that translates every Text Block; per-app Profiles can
+          override it (Settings → Profiles). Cloud engines send screen text
+          to their service — the ☁ badge shows when one is active.
         </p>
         <div class="form-grid">
           <label class="form-row">
@@ -216,24 +205,18 @@
           </label>
         </div>
         <p class="hint">
-          The OCR engine reads the screen before translation. <strong>Paddle
-          OCR</strong> ships with the app and runs fully offline — it works on a
-          fresh Windows with no language packs and follows each Profile's source
-          language (English, Japanese, Chinese, Korean models included). If it
-          cannot run, the pass automatically falls back to Windows OCR and a
-          notice says so. <strong>Windows OCR</strong> is lighter, but needs the
-          matching language pack installed (probed below). Applies on the next
-          capture — no restart needed.
+          The OCR engine reads the screen before translation.
+          <strong>Paddle OCR</strong> ships with the app and runs fully
+          offline — no language packs needed. <strong>Windows OCR</strong> is
+          lighter but needs the matching language pack installed (checked
+          below).
         </p>
         <p id="engines-reading-warning" class="hint hidden">
-          <strong>Vision reading</strong> sends every captured frame to the engine as an
-          image and asks it to read AND translate — noticeably slower per pass than
-          the OCR engines, and on a cloud engine (Gemini, OpenAI-compatible) billed per
-          image. Use it for stylized game fonts that defeat the OCR engines. The engine must
-          be an LLM with vision (Gemini, OpenAI-compatible, or LM Studio's local
-          vision models); change detection still gates the calls, so an unchanged
-          screen costs nothing. Choose a vision-capable model in the engine's card
-          below (e.g. <code>gemini-2.0-flash</code>).
+          Sends every captured frame to the engine as an image — read and
+          translate in one call. Slower per pass and billed per image on
+          cloud engines; needs a vision-capable model (pick one in the
+          engine's card below, e.g. <code>gemini-2.0-flash</code>). Use it
+          for stylized fonts the OCR engines cannot read.
         </p>
         </div>
         <div class="engine-card">
@@ -242,9 +225,8 @@
             <span class="chip privacy" title="Screen text is sent to Google's translation endpoint">☁ cloud</span>
           </div>
           <p class="hint">
-            The keyless default (ADR-0002). Free, but unofficial — it can
-            rate-limit or break, and every failure surfaces visibly. No key,
-            no setup.
+            Free, no key, no setup — the keyless default. Unofficial
+            endpoint, so it can rate-limit or break without notice.
           </p>
         </div>
         <div class="engine-card">
@@ -253,10 +235,10 @@
             <span class="chip privacy" title="Screen text is sent to Azure's translation service">☁ cloud</span>
           </div>
           <p class="hint">
-            The reliable keyed option. The F0 tier is permanently free
-            (2M chars/month): create a Translator resource with the link
-            (pricing tier "Free F0", region "Global"), then paste its key.
-            The region must match the resource; empty means global.
+            Permanently free on the F0 tier (2M chars/month). Create a
+            Translator resource with the link (tier "Free F0", region
+            "Global") and paste its key — the region must match the
+            resource; empty means global.
           </p>
           <div class="row glossary-add">
             <input id="engines-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
@@ -289,11 +271,9 @@
             <span class="chip privacy" title="Screen text is sent to whatever server the base URL points at">☁ cloud (unless your URL is local)</span>
           </div>
           <p class="hint">
-            One adapter for OpenAI, OpenRouter, or any OpenAI-compatible API:
+            Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
             set the base URL (must include <code>/v1</code>), paste its key,
-            and type the model name (e.g. <code>gpt-4o-mini</code>). Cloud
-            URLs show the ☁ badge while running; a loopback URL counts as
-            local and does not.
+            and type the model name (e.g. <code>gpt-4o-mini</code>).
           </p>
           <div class="row glossary-add">
             <input id="engines-openai-base-url" type="text" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
@@ -310,10 +290,9 @@
             <span class="chip ok" title="Runs on this machine — screen text never leaves it">Local · offline</span>
           </div>
           <p class="hint">
-            Local translation through LM Studio's server: start it (LM Studio
-            → Developer → Start server, default port 1234), load a model,
-            then check the server here — the model dropdown fills from what
-            it serves. No key, no cloud: screen text stays on this machine.
+            Local and offline — screen text never leaves this machine.
+            Start LM Studio's server (Developer → Start server, default
+            port 1234), load a model, then Check server here to pick it.
           </p>
           <div class="row glossary-add">
             <input id="engines-lmstudio-base-url" type="text" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
@@ -335,9 +314,7 @@
           <p class="hint">
             Google's LLM API: create a free API key at AI Studio with the
             link, paste it, and type a model id (e.g.
-            <code>gemini-2.0-flash</code>). Like every LLM engine, Glossary
-            terms appearing in a block are injected into the prompt, and
-            Genderless Mode is requested there too.
+            <code>gemini-2.0-flash</code>).
           </p>
           <div class="row glossary-add">
             <input id="engines-gemini-key" type="password" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
@@ -351,18 +328,11 @@
         <div class="settings-section">
         <h3>Prompts (advanced)</h3>
         <p class="hint">
-          The system prompts Langception sends to the LLM engines (Gemini,
-          OpenAI-compatible, LM Studio) with every translation. A System
-          Prompt Preset fills both prompts below with one saved wording —
-          four built-ins ship with the app, and you can save your own.
-          <code>{source}</code> and <code>{target}</code> in a prompt are
-          replaced with the language names. The app always appends by itself —
-          the Glossary entries relevant to the text, the Genderless Mode
-          instruction when enabled, the screen-reading reply contract (a fixed
-          JSON shape, so a custom prompt cannot break parsing), and the
-          prompt's version tag (it names the preset, or says "custom", so a
-          recorded request shows what produced it). Google, Azure and DeepL
-          never see prompts. Applies with <em>Save engines</em>.
+          The system prompts sent to the LLM engines (Gemini,
+          OpenAI-compatible, LM Studio) with every translation; Google, Azure
+          and DeepL never see prompts. <code>{source}</code> and
+          <code>{target}</code> are replaced with the language names —
+          Glossary terms and Genderless Mode are added automatically.
         </p>
         <div class="form-grid">
           <label class="form-row">
@@ -374,8 +344,7 @@
         <p class="hint">
           Picking a preset loads its two prompts below — <strong>General</strong>
           clears both (the built-in default). Editing a loaded prompt turns the
-          selection into <strong>Custom</strong>: your edited text is what gets
-          sent.
+          selection into <strong>Custom</strong>.
         </p>
         <div class="row glossary-add">
           <input id="engines-preset-name" type="text" maxlength="80" placeholder="Preset name" spellcheck="false" />
@@ -391,7 +360,7 @@
         </div>
         <p class="hint">
           <em>Save as preset</em> stores the two prompts as they read right now.
-          Saved presets can be renamed and deleted; the built-ins cannot.
+          Saved presets can be renamed and deleted; built-ins cannot.
         </p>
         <div class="prompt-field">
           <div class="row prompt-head">
@@ -420,9 +389,9 @@
         <div class="settings-section">
         <h3>OCR Engine — Windows OCR language packs</h3>
         <p class="hint">
-          The OCR engine reads the screen locally. It needs a Windows language
-          pack for the Source Language you read; a missing pack silently
-          produces nothing, so it is checked here instead.
+          Windows OCR needs a language pack for the Source Language you read —
+          a missing pack silently reads nothing, so the packs are checked
+          here.
         </p>
         <ul id="engines-packs" class="packs"></ul>
         <div class="row">
@@ -438,9 +407,9 @@
       <section id="tab-glossary" class="page">
         <h2>Glossary</h2>
         <p class="hint">
-          A block whose ENTIRE text matches a term (trimmed, case-insensitive)
-          shows the pinned Thai without calling the engine. Partial matches
-          are left to the engine.
+          When a block's entire text matches a term (trimmed,
+          case-insensitive), its pinned Thai is shown without calling the
+          engine.
         </p>
         <!-- Ticket 41: the management area (add/import/export/list) in one
              section card; the Add button is a plain secondary — the sticky
@@ -468,12 +437,10 @@
       <section id="tab-profiles" class="page">
         <h2>Profiles</h2>
         <p class="hint">
-          A Profile binds one app (by its executable) with its own Source
-          Language, engine, Capture Zones inside that app's window, a
-          Glossary layer, a Genderless Mode override and a System Prompt
-          Preset binding. It is active while the app is the foreground
-          window; when no Profile matches, the global settings above apply
-          unchanged.
+          A Profile gives one app its own Source Language, engine, Capture
+          Zones inside its window, Glossary layer, Genderless Mode and
+          System Prompt Preset. It applies while that app is the foreground
+          window; with no match, the global settings apply.
         </p>
         <div class="row">
           <select id="profile-select" title="Choose a profile"></select>
@@ -541,10 +508,8 @@
           </div>
           <div class="row">
             <span class="hint">
-              Saved values apply when translation (re)starts. The app is
-              matched case-insensitively by executable name; while it owns
-              the foreground window, only its window (or the zones below,
-              relative to that window) is watched.
+              While the app owns the foreground window, only its window (or
+              the zones below) is watched.
             </span>
           </div>
           </div>
@@ -691,8 +656,8 @@
         <h2>Hotkeys</h2>
         <p class="hint">
           Global hotkeys, system-wide. Format: modifiers + key, e.g. "Alt+T",
-          "Ctrl+Shift+Z", "F9". Saving re-registers them immediately — if a
-          key is taken by another app, a warning appears in the Results Window.
+          "Ctrl+Shift+Z", "F9". If a key is already taken by another app, a
+          warning appears in the Results Window.
         </p>
         <div class="settings-section">
         <div class="form-grid">
@@ -738,11 +703,9 @@
           <button id="about-wizard" class="btn small">Run setup wizard</button>
         </div>
         <p class="hint">
-          Privacy: the default engine sends screen text to Google's
-          translation endpoint (an ☁ badge shows whenever a cloud engine is
-          active). OCR runs locally on Windows. The config file is
-          hand-editable — zones you draw and blocks you exclude are saved
-          there automatically.
+          Privacy: cloud engines send screen text to their service — the ☁
+          badge shows whenever one is active; OCR runs locally. The config
+          file is hand-editable. See the project README for details.
         </p>
         </div>
 
@@ -756,7 +719,7 @@
         <h3>Updates</h3>
         <div class="row">
           <button id="about-check-updates" class="btn small">Check for new version</button>
-          <label class="inline-toggle" title="Check automatically every time Langception starts. Off by default — nothing is fetched at launch unless you turn this on; a launch check never blocks startup and fails silently.">
+          <label class="inline-toggle" title="Check automatically every time Langception starts. Off by default — nothing is fetched at launch unless you turn this on.">
             <input id="about-update-on-launch" type="checkbox" />
             <span>Check on launch</span>
           </label>
@@ -767,11 +730,8 @@
         </div>
         <p class="hint">
           Check-only: Langception never downloads or installs anything — a
-          new version is reported with a link to its download page, opened
-          in your browser only when you click it. Without a configured
-          update URL the button reports “update check unavailable” and
-          nothing is ever fetched. The check sends nothing beyond the
-          fetch itself.
+          new version is reported with a link, opened in your browser only
+          when you click it.
         </p>
         </div>
       </section>

@@ -127,7 +127,7 @@ tray tooltip while they are in flight.
 | Engine | Key needed | Notes |
 | --- | --- | --- |
 | **Google** *(default)* | none | Unofficial free endpoint (`translate.googleapis.com`); zero-config but unofficial — it can slow down or break without notice, and it sends screen text to Google. |
-| **Azure AI Translator** | key (+ optional region) | The recommended upgrade: free F0 tier, official and stable. Create a Translator resource in the [Azure portal](https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation) (Settings has this link) and paste the key; leave the region empty for a global resource. |
+| **Azure AI Translator** | key (+ optional region) | The recommended upgrade: free F0 tier, official and stable. Create a Translator resource in the [Azure portal](https://portal.azure.com) (Settings has this link) and paste the key; leave the region empty for a global resource. |
 | **DeepL** | key | [DeepL API](https://www.deepl.com/en/pro-api) — free tier available. Paste the key; free keys (ending `:fx`) are routed to DeepL's free host automatically. |
 | **Gemini** | key | Google AI Studio models. Get a key at [aistudio.google.com](https://aistudio.google.com/apikey), set a model id (e.g. `gemini-2.0-flash`). |
 | **OpenAI-compatible** | key | Any `/chat/completions` server: OpenAI (`https://api.openai.com/v1`), OpenRouter, or anything speaking the same API. Set base URL, key, and model. |
@@ -204,6 +204,12 @@ Results Window.
   Azure, DeepL, Gemini, OpenAI-compatible) is translating; the Results
   Window and tray tooltip show a badge whenever that is happening.
 - LM Studio translation never sends anything off-machine.
+- Even with **Show Langception in screen captures** on (Settings →
+  General), the translation loop masks Langception's own windows out of
+  every frame it processes — the app never reads, translates, or uploads
+  its own output, and the In-place Overlay is never visible to captures.
+- The optional update check is fetch-only: it sends nothing beyond the
+  request itself and never downloads or installs anything.
 - Config, keys, and glossaries stay in `%APPDATA%\langception\` on your
   machine. Langception has no telemetry.
 

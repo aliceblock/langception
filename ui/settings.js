@@ -150,8 +150,7 @@ document.getElementById("wizard-skip").addEventListener("click", finishWizard);
 // live in config.toml like every other setting). The wizard's Azure upgrade
 // shares this loader so its action can merge with the already-saved values.
 
-const AZURE_CREATE_KEY_URL =
-  "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation";
+const AZURE_CREATE_KEY_URL = "https://portal.azure.com";
 const DEEPL_API_URL = "https://www.deepl.com/en/pro-api";
 const GEMINI_CREATE_KEY_URL = "https://aistudio.google.com/apikey";
 

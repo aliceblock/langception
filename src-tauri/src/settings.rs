@@ -508,7 +508,7 @@ pub(crate) async fn test_engine(app: AppHandle, engine: String) -> Result<String
 #[tauri::command]
 pub(crate) fn open_engine_link(url: String) -> Result<(), String> {
     const ALLOWED: [&str; 3] = [
-        "https://portal.azure.com/#create/Microsoft.CognitiveServicesTextTranslation",
+        "https://portal.azure.com",
         "https://www.deepl.com/en/pro-api",
         "https://aistudio.google.com/apikey",
     ];
