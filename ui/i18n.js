@@ -78,9 +78,9 @@
   // Resolves the dictionaries for `language` (a UiLanguage code: "en" |
   // "th"), applies the static markup, and resolves I18n.ready. A missing
   // or broken non-English dictionary degrades to English (the graceful
-  // fallback ticket 62 ships with — th.json is the empty placeholder
-  // until ticket 63 fills it). Safe to call again (a live language
-  // switch re-applies).
+  // fallback ticket 62 built; since ticket 63 th.json is complete and the
+  // Rust parity test keeps it that way, so the fallback is pure robustness).
+  // Safe to call again (a live language switch re-applies).
   async function init(language) {
     lang = language === "th" ? "th" : "en";
     if (!en) en = await loadJson("en.json");

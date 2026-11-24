@@ -21,7 +21,7 @@
 html, body { height: 100%; }
 
 body {
-  font-family: "Segoe UI", system-ui, sans-serif;
+  font-family: "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -310,15 +310,8 @@ input[type="color"] {
    read as "game content", not as app chrome) and fits the frame to the
    card system. */
 
-/* Bundled Noto Sans Thai, same declaration as overlay.css (canonical
-   there): the preview renders the bundled font even when no Thai-capable
-   font is installed on this PC. */
-@font-face {
-  font-family: "Noto Sans Thai";
-  src: url("fonts/NotoSansThai-Regular.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-}
+/* (The bundled Noto Sans Thai faces are declared in theme.css since
+   ticket 63 — both weights, shared by every normal window.) */
 
 #style-preview {
   /* relative anchors the "unsaved" marker (ticket 56) in the corner. */

@@ -742,10 +742,9 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
 // General -------------------------------------------------------------------
 
 const generalLanguage = document.getElementById("general-language");
-// The UI Language select (ticket 62): choosing ไทย with the empty th
-// dictionary renders English (i18n.js's fallback — ticket 63 fills it);
-// a save applies the choice live in THIS window, the other windows at
-// their next load.
+// The UI Language select (ticket 62): since ticket 63 both dictionaries
+// are complete, so ไทย renders the whole window in Thai; a save applies
+// the choice live in THIS window, the other windows at their next load.
 const generalUiLanguage = document.getElementById("general-ui-language");
 const generalCadence = document.getElementById("general-cadence");
 const generalStability = document.getElementById("general-stability");

@@ -3,11 +3,22 @@
    (set_ignore_cursor_events), and pointer-events:none is belt & braces. */
 
 /* Bundled Noto Sans Thai (SIL OFL 1.1, see fonts/LICENSE.txt) so Thai
-   glyphs always render; served from the app's own files, no network. */
+   glyphs always render; served from the app's own files, no network.
+   Both weights since ticket 63 (with only the Regular declared, Chromium
+   would faux-bold the 600/700 labels). Verbatim duplicate of theme.css's
+   canonical pair — this window doesn't link theme.css (picker.css keeps
+   its own copy for the same reason). */
 @font-face {
   font-family: "Noto Sans Thai";
   src: url("fonts/NotoSansThai-Regular.ttf") format("truetype");
   font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Noto Sans Thai";
+  src: url("fonts/NotoSansThai-Bold.ttf") format("truetype");
+  font-weight: 700;
   font-style: normal;
 }
 
@@ -112,7 +123,7 @@ body.adjust .overlay-block:hover {
   border-radius: 3px 3px 0 0;
   background: #6cc7ff;
   color: #10222c;
-  font-family: "Segoe UI", sans-serif;
+  font-family: "Segoe UI", "Noto Sans Thai", sans-serif;
   font-size: 11px;
   white-space: nowrap;
   pointer-events: none;

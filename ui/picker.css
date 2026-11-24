@@ -2,6 +2,24 @@
    selection div dims everything outside itself via a giant box-shadow, so
    the dragged area stays crisp while the rest of the screen dims. */
 
+/* Bundled Noto Sans Thai in both weights (same declaration as theme.css's,
+   canonical in overlay.css): this window does not link theme.css, and the
+   bar text is localized (ticket 63) so Thai must render — and bold — in
+   the bundled face. */
+@font-face {
+  font-family: "Noto Sans Thai";
+  src: url("fonts/NotoSansThai-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Noto Sans Thai";
+  src: url("fonts/NotoSansThai-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body {
@@ -34,7 +52,7 @@ html, body {
   transform: translateX(-50%);
   background: rgba(13, 14, 18, 0.92);
   color: #f2f3f7;
-  font: 13px "Segoe UI", system-ui, sans-serif;
+  font: 13px "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
   padding: 8px 18px;
   border-radius: 999px;
   border: 1px solid rgba(255, 201, 31, 0.55);

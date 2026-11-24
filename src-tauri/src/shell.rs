@@ -743,13 +743,13 @@ struct TrayStrings {
     mode_note_fullscreen: &'static str,
 }
 
-/// The tray strings for `lang`. Only the English arm exists (ticket 62) —
-/// `Th` falls through to it so a saved Thai keeps rendering today's
-/// strings until ticket 63 fills the arm, the Rust mirror of the webview
-/// dictionaries' missing-key fallback.
+/// The tray strings for `lang` (ticket 63 filled the Thai arm): English is
+/// today's tray byte-for-byte (pinned by test), Thai mirrors the webview
+/// dictionaries' terminology — Capture Zone → โซนจับภาพ, Adjust Mode →
+/// โหมดปรับแต่ง, one-shot → ครั้งเดียว.
 fn tray_text(lang: UiLanguage) -> TrayStrings {
     match lang {
-        UiLanguage::En | UiLanguage::Th => TrayStrings {
+        UiLanguage::En => TrayStrings {
             show_results: "Show Results Window",
             start_translation: "Start Translation",
             stop_translation: "Stop Translation",
@@ -768,6 +768,26 @@ fn tray_text(lang: UiLanguage) -> TrayStrings {
             tooltip_running: "Langception — running",
             tooltip_paused: "Langception — paused",
             mode_note_fullscreen: " · full screen",
+        },
+        UiLanguage::Th => TrayStrings {
+            show_results: "แสดงหน้าต่างผลลัพธ์",
+            start_translation: "เริ่มการแปล",
+            stop_translation: "หยุดการแปล",
+            pause_translation: "พักการแปล",
+            resume_translation: "ทำการแปลต่อ",
+            enter_adjust_mode: "เข้าโหมดปรับแต่ง",
+            exit_adjust_mode: "ออกจากโหมดปรับแต่ง",
+            fullscreen_mode: "โหมดเต็มหน้าจอ",
+            new_capture_zone: "โซนจับภาพใหม่",
+            one_shot_capture: "จับภาพครั้งเดียว",
+            settings: "ตั้งค่า…",
+            debug_log_window: "หน้าต่างบันทึกดีบั๊ก…",
+            open_config_folder: "เปิดโฟลเดอร์คอนฟิก",
+            quit: "ออกจากโปรแกรม",
+            tooltip_stopped: "Langception — หยุดแล้ว",
+            tooltip_running: "Langception — กำลังทำงาน",
+            tooltip_paused: "Langception — พักอยู่",
+            mode_note_fullscreen: " · เต็มหน้าจอ",
         },
     }
 }
@@ -2271,19 +2291,26 @@ pub(crate) fn push_warning(state: &AppState, message: String) {
 /// wording per UI Language from it.
 const WATCHING_NOTHING: &str = "Translation is running, but nothing is being watched — draw a Capture Zone (Alt+Shift+Z), turn on Full-Screen Mode, or focus an app that has a Profile.";
 
+/// The Thai wording of [`WATCHING_NOTHING`] (ticket 63): same triage
+/// advice in the dictionaries' terminology, the hotkey and mode names
+/// unchanged. Both wordings are pinned by test byte-for-byte.
+const WATCHING_NOTHING_TH: &str = "การแปลกำลังทำงาน แต่ยังไม่มีอะไรให้เฝ้าดู — วาดโซนจับภาพ (Alt+Shift+Z) เปิดโหมดเต็มหน้าจอ หรือโฟกัสแอปที่มีโปรไฟล์";
+
 /// The Rust-composed user-visible notice strings (ticket 62): the status
 /// warnings the loop emits and the OCR log's engine-substitution line
-/// ([`substitution_notice_text`]). Like [`tray_text`], only the English
-/// wording exists — every language falls through to it until ticket 63
-/// fills Thai.
+/// ([`substitution_notice_text`]). Ticket 63 filled the Thai arm to mirror
+/// the webview dictionaries.
 struct NoticeTexts {
     watching_nothing: &'static str,
 }
 
 fn notices(lang: UiLanguage) -> NoticeTexts {
     match lang {
-        UiLanguage::En | UiLanguage::Th => NoticeTexts {
+        UiLanguage::En => NoticeTexts {
             watching_nothing: WATCHING_NOTHING,
+        },
+        UiLanguage::Th => NoticeTexts {
+            watching_nothing: WATCHING_NOTHING_TH,
         },
     }
 }
@@ -2293,31 +2320,51 @@ fn notices(lang: UiLanguage) -> NoticeTexts {
 /// has no kana), so the pass runs the small model set instead.
 fn substitution_notice_text(lang: UiLanguage, selected: langception_core::ppocr::ModelTier) -> String {
     match lang {
-        UiLanguage::En | UiLanguage::Th => format!(
+        UiLanguage::En => format!(
             "{} cannot read Japanese (its vocabulary has no kana) — running the {} model set instead",
+            selected.display_name(),
+            langception_core::ppocr::ModelTier::Small.display_name(),
+        ),
+        // The tier names are brand-like engine names and stay Latin, the
+        // same convention as the webview dictionaries.
+        UiLanguage::Th => format!(
+            "{} อ่านภาษาญี่ปุ่นไม่ได้ (คลังคำไม่มีคานะ) — สลับไปใช้ชุดโมเดล {} แทน",
             selected.display_name(),
             langception_core::ppocr::ModelTier::Small.display_name(),
         ),
     }
 }
 
+/// Whether a warnings line is the watching-nothing notice in ANY language.
+/// One predicate for both the push's dedup and the clear, so they can
+/// never disagree about which lines belong to this notice — ticket 63
+/// gave the notice a second wording, and a per-language comparison would
+/// let a mid-session switch stack a second copy and strand the old one.
+fn is_watching_nothing_wording(w: &str) -> bool {
+    [UiLanguage::En, UiLanguage::Th]
+        .iter()
+        .any(|lang| notices(*lang).watching_nothing == w)
+}
+
 /// Adds or clears the UI language's [`notices`] watching-nothing text to
 /// match the loop's target. Called wherever the target is (re)computed
-/// while the loop runs; stopping the loop clears it. Both operations
-/// compare against the CURRENT language's wording, so a warning pushed in
-/// one language is cleared in the same language; a mid-session UI
-/// Language switch can therefore leave the old wording until the target
-/// changes again — the same next-refresh semantics the windows have.
+/// while the loop runs; stopping the loop clears it. The wording resolves
+/// per emission, but exactly one live copy is the invariant: the push
+/// dedups against every language's wording ([`is_watching_nothing_wording`]),
+/// so a mid-session UI Language switch leaves the old wording in place —
+/// the same next-refresh semantics the windows have, and what the Settings
+/// hint describes ("keeps its wording until it clears") — and a clear in
+/// any language removes it.
 fn apply_watching_nothing(app: &AppHandle, watching_nothing: bool) {
     let text = notices(ui_language(app)).watching_nothing;
     let state = app.state::<AppState>();
     let mut warnings = state.warnings.lock().unwrap_or_else(|p| p.into_inner());
     if watching_nothing {
-        if !warnings.iter().any(|w| w == text) {
+        if !warnings.iter().any(|w| is_watching_nothing_wording(w)) {
             warnings.push(text.to_string());
         }
     } else {
-        warnings.retain(|w| w != text);
+        warnings.retain(|w| !is_watching_nothing_wording(w));
     }
 }
 
@@ -3996,48 +4043,84 @@ mod tests {
         assert_eq!(text.tooltip_running, "Langception — running");
         assert_eq!(text.tooltip_paused, "Langception — paused");
         assert_eq!(text.mode_note_fullscreen, " · full screen");
-        // The graceful fallback: a saved Thai renders today's strings
-        // until ticket 63 fills the arm — every field identical.
-        let th = tray_text(UiLanguage::Th);
-        assert_eq!(th.show_results, text.show_results);
-        assert_eq!(th.quit, text.quit);
-        assert_eq!(th.tooltip_running, text.tooltip_running);
-        assert_eq!(th.mode_note_fullscreen, text.mode_note_fullscreen);
     }
 
-    /// The notices seam resolves the same English wording for every
-    /// language until ticket 63 (the watching-nothing warning included).
+    /// The tray seam's Thai strings (ticket 63): pinned byte-for-byte like
+    /// the English ones, mirroring the webview dictionaries' terminology
+    /// (โซนจับภาพ, โหมดปรับแต่ง, จับภาพครั้งเดียว) — a wording change is a
+    /// conscious one, and the brand name "Langception" stays.
     #[test]
-    fn the_notices_seam_resolves_the_english_wording_for_every_language() {
+    fn tray_text_thai_strings_are_pinned() {
+        let text = tray_text(UiLanguage::Th);
+        assert_eq!(text.show_results, "แสดงหน้าต่างผลลัพธ์");
+        assert_eq!(text.start_translation, "เริ่มการแปล");
+        assert_eq!(text.stop_translation, "หยุดการแปล");
+        assert_eq!(text.pause_translation, "พักการแปล");
+        assert_eq!(text.resume_translation, "ทำการแปลต่อ");
+        assert_eq!(text.enter_adjust_mode, "เข้าโหมดปรับแต่ง");
+        assert_eq!(text.exit_adjust_mode, "ออกจากโหมดปรับแต่ง");
+        assert_eq!(text.fullscreen_mode, "โหมดเต็มหน้าจอ");
+        assert_eq!(text.new_capture_zone, "โซนจับภาพใหม่");
+        assert_eq!(text.one_shot_capture, "จับภาพครั้งเดียว");
+        assert_eq!(text.settings, "ตั้งค่า…");
+        assert_eq!(text.debug_log_window, "หน้าต่างบันทึกดีบั๊ก…");
+        assert_eq!(text.open_config_folder, "เปิดโฟลเดอร์คอนฟิก");
+        assert_eq!(text.quit, "ออกจากโปรแกรม");
+        assert_eq!(text.tooltip_stopped, "Langception — หยุดแล้ว");
+        assert_eq!(text.tooltip_running, "Langception — กำลังทำงาน");
+        assert_eq!(text.tooltip_paused, "Langception — พักอยู่");
+        assert_eq!(text.mode_note_fullscreen, " · เต็มหน้าจอ");
+        // Distinct from the English arm — the fallback days are over.
+        let en = tray_text(UiLanguage::En);
+        assert_ne!(text.quit, en.quit);
+        assert_ne!(text.mode_note_fullscreen, en.mode_note_fullscreen);
+    }
+
+    /// The notices seam resolves the pinned wording per UI Language —
+    /// the English pin, and the Thai mirror ticket 63 added (both
+    /// byte-for-byte; apply_watching_nothing dedups and clears against
+    /// every language's wording, so exactly one live copy survives a
+    /// mid-session switch).
+    #[test]
+    fn the_notices_seam_resolves_the_wording_per_language() {
         assert_eq!(notices(UiLanguage::En).watching_nothing, WATCHING_NOTHING);
-        assert_eq!(notices(UiLanguage::Th).watching_nothing, WATCHING_NOTHING);
+        assert_eq!(notices(UiLanguage::Th).watching_nothing, WATCHING_NOTHING_TH);
+        assert_ne!(
+            notices(UiLanguage::Th).watching_nothing, WATCHING_NOTHING,
+            "the Thai arm must carry the Thai wording, not fall through"
+        );
     }
 
     /// The substitution notice composes the same wording the engine used
     /// to bake in (ppocr.rs before ticket 62), now through the seam —
-    /// naming both the selected tier and the model set that actually runs.
+    /// naming both the selected tier and the model set that actually
+    /// runs, in either language (tier names stay Latin, brand-like).
     #[test]
     fn the_substitution_notice_names_both_tiers() {
         use langception_core::ppocr::ModelTier;
         let text = substitution_notice_text(UiLanguage::En, ModelTier::Tiny);
         assert!(text.contains("PP-OCRv6-tiny"), "names the selection: {text}");
         assert!(text.contains("PP-OCRv6-small"), "names what runs: {text}");
-        assert_eq!(
-            substitution_notice_text(UiLanguage::Th, ModelTier::Tiny),
-            text,
-            "Thai falls back to the English wording until ticket 63"
+        let th = substitution_notice_text(UiLanguage::Th, ModelTier::Tiny);
+        assert!(th.contains("PP-OCRv6-tiny"), "tier names stay Latin in Thai: {th}");
+        assert!(th.contains("PP-OCRv6-small"), "tier names stay Latin in Thai: {th}");
+        assert_ne!(
+            th, text,
+            "the Thai arm carries Thai wording, not the English one"
         );
     }
 
-    /// Both dictionaries parse as flat string maps (keys never nest), and
-    /// the Thai dictionary's keys never outrun the English one's. The
-    /// fallback chain (active → English → key) renders an en key even from
-    /// an empty th — ticket 62 ships th.json as the empty placeholder, and
-    /// the moment it carries real keys, parity tightens to the FULL en key
-    /// set: ticket 63 cannot miss a string (silently English forever) or
-    /// add a stale one (a typo'd key renders itself).
+    /// Both dictionaries parse as flat string maps (keys never nest) and
+    /// are in FULL key parity (ticket 63 filled th.json; the fallback
+    /// chain active → English → key has nothing left to catch): the Thai
+    /// key set is exactly the English one, so no key can silently render
+    /// English forever and no typo'd key can render itself. Every
+    /// {placeholder} the English value interpolates must survive the
+    /// translation — interpolate leaves an unknown one in place, so a
+    /// dropped placeholder would show "{count}" raw. `_`-prefixed keys
+    /// are metadata notes, not strings.
     #[test]
-    fn i18n_dictionaries_are_flat_maps_with_no_orphan_thai_keys() {
+    fn i18n_dictionaries_are_flat_maps_in_full_key_parity() {
         let i18n_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/i18n");
         let en: std::collections::BTreeMap<String, serde_json::Value> =
             serde_json::from_str(&std::fs::read_to_string(i18n_dir.join("en.json")).unwrap())
@@ -4053,6 +4136,15 @@ mod tests {
         }
         let th_real_keys: Vec<&String> =
             th.keys().filter(|key| !key.starts_with('_')).collect();
+        for key in &th_real_keys {
+            let value = th[*key].as_str().unwrap_or_else(|| {
+                panic!("th key {key} must map to a string — dictionaries are flat string maps")
+            });
+            assert!(
+                !value.trim().is_empty(),
+                "th key {key} is empty — translate it or drop the key"
+            );
+        }
         // The extraction is real: the English dictionary holds every
         // surface's strings (an accidentally emptied en.json must fail
         // here, not as blank UI).
@@ -4061,24 +4153,43 @@ mod tests {
             "en.json holds the extracted strings, got {} keys",
             en.len()
         );
-        if th_real_keys.is_empty() {
-            // The ticket-62 placeholder state: choosing Thai renders
-            // English through the fallback. Nothing more to pin yet.
-            return;
-        }
         let missing: Vec<&String> = en
             .keys()
             .filter(|key| !th.contains_key(*key))
             .collect();
         assert!(
             missing.is_empty(),
-            "th.json carries keys but is missing {} en key(s) — fill every key: {missing:?}",
+            "th.json is missing {} en key(s) — the Thai dictionary is complete by contract: {missing:?}",
             missing.len()
         );
         for key in &th_real_keys {
             assert!(
                 en.contains_key(*key),
                 "th key {key:?} has no en counterpart — a typo'd key renders itself"
+            );
+        }
+        // {placeholder} parity, per key.
+        fn placeholders(value: &str) -> Vec<String> {
+            let mut names = Vec::new();
+            let mut rest = value;
+            while let Some(open) = rest.find('{') {
+                let after = &rest[open + 1..];
+                let Some(close) = after.find('}') else { break };
+                if close > 0 {
+                    names.push(after[..close].to_string());
+                }
+                rest = &after[close + 1..];
+            }
+            names.sort();
+            names
+        }
+        for key in &th_real_keys {
+            let en_value = en[*key].as_str().unwrap();
+            let th_value = th[*key].as_str().unwrap();
+            assert_eq!(
+                placeholders(en_value),
+                placeholders(th_value),
+                "key {key}: the Thai value must carry the same {{placeholders}} as the English one"
             );
         }
     }

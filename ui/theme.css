@@ -4,6 +4,28 @@
    a page can override anything here. The overlay pills and the picker keep
    their own chrome (overlay.css, picker.css) but share the same palette. */
 
+/* Bundled Noto Sans Thai (SIL OFL 1.1, see fonts/LICENSE.txt) in both
+   weights (ticket 63): with only the Regular declared, Chromium would
+   synthesize faux bold for the 600/700 weights the UI labels use. This is
+   the canonical copy — every normal window (Results, Settings, Debug Log)
+   links theme.css; the overlay and the picker don't, so overlay.css and
+   picker.css each carry a verbatim duplicate. Window font stacks name the
+   face after "Segoe UI" — Latin renders in Segoe UI, Thai glyphs fall
+   through to this face. */
+@font-face {
+  font-family: "Noto Sans Thai";
+  src: url("fonts/NotoSansThai-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: "Noto Sans Thai";
+  src: url("fonts/NotoSansThai-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+}
+
 :root {
   /* Black/yellow brand: near-black surfaces, yellow accent. --accent-ink is
      the text color ON yellow (11:1 contrast); --accent-deep is the dark end
