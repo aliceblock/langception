@@ -167,3 +167,46 @@ narrow-width overflow fix.)
       rendered content, so only freshly opened windows (the Debug Log)
       show it. If it reproduces on a fresh `cargo build` exe, capture the
       window with the PrintWindow probe and record the served origin.
+
+### Addendum (2026-11-25, recurrence re-diagnosed)
+
+The reporter hit it again. Re-verified on the current build (with
+tickets 62/63/61 landed and the shell.rs WIP hunks in the tree):
+
+- **Live server → green.** Against the running `cargo tauri dev`
+  instance the exact sequence (open Settings → WM_CLOSE hide → open
+  Debug Log) went GREEN 4× (automated:
+  `.scratch/diag-white-window/sdc-cycle.ps1`); the Debug Log rendered
+  its dark page every time.
+- **Killing the harness kills the app.** Terminating the cargo/
+  cargo-tauri chain takes the app down with it — the "orphaned app +
+  dead server" state is NOT reachable by closing the dev console. The
+  white-window state is reached only by **launching the dev-baked
+  `target\debug\langception.exe` directly** with no server.
+- **Direct launch → red, reproduced.** With port 1430 free, launching
+  the dev exe directly: Settings probes 0.95 white, Debug Log 0.87
+  white, stuck at every sample. Screenshot (`sdc-dbg1-001844.png` in
+  the diag dir) records the served origin: **http://127.0.0.1:1430 —
+  "127.0.0.1 refused to connect", ERR_CONNECTION_REFUSED**.
+- **Not the recurrence machine:** no Langception autostart anywhere
+  (HKCU Run, HKLM Run, Startup folder all checked) — the recurrence is
+  a manual direct launch of the dev exe.
+- Prevention stands: drive the app through `cargo tauri dev` (or a
+  release build); if white windows appear, the instance is a dev exe
+  without its server — quit it from the tray and start
+  `cargo tauri dev`. No app code change.
+
+### Addendum 2 (2026-11-25, superseded by ticket 65)
+
+The re-diagnosis continued: the reporter isolated the real trigger —
+"Keep Settings window on top" + save + close Settings + open the Debug
+Log. The reporter's white window was NOT the dead-origin error sheet: it
+was a hidden window's DWM surface composing as a blank white sheet at
+its last rect (invisible to window enumeration, which is why the earlier
+live probes missed it — they sampled the wrong rect). That is a real
+app bug and it is FIXED in ticket 65 (DWM cloak around the frameless
+windows' hide/show) — see `docs/manual-tests/65-ghost-white-sheet.md`.
+The dead-origin diagnosis above remains valid for the stale-dev-build
+case only: a WebView2 "can't reach this page / 127.0.0.1 refused to
+connect" sheet means a `cargo tauri dev` build running without its
+server, not this bug.

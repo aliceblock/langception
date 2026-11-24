@@ -21,8 +21,8 @@
 
 use crate::shell::{
     apply_always_on_top_from_config, apply_capture_visibility_from_config, apply_state,
-    current_config, profile_edited, push_warning, restart_loop_if_running, run_off_main,
-    with_config_mut, AppState, HotkeyStatus,
+    current_config, ghost_free_hide, ghost_free_show, profile_edited, push_warning,
+    restart_loop_if_running, run_off_main, with_config_mut, AppState, HotkeyStatus,
 };
 use langception_core::config::{AppConfig, HotkeySettings};
 use langception_core::glossary::Glossary;
@@ -45,8 +45,7 @@ pub const SETTINGS_LABEL: &str = "settings";
 /// `run_off_main`; every caller routes through it).
 pub fn open_settings(app: &AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(SETTINGS_LABEL) {
-        let _ = window.show();
-        let _ = window.unminimize();
+        ghost_free_show(&window);
         let _ = window.set_focus();
         return Ok(());
     }
@@ -101,9 +100,10 @@ pub(crate) async fn open_settings_window(app: AppHandle) -> Result<(), String> {
 pub(crate) async fn hide_settings(app: AppHandle) -> Result<(), String> {
     run_off_main(app, |app| {
         if let Some(window) = app.get_webview_window(SETTINGS_LABEL) {
-            window
-                .hide()
-                .map_err(|e| format!("cannot hide the settings window: {e}"))?;
+            // Cloak + hide (ghost-free — see shell.rs's set_cloak): a bare
+            // hide leaves the DWM surface composably dead, which a later
+            // webview creation turns into the white-sheet ghost.
+            ghost_free_hide(&window);
         }
         Ok(())
     })

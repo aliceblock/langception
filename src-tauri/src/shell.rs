@@ -433,8 +433,7 @@ pub fn run() {
             let app = app.clone();
             spawn_off_main(&app, |app| {
                 if let Some(window) = app.get_webview_window(RESULTS_LABEL) {
-                    let _ = window.show();
-                    let _ = window.unminimize();
+                    ghost_free_show(&window);
                     let _ = window.set_focus();
                 } else {
                     crate::settings::open_settings(app)?;
@@ -601,7 +600,7 @@ pub fn run() {
                             if label == crate::settings::SETTINGS_LABEL {
                                 let _ = app.emit_to(&label, "settings-request-close", ());
                             } else {
-                                let _ = window.hide();
+                                ghost_free_hide(&window);
                             }
                         }
                         Ok(())
@@ -924,8 +923,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             // main thread (see run_off_main); failures surface as warnings.
             "show-results" => spawn_off_main(app, |app| {
                 if let Some(window) = app.get_webview_window(RESULTS_LABEL) {
-                    let _ = window.show();
-                    let _ = window.unminimize();
+                    ghost_free_show(&window);
                     let _ = window.set_focus();
                 }
                 Ok(())
@@ -970,7 +968,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = tray.app_handle().clone();
                 spawn_off_main(&app, |app| {
                     if let Some(window) = app.get_webview_window(RESULTS_LABEL) {
-                        let _ = window.show();
+                        ghost_free_show(&window);
                         let _ = window.set_focus();
                     }
                     Ok(())
@@ -1168,6 +1166,68 @@ pub(crate) fn apply_always_on_top_from_config(app: &AppHandle) {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.set_always_on_top(on_top);
         }
+    }
+}
+
+/// A hidden WebView2 window keeps its DWM composition surface, and the
+/// next webview creation (opening the Debug Log window) reallocates
+/// surfaces — the hidden window's slot is then composed as a blank white
+/// sheet at its last rect: on screen to the eye, invisible to window
+/// enumeration (`IsWindowVisible` is false), and floating above every
+/// other window when it is also always-on-top. Cloaking (`DWMWA_CLOAK`)
+/// removes the window from the composition tree while hidden, so a hidden
+/// support window's surface can never be composed. The frameless windows'
+/// hide/show sites go through [`ghost_free_hide`] / [`ghost_free_show`];
+/// show uncloaks AFTER `show()` so the webview repaints into the
+/// re-attached visual while it is still cloaked, then reveals painted.
+#[cfg(windows)]
+fn set_cloak(window: &tauri::WebviewWindow, cloak: bool) -> Result<(), String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+    let hwnd = HWND(
+        window
+            .hwnd()
+            .map_err(|e| format!("no native window handle: {e}"))?
+            .0,
+    );
+    let value = i32::from(cloak);
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAK,
+            &value as *const i32 as *const std::ffi::c_void,
+            4,
+        )
+    }
+    .map_err(|e| format!("DwmSetWindowAttribute(CLOAK) failed: {e}"))
+}
+
+/// See [`set_cloak`]: cloak first so the surface drops out of the
+/// composition tree before the hide lands. A cloak failure surfaces as a
+/// warning; the hide itself proceeds (today's behavior) — the ghost can
+/// come back, but hiding never becomes a hard failure because of it.
+pub(crate) fn ghost_free_hide(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    if let Err(message) = set_cloak(window, true) {
+        push_warning(
+            &window.app_handle().state::<AppState>(),
+            format!("could not cloak the window before hiding: {message}"),
+        );
+    }
+    let _ = window.hide();
+}
+
+/// See [`set_cloak`]: show first so the webview repaints the re-attached
+/// visual while the window is still cloaked, then uncloak to reveal.
+pub(crate) fn ghost_free_show(window: &tauri::WebviewWindow) {
+    let _ = window.show();
+    let _ = window.unminimize();
+    #[cfg(windows)]
+    if let Err(message) = set_cloak(window, false) {
+        push_warning(
+            &window.app_handle().state::<AppState>(),
+            format!("could not uncloak the window: {message}"),
+        );
     }
 }
 
