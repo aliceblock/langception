@@ -85,8 +85,11 @@
           </div>
           <div class="passes-pill">
             <span class="live-dot" aria-hidden="true"></span>
-            <span id="pass-count">0</span>
-            <span id="passes-label">0 passes</span>
+            <span id="pass-count"></span>
+            <!-- JS fills the interpolated strings at boot (the count is
+                 pluralized, so a static data-i18n value would be wrong);
+                 the unit key keeps the pre-boot flash localized. -->
+            <span id="passes-label" data-i18n="debug.passes_unit_many"></span>
           </div>
         </div>
         <div class="actions">
@@ -135,7 +138,7 @@
     <main id="stream-wrap">
       <div class="legend">
         <div class="legend-left">
-          <span id="legend-showing">Showing 0 entries</span>
+          <span id="legend-showing"></span>
           <span class="legend-sep" aria-hidden="true">|</span>
           <span class="legend-hint" data-i18n="debug.legend.hint">Click any card header to inspect raw pipeline timings</span>
         </div>

@@ -62,7 +62,8 @@ behind the new look.
       ticket-49 shape with a `↳ "…"` line per shown translation; the
       per-stage summary numbers match the KPI cards.
 - [ ] **Clear**: one click empties the stream, zeroes the pill and KPI
-      cards, hides Export…/Clear, shows the waiting card, and toasts
+      cards, hides Export…/Clear, shows the waiting card, resets any
+      active filter/search (like reopening the window), and toasts
       "Cleared ✓"; the loop keeps flowing into the fresh window.
 - [ ] **Errors**: a failed translation renders a rose error card in
       stream order, and the pass next to it keeps its full row.

@@ -57,6 +57,12 @@ const copyExportBtn = document.getElementById("copy-export-btn");
 const downloadExportBtn = document.getElementById("download-export-btn");
 const closeExportModalBtn = document.getElementById("close-export-modal");
 const toastContainer = document.getElementById("toast-container");
+const countAllEl = document.getElementById("count-all");
+const countFilterEls = {
+  translated: document.getElementById("count-translated"),
+  waiting: document.getElementById("count-waiting"),
+  suppressed: document.getElementById("count-suppressed"),
+};
 
 // The per-stage durations a timing event can carry (ticket 47). `total`
 // rides along everywhere but never competes for "slowest" — it only sums
@@ -198,8 +204,15 @@ function isPinned() {
   return window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 32;
 }
 
+// PRODUCT.md Accessibility: any motion has a reduced-motion fallback —
+// theme.css's neutralizer cannot reach JS scrolling, so "smooth" only
+// when the user allows it.
 function scrollToBottom(smooth = false) {
-  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  window.scrollTo({
+    top: document.documentElement.scrollHeight,
+    behavior: smooth && !reduced ? "smooth" : "auto",
+  });
 }
 
 function trimRows() {
@@ -246,16 +259,18 @@ function countKey(disposition) {
   return disposition.startsWith("translated_") ? "translated" : disposition;
 }
 
-// A pass's primary status (ticket 70's filter pills): translated wins,
-// then suppressed, then waiting — reads with other dispositions leave the
-// pass under "All" only. blocks_translated > 0 is translated by
-// definition.
+// A pass's primary status (ticket 70's filter pills), by the documented
+// precedence: translated wins outright, then suppressed over waiting —
+// regardless of read order — and blocks_translated > 0 is translated by
+// definition. Reads with other dispositions leave the pass under "All"
+// only.
 function primaryStatusOf(event) {
   let status = null;
   for (const read of event.reads ?? []) {
     const key = countKey(dispositionTag(read));
     if (key === "translated") return "translated";
-    if (status === null && (key === "suppressed" || key === "waiting")) status = key;
+    if (key === "suppressed") status = "suppressed";
+    else if (key === "waiting" && status === null) status = "waiting";
   }
   return event.blocks_translated > 0 ? "translated" : status;
 }
@@ -389,19 +404,36 @@ function renderKPIs() {
 }
 
 function renderFilterCounts() {
-  document.getElementById("count-all").textContent = String(history.length);
+  countAllEl.textContent = String(history.length);
   for (const f of ["translated", "waiting", "suppressed"]) {
-    document.getElementById(`count-${f}`).textContent = String(
+    countFilterEls[f].textContent = String(
       history.filter((e) => e.kind === "timing" && e.primaryStatus === f).length
     );
   }
 }
 
 function renderLegend(visibleCount) {
-  legendShowingEl.textContent =
+  // The mock bolds the count (mono like every number in the legend), so
+  // the rendered string is split around it — the same split-the-label
+  // move the Settings slider's live value uses.
+  legendShowingEl.replaceChildren();
+  const text =
     visibleCount === 1
       ? t("debug.legend.showing_one", { count: visibleCount })
       : t("debug.legend.showing_many", { count: visibleCount });
+  const num = String(visibleCount);
+  const at = text.indexOf(num);
+  if (at >= 0) {
+    const strong = document.createElement("strong");
+    strong.textContent = num;
+    legendShowingEl.append(
+      document.createTextNode(text.slice(0, at)),
+      strong,
+      document.createTextNode(text.slice(at + num.length)),
+    );
+  } else {
+    legendShowingEl.textContent = text;
+  }
 }
 
 function renderLegendFromDom() {
@@ -679,7 +711,11 @@ function entryMatches(entry) {
   );
 }
 
-function renderStream() {
+// A view re-render: view ACTIONS (filter click, typing, reset) land the
+// user where they are — the mock never scrolls on those — while the live
+// path passes follow=true, which honors the same contract as appends
+// (only when auto-scroll is on AND the user is still at the bottom).
+function renderStream(follow = false) {
   const filtered = history.filter(entryMatches);
   renderLegend(filtered.length);
   renderFilterCounts();
@@ -692,13 +728,13 @@ function renderStream() {
     rowsEl.append(card);
     if (entry === openHistoryRun) unchangedRun = card;
   }
-  if (autoScroll) scrollToBottom();
+  if (follow && autoScroll && isPinned()) scrollToBottom();
 }
 
 function appendLive(entry) {
   renderFilterCounts();
   if (filterActive()) {
-    renderStream();
+    renderStream(true);
     return;
   }
   const card = cardFor(entry);
@@ -725,7 +761,11 @@ function handleTiming(event) {
     // A tick that only captured and checked (the fast path): collapse
     // consecutive runs so an idle screen costs one compact card. A pass
     // that DIED before reading is not a skip — it keeps its full card
-    // (ticket 48's explicit read_skipped flag).
+    // (ticket 48's explicit read_skipped flag). The quote-block buffer
+    // is consumed/cleared here too: nothing fired on this pass, so any
+    // pending translation for this origin is stale and must not attach
+    // to some later pass that happens to repeat the text.
+    attachShownTranslations(event);
     const runKey = originRunKey(event);
     if (unchangedRun !== null && unchangedRun.dataset.origin === runKey) {
       const entry = openHistoryRun;
@@ -750,7 +790,7 @@ function handleTiming(event) {
     openHistoryRun = entry;
     pushHistory(entry);
     if (filterActive()) {
-      renderStream();
+      renderStream(true);
       return;
     }
     const card = buildUnchangedCard(entry);
@@ -1127,6 +1167,15 @@ downloadExportBtn.addEventListener("click", downloadExport);
 // ---- window state the way reopening the window would.
 
 function clearAll() {
+  // The view resets with everything else (like reopening the window):
+  // a stale filter/search must not keep incoming events invisible.
+  currentFilter = "all";
+  searchQuery = "";
+  searchInputEl.value = "";
+  clearSearchBtn.hidden = true;
+  for (const b of document.querySelectorAll(".filter-pill")) {
+    b.classList.toggle("active", b.dataset.filter === "all");
+  }
   rowsEl.replaceChildren();
   unchangedRun = null; // a run must not continue across a clear
   openHistoryRun = null;
@@ -1164,17 +1213,20 @@ searchInputEl.addEventListener("input", () => {
   renderStream();
 });
 
-clearSearchBtn.addEventListener("click", () => {
+// Clearing the search box and resetting the whole view share one recipe
+// (the ✕ button resets the query only; Reset Filters also restores the
+// All pill) — both end in a re-render.
+function clearSearchOnly() {
   searchQuery = "";
   searchInputEl.value = "";
   clearSearchBtn.hidden = true;
   renderStream();
-});
+}
+
+clearSearchBtn.addEventListener("click", clearSearchOnly);
 
 resetFiltersBtn.addEventListener("click", () => {
-  searchQuery = "";
-  searchInputEl.value = "";
-  clearSearchBtn.hidden = true;
+  clearSearchOnly();
   currentFilter = "all";
   for (const b of document.querySelectorAll(".filter-pill")) {
     b.classList.toggle("active", b.dataset.filter === "all");
