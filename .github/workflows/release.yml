@@ -47,15 +47,21 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-      # The PP-OCRv6 models for the new OCR sidecar (pp-ocrv6-sidecar
-      # tickets 02/03): fetched before the build, SHA-256-verified, into
-      # the layout the sidecar's launch contract fixes. Until tickets
-      # 04/06 wire the new engine in and retire the old one, interim
-      # releases carry no bundled OCR engine — a fresh install falls back
-      # to Windows OCR (supported behavior, spec story 22).
+      # The PP-OCRv6 bundle (pp-ocrv6-sidecar tickets 03/04): the models
+      # are fetched first (SHA-256-verified, into the layout the sidecar's
+      # launch contract fixes), then the sidecar exe we build is copied in
+      # beside them — the flat resources/pp-ocrv6/ layout the app resolves
+      # and `tauri build` bundles (resources glob in tauri.conf.json).
       - name: Fetch the PP-OCRv6 models
         shell: pwsh
         run: packaging/fetch-pp-ocrv6.ps1
+
+      - name: Build the PP-OCRv6 sidecar exe into the resources folder
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build -p pp-ocrv6-sidecar --release
+          Copy-Item "target/release/pp-ocrv6-sidecar.exe" "src-tauri/resources/pp-ocrv6/pp-ocrv6-sidecar.exe"
 
       - name: Install the Tauri CLI
         run: npm install -g @tauri-apps/cli@^2
@@ -73,8 +79,11 @@ jobs:
       # The portable zip is the bare exe (frontend assets are embedded) —
       # no bundler target for this, so it is assembled by hand. The exe is
       # renamed to the product name for the user-facing archive, and the
-      # OCR sidecar folder is laid out beside it exactly as the installer
-      # does (the app resolves `resources/paddleocr` next to the exe too).
+      # OCR engine folders are laid out beside it exactly as the installer
+      # does (the app resolves `resources/pp-ocrv6` next to the exe too).
+      # resources/paddleocr (the OLD engine, retired by ticket 06) still
+      # rides along from whatever the checkout has — on CI that is only
+      # its committed license file.
       - name: Assemble the portable zip
         shell: pwsh
         env:
@@ -88,6 +97,7 @@ jobs:
           Copy-Item "packaging/PORTABLE-README.txt" "$stage/README.txt"
           Copy-Item "LICENSE" "$stage/LICENSE.txt"
           Copy-Item "src-tauri/resources/paddleocr" "$stage/resources/paddleocr" -Recurse
+          Copy-Item "src-tauri/resources/pp-ocrv6" "$stage/resources/pp-ocrv6" -Recurse
           $zip = "packaging/Langception_${version}_x64-portable.zip"
           # Defender briefly locks a freshly-copied exe while scanning it,
           # which fails Compress-Archive with "being used by another

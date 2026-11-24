@@ -5,6 +5,14 @@
 > "fresh config" no longer means paddle — select Paddle OCR in
 > Settings → Engines where an item says so.
 
+> **pp-ocrv6-sidecar ticket 04 note:** the "paddle" choice now runs the
+> NEW PP-OCRv6 sidecar (`pp-ocrv6-sidecar.exe`, small tier) — the
+> checklist's `PaddleOCR-json.exe` process names and old-bundle setup
+> apply only when driving the old engine deliberately (its
+> `LANGCEPTION_PADDLEOCR_DIR` override still works). The four-option
+> engine checklist lives in `32-ppocrv6-engine-options.md`; ticket 06
+> reworks the engine docs wholesale when the old engine leaves.
+
 The sidecar protocol (reply parsing, request encoding) and the process state
 machine (lazy spawn, reuse, model switch, crash recovery, kill-on-drop) are
 covered offline by `cargo test` (fixtures + `paddle_stub`). This checklist

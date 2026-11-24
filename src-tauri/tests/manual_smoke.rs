@@ -120,6 +120,100 @@ fn paddle_ocr_smoke() {
     }
 }
 
+/// PP-OCRv6 sidecar smoke (pp-ocrv6-sidecar feature ticket 04). The real
+/// sidecar is deliberately outside the automated suite (spec: Testing
+/// Decisions) — its lifecycle logic is stub-tested offline. Point
+/// `LANGCEPTION_PPOCRV6_DIR` at a directory containing
+/// `pp-ocrv6-sidecar.exe` beside the ten model files (the flat layout
+/// `packaging/fetch-pp-ocrv6.ps1` produces; the exe itself comes from
+/// `cargo build -p pp-ocrv6-sidecar`) to prove the whole chain through
+/// the NEW engine: spawn, handshake, PNG task, reply parse, reuse, and
+/// the (language, tier) restart. Same region handling as the other smokes.
+#[test]
+#[ignore]
+#[cfg(windows)]
+fn pp_ocrv6_smoke() {
+    use std::path::Path;
+
+    let dir = std::env::var("LANGCEPTION_PPOCRV6_DIR").unwrap_or_else(|_| {
+        // Default: the fetched-into-repo bundle the app itself resolves.
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest.join("resources").join("pp-ocrv6").display().to_string()
+    });
+    let models = Path::new(&dir);
+    assert!(
+        models.join("ppocrv6_dict.txt").is_file(),
+        "fetched models missing: {} (run packaging/fetch-pp-ocrv6.ps1)",
+        models.display()
+    );
+    // The exe: beside the models (release layout), else the workspace
+    // target dir beside the app exe — this test binary lives one level
+    // deeper (target/debug/deps), so climb one parent for the dev layout
+    // the shell's resolver sees.
+    let exe_beside_models = models.join(langception_core::ppocr::SIDECAR_EXE);
+    let program = if exe_beside_models.is_file() {
+        exe_beside_models
+    } else {
+        let exe_dir = Path::new(&std::env::current_exe().unwrap())
+            .parent()
+            .and_then(|deps| deps.parent())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        let exe = exe_dir.join(langception_core::ppocr::SIDECAR_EXE);
+        assert!(
+            exe.is_file(),
+            "sidecar exe missing: {} (run cargo build -p pp-ocrv6-sidecar)",
+            exe.display()
+        );
+        exe
+    };
+
+    let region = std::env::var("LANGCEPTION_SMOKE_REGION")
+        .ok()
+        .and_then(|text| parse_region(&text))
+        .unwrap_or(Region {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 300,
+        });
+
+    // ONE runtime for capture + every pass, matching how the app drives
+    // the engine (see paddle_ocr_smoke).
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let image = runtime
+        .block_on(langception::capture::GdiCaptureSource::new().capture(region))
+        .expect("GDI capture should work in a desktop session");
+
+    let ocr = langception_core::ppocr::PpOcrv6Engine::new(
+        program,
+        models,
+        langception_core::ppocr::ModelTier::Small,
+    );
+    // Pass 1 spawns (model load included), pass 2 must reuse the live
+    // sidecar (marginal inference only), pass 3 switches the Source
+    // Language — a restart on the Japanese models (also the kana read).
+    let passes = [
+        (SourceLanguage::En, "pass 1 (en, fresh spawn)"),
+        (SourceLanguage::En, "pass 2 (en, reuse)"),
+        (SourceLanguage::Ja, "pass 3 (ja, restart)"),
+    ];
+    for (language, label) in passes {
+        let started = std::time::Instant::now();
+        let blocks = runtime
+            .block_on(ocr.recognize(&image, language))
+            .expect("the sidecar should recognize a live desktop capture");
+        println!(
+            "{label}: {} blocks in {:?} (0 is fine — depends what is on screen)",
+            blocks.len(),
+            started.elapsed()
+        );
+        for block in &blocks {
+            println!("  {:?} at {},{}", block.text, block.x, block.y);
+        }
+    }
+}
+
 fn parse_region(text: &str) -> Option<Region> {
     let parts: Vec<i32> = text
         .split(',')

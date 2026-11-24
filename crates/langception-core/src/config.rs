@@ -534,13 +534,24 @@ fn default_engine() -> String {
 }
 
 /// The OCR Engines this build offers, by config name — the accepted values
-/// for the `[ocr] engine` setting (ticket 31). "windows" is Windows OCR —
+/// for the `[ocr] engine` setting (ticket 31; the three tier values since
+/// ticket 04 of the pp-ocrv6-sidecar feature). "windows" is Windows OCR —
 /// lighter, and the default since ticket 55, but it needs an installed
-/// language pack for the Source Language; "paddle" is the bundled PaddleOCR
-/// sidecar (offline, works without OS language packs, heavier per pass).
+/// language pack for the Source Language. The three "pp-ocrv6-*" values
+/// are the bundled PP-OCRv6 sidecar's tiers (offline, works without OS
+/// language packs, heavier per pass; the name is the tier — there is no
+/// separate tier setting). The legacy "paddle" value keeps parsing for
+/// configs written before the new engine and maps to `pp-ocrv6-small`
+/// (ppocr.rs) — an upgrade silently improves the engine it names.
 /// Same rule as [`TRANSLATE_ENGINES`]: an unknown name in a hand-edited
 /// config must be a visible validation error, never a silent fallback.
-pub const OCR_ENGINES: [&str; 2] = ["paddle", "windows"];
+pub const OCR_ENGINES: [&str; 5] = [
+    "windows",
+    "pp-ocrv6-tiny",
+    "pp-ocrv6-small",
+    "pp-ocrv6-medium",
+    "paddle",
+];
 
 /// The OCR engine a fresh (or pre-ticket-31) config gets: Windows OCR
 /// (ticket 55 flipped the default from the bundled sidecar after it
@@ -755,8 +766,11 @@ pub struct AppConfig {
     #[serde(default)]
     pub reading: ReadingMode,
     /// Which engine reads on-screen text (ticket 31): Windows OCR
-    /// ("windows", the default since ticket 55) or the bundled PaddleOCR
-    /// sidecar ("paddle"). Read when the loop starts, so Settings switches
+    /// ("windows", the default since ticket 55), one of the bundled
+    /// PP-OCRv6 sidecar's tiers ("pp-ocrv6-tiny" / "pp-ocrv6-small" /
+    /// "pp-ocrv6-medium", ticket 04 of the pp-ocrv6-sidecar feature), or
+    /// the legacy "paddle" value (still accepted, maps to small — see
+    /// [`OCR_ENGINES`]). Read when the loop starts, so Settings switches
     /// apply on the next (re)start without an app restart.
     #[serde(default)]
     pub ocr: OcrSettings,
@@ -1078,13 +1092,17 @@ reading = "ocr"
 # Which engine reads on-screen text (Settings → Engines): "windows" is
 # Windows OCR — lighter, and the default — but it needs an installed OCR
 # language pack for the Source Language (the first-run wizard probes them;
-# the wizard and Settings → Engines list what is missing). "paddle" is the
-# bundled PaddleOCR sidecar — offline like everything else here, needs no
+# the wizard and Settings → Engines list what is missing). The three
+# "pp-ocrv6-tiny" / "pp-ocrv6-small" / "pp-ocrv6-medium" values are the
+# bundled PP-OCRv6 engine's tiers (the name is the tier — there is no
+# separate tier setting) — offline like everything else here, needs no
 # Windows language packs, and follows each Profile's Source Language
-# (EN/JA/ZH/KO models all ship), at the cost of a heavier per-pass read.
-# If it cannot start or dies mid-pass, the pass falls back to Windows OCR
-# automatically and a notice says so. Read when the loop starts; switching
-# applies without an app restart.
+# (EN/JA/ZH/KO models all ship, Korean through the official PP-OCRv5
+# recognizer), at the cost of a heavier per-pass read. A config value of
+# "paddle" from an older build still works and runs pp-ocrv6-small. If
+# the engine cannot start or dies mid-pass, the pass falls back to
+# Windows OCR automatically and a notice says so. Read when the loop
+# starts; switching applies without an app restart.
 engine = "windows"
 
 [engines.azure]
@@ -1869,18 +1887,52 @@ language = "ko"
     #[test]
     fn ocr_engine_roundtrips_and_unknown_names_are_rejected() {
         // A config that pinned Paddle keeps it across the ticket-55 default
-        // flip — no migration, no silent switch to the new default.
+        // flip — no migration, no silent switch to the new default. Since
+        // ticket 04 of the pp-ocrv6-sidecar feature the value maps to the
+        // new PP-OCRv6 engine at the small tier (see ppocr.rs), but the
+        // stored value itself is still legal and round-trips unchanged.
         let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"windows\"", "engine = \"paddle\"");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.ocr.engine, "paddle");
         let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
+        // The mapping itself is the engine domain's (ppocr.rs, ticket 04),
+        // asserted here so the config seam covers the full value→tier
+        // story: the legacy value parses AND selects the small tier.
+        assert_eq!(
+            crate::ppocr::tier_for_engine_value(&config.ocr.engine),
+            Some(crate::ppocr::ModelTier::Small),
+        );
 
         let bad = AppConfig::from_toml_str("[source]\nlanguage = \"en\"\n\n[ocr]\nengine = \"tesseract\"\n");
         let error = format!("{}", bad.unwrap_err());
         assert!(error.contains("[ocr]"), "names the section: {error}");
         assert!(error.contains("tesseract"), "names the value: {error}");
-        assert!(error.contains("paddle, windows"), "lists the accepted engines: {error}");
+        assert!(
+            error.contains("windows, pp-ocrv6-tiny, pp-ocrv6-small, pp-ocrv6-medium, paddle"),
+            "lists the accepted engines: {error}"
+        );
+    }
+
+    #[test]
+    fn the_three_tier_values_roundtrip() {
+        // The pp-ocrv6-sidecar feature's config surface (ticket 04): the
+        // bundled engine's stored values name the tier explicitly; each
+        // parses, round-trips, and stays distinct from the legacy value.
+        for tier in ["pp-ocrv6-tiny", "pp-ocrv6-small", "pp-ocrv6-medium"] {
+            let text =
+                AppConfig::DEFAULT_TEMPLATE.replace("engine = \"windows\"", &format!("engine = \"{tier}\""));
+            let config = AppConfig::from_toml_str(&text).unwrap();
+            assert_eq!(config.ocr.engine, tier);
+            let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+            assert_eq!(config, reparsed);
+            // The full value→tier story at the config seam (the mapping
+            // fn is the engine domain's — see ppocr.rs).
+            assert_eq!(
+                crate::ppocr::tier_for_engine_value(&config.ocr.engine).map(crate::ppocr::ModelTier::config_value),
+                Some(tier),
+            );
+        }
     }
 
     #[test]

@@ -21,7 +21,6 @@ use langception_core::glossary::Glossary;
 use langception_core::google::GoogleTranslateEngine;
 use langception_core::openai::{GENERIC_LABEL, LM_STUDIO_LABEL, OpenAiCompatibleEngine};
 use langception_core::orchestrator::{LoopConfig, LoopEvent, Orchestrator, Stage, SystemClock};
-use langception_core::paddle::PaddleOcrEngine;
 use langception_core::ports::{
     ExcludedBlock, FusedEngine, Region, SourceLanguage, TranslateEngine, Zone, TARGET_LANGUAGE,
 };
@@ -1507,70 +1506,144 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
     })
 }
 
-/// Builds the OCR Engine for the config's choice (ticket 31): "paddle"
-/// (the bundled sidecar, wrapped in the Windows-OCR fallback) or
-/// "windows". Unknown names are a start-time error — config validation
-/// keeps them out, so this fails loudly rather than falling back.
+/// Builds the OCR Engine for the config's choice (ticket 31; the four
+/// options since pp-ocrv6-sidecar ticket 04): "windows", or one of the
+/// bundled PP-OCRv6 tiers ("pp-ocrv6-tiny" / "pp-ocrv6-small" /
+/// "pp-ocrv6-medium", plus the legacy "paddle" value mapping to small —
+/// see `tier_for_engine_value`), wrapped in the Windows-OCR fallback.
+/// Unknown names are a start-time error — config validation keeps them
+/// out, so this fails loudly rather than falling back.
 ///
-/// "paddle" never fails at start: a missing or broken bundle is discovered
-/// on the first pass, covered per-pass by the fallback wrapper (which
-/// names the cause in a status notice), because a packaging problem must
-/// not stop the app from reading text entirely. With no bundle found the
-/// primary is built against the bare sidecar name, so its spawn error says
-/// the file was not found instead of pointing at a wrong path.
+/// The tier engines never fail at start: a missing or broken bundle is
+/// discovered on the first pass, covered per-pass by the fallback wrapper
+/// (which names the cause in a status notice), because a packaging
+/// problem must not stop the app from reading text entirely. With no
+/// bundle found the primary is built against the bare sidecar name, so
+/// its spawn error says the file was not found instead of pointing at a
+/// wrong path. The logged name is the tier that will actually run — a
+/// legacy "paddle" config reads `ocr=pp-ocrv6-small` (the update
+/// silently improves the engine it named, spec story 5).
 fn build_ocr_engine(
     app: &AppHandle,
     config: &AppConfig,
     target: &EffectiveTarget,
     notify: crate::ocr_fallback::Notify,
 ) -> Result<(Arc<dyn langception_core::ports::OcrEngine>, &'static str), String> {
-    match config.ocr.engine.as_str() {
-        "paddle" => {
-            // An unexpected sidecar death healed between passes is worth
-            // one app-log line (ticket 31: crashes surface, never silently
-            // heal); a failure that degrades a pass is the fallback
-            // wrapper's warning instead.
-            let notice: langception_core::paddle::RestartNotice = Arc::new(move |message| {
-                crate::logging::log("ocr", message);
-            });
-            let paddle: Arc<dyn langception_core::ports::OcrEngine> = match resolve_paddleocr(app)
-            {
-                Some((program, models)) => Arc::new(
-                    PaddleOcrEngine::new(program, models).with_restart_notice(notice),
-                ),
-                None => Arc::new(
-                    PaddleOcrEngine::new(
-                        PathBuf::from(langception_core::paddle::SIDECAR_EXE),
-                        PathBuf::from(langception_core::paddle::MODELS_DIR),
-                    )
-                    .with_restart_notice(notice),
-                ),
-            };
-            let windows = Arc::new(crate::ocr::WindowsOcrEngine::new(target.language));
-            Ok((
-                Arc::new(crate::ocr_fallback::FallbackOcrEngine::new(
-                    paddle,
-                    "PaddleOCR",
-                    windows,
-                    "Windows OCR",
-                    notify,
-                )),
-                "paddle",
-            ))
-        }
-        "windows" => Ok((Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)), "windows")),
-        other => Err(format!(
-            "unknown OCR engine \"{other}\" — engines: {}",
-            langception_core::config::OCR_ENGINES.join(", ")
-        )),
+    let engine_value = config.ocr.engine.as_str();
+    if engine_value == "windows" {
+        return Ok((
+            Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)),
+            "windows",
+        ));
     }
+    let tier = langception_core::ppocr::tier_for_engine_value(engine_value)
+        .ok_or_else(|| {
+            format!(
+                "unknown OCR engine \"{engine_value}\" — engines: {}",
+                langception_core::config::OCR_ENGINES.join(", ")
+            )
+        })?;
+    // An unexpected sidecar death healed between passes is worth one
+    // app-log line (ticket 31: crashes surface, never silently heal); a
+    // failure that degrades a pass is the fallback wrapper's warning
+    // instead.
+    let notice: langception_core::sidecar::RestartNotice = Arc::new(move |message| {
+        crate::logging::log("ocr", message);
+    });
+    let v6: Arc<dyn langception_core::ports::OcrEngine> = match resolve_ppocrv6(app) {
+        Some((program, models)) => Arc::new(
+            langception_core::ppocr::PpOcrv6Engine::new(program, models, tier)
+                .with_restart_notice(notice),
+        ),
+        None => Arc::new(
+            langception_core::ppocr::PpOcrv6Engine::new(
+                PathBuf::from(langception_core::ppocr::SIDECAR_EXE),
+                PathBuf::from(langception_core::ppocr::BUNDLE_DIR_NAME),
+                tier,
+            )
+            .with_restart_notice(notice),
+        ),
+    };
+    let windows = Arc::new(crate::ocr::WindowsOcrEngine::new(target.language));
+    Ok((
+        Arc::new(crate::ocr_fallback::FallbackOcrEngine::new(
+            v6,
+            tier.display_name(),
+            windows,
+            "Windows OCR",
+            notify,
+        )),
+        tier.config_value(),
+    ))
 }
 
-/// Locates the bundled PaddleOCR sidecar directory (containing
+/// Locates the bundled PP-OCRv6 sidecar: (program, models dir). The
+/// release bundle is flat — [`langception_core::ppocr::SIDECAR_EXE`]
+/// beside the ten model files (the launch contract's `-models_path` is
+/// that same directory); in a dev workspace the exe comes from the target
+/// dir beside the app's own exe while the fetched models live in the repo
+/// (both layouts are accepted in either location). Order: the
+/// `LANGCEPTION_PPOCRV6_DIR` override (development/manual smoke), the
+/// installer's resource directory, then the executable's surroundings
+/// (cargo dev layout and a resources-beside-exe portable layout).
+fn resolve_ppocrv6(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
+    let env_dir = std::env::var("LANGCEPTION_PPOCRV6_DIR").ok();
+    let resource_dir = app.path().resource_dir().ok();
+    let exe = std::env::current_exe().ok();
+    resolve_ppocrv6_from(env_dir, resource_dir, exe)
+}
+
+/// The resolution logic of [`resolve_ppocrv6`], decoupled from the live
+/// environment so the candidate order is unit-tested (no Tauri app
+/// needed): models dir first (a fetched layout is recognized by a
+/// dictionary file from the launch contract's ten), then the program
+/// beside the models (release) or beside the app exe (dev target dir).
+fn resolve_ppocrv6_from(
+    env_dir: Option<String>,
+    resource_dir: Option<PathBuf>,
+    exe: Option<PathBuf>,
+) -> Option<(PathBuf, PathBuf)> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = env_dir {
+        candidates.push(PathBuf::from(dir));
+    }
+    if let Some(resource_dir) = resource_dir {
+        // bundle.resources preserves the `resources/` prefix (array form).
+        candidates.push(resource_dir.join("resources").join("pp-ocrv6"));
+        candidates.push(resource_dir.join("pp-ocrv6"));
+    }
+    if let Some(exe_dir) = exe.as_ref().and_then(|exe| exe.parent()) {
+        // Dev run out of target/debug: the repo layout is
+        // <repo>/src-tauri/resources/pp-ocrv6.
+        candidates.push(exe_dir.join("../../src-tauri/resources/pp-ocrv6"));
+        candidates.push(exe_dir.join("resources").join("pp-ocrv6"));
+        candidates.push(exe_dir.join("pp-ocrv6"));
+    }
+    // The models dir is the fetched ten-file layout; a dictionary file
+    // from the contract distinguishes it from an empty or half-fetched
+    // directory (a bare `pp-ocrv6` folder next to the exe, say).
+    let models_dir = candidates
+        .into_iter()
+        .find(|dir| dir.join("ppocrv6_dict.txt").is_file())?;
+    let exe_name = PathBuf::from(langception_core::ppocr::SIDECAR_EXE);
+    let mut programs: Vec<PathBuf> = vec![models_dir.join(&exe_name)];
+    if let Some(exe_dir) = exe.as_ref().and_then(|exe| exe.parent()) {
+        // Dev: the workspace builds the sidecar crate beside the app.
+        programs.push(exe_dir.join(&exe_name));
+    }
+    let program = programs.into_iter().find(|p| p.is_file())?;
+    Some((program, models_dir))
+}
+
+/// Locates the OLD bundled PaddleOCR sidecar directory (containing
 /// [`langception_core::paddle::SIDECAR_EXE`] and its `models/`). Order:
 /// the `LANGCEPTION_PADDLEOCR_DIR` override (development/manual smoke),
 /// the installer's resource directory, then the executable's surroundings
 /// (cargo dev layout and a resources-beside-exe portable layout).
+/// Unused since ticket 04 — the config's "paddle" value now maps to the
+/// PP-OCRv6 engine — and kept only until ticket 06 deletes it with the
+/// old engine.
+#[allow(dead_code)]
 fn resolve_paddleocr(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(dir) = std::env::var("LANGCEPTION_PADDLEOCR_DIR") {
@@ -3669,5 +3742,88 @@ mod tests {
         )));
         assert!(!should_persist_window_state(""));
         assert!(!should_persist_window_state("some-future-window"));
+    }
+
+    /// The pp-ocrv6-sidecar ticket-04 resolver accepts both bundle
+    /// layouts in both locations: exe-beside-models (release) and
+    /// exe-in-target-dir beside repo-fetched models (dev workspace) — and
+    /// recognizes the fetched models dir by a dictionary file from the
+    /// launch contract's ten, so an empty `pp-ocrv6` folder never
+    /// resolves.
+    fn dir_with_models(root: &std::path::Path) -> PathBuf {
+        let dir = root.join("pp-ocrv6");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("ppocrv6_dict.txt"), "stub").unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_release_layout_resolves_exe_beside_models() {
+        let root = std::env::temp_dir().join(format!("ppocrv6-resolver-release-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let models = dir_with_models(&root);
+        std::fs::write(models.join(langception_core::ppocr::SIDECAR_EXE), "stub").unwrap();
+
+        let resolved = resolve_ppocrv6_from(
+            None,
+            Some(root.clone()),
+            Some(root.join("Langception.exe")),
+        )
+        .unwrap();
+        assert_eq!(resolved.1, models, "models dir resolved");
+        assert_eq!(resolved.0, models.join(langception_core::ppocr::SIDECAR_EXE));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_dev_layout_pairs_the_target_dir_exe_with_repo_models() {
+        let root = std::env::temp_dir().join(format!("ppocrv6-resolver-dev-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // <root>/target/debug/{langception.exe, pp-ocrv6-sidecar.exe} +
+        // <root>/src-tauri/resources/pp-ocrv6 — the repo layout relative
+        // to the app exe is ../../src-tauri/resources/pp-ocrv6.
+        let exe_dir = root.join("target").join("debug");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let models = dir_with_models(&root.join("src-tauri").join("resources"));
+        std::fs::write(exe_dir.join(langception_core::ppocr::SIDECAR_EXE), "stub").unwrap();
+        let app_exe = exe_dir.join("langception.exe");
+        std::fs::write(&app_exe, "stub").unwrap();
+
+        let resolved =
+            resolve_ppocrv6_from(None, Some(root.join("src-tauri")), Some(app_exe)).unwrap();
+        assert_eq!(resolved.1.canonicalize().unwrap(), models.canonicalize().unwrap());
+        assert_eq!(
+            resolved.0.canonicalize().unwrap(),
+            exe_dir.join(langception_core::ppocr::SIDECAR_EXE).canonicalize().unwrap(),
+            "the exe comes from beside the app exe when the models dir has none"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_empty_or_modelless_directory_never_resolves() {
+        let root = std::env::temp_dir().join(format!("ppocrv6-resolver-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // A directory with the exe but no models (or vice versa) is not a
+        // fetched bundle.
+        let bare = root.join("pp-ocrv6");
+        std::fs::create_dir_all(&bare).unwrap();
+        std::fs::write(bare.join(langception_core::ppocr::SIDECAR_EXE), "stub").unwrap();
+        assert!(
+            resolve_ppocrv6_from(None, Some(root.clone()), Some(root.join("app.exe"))).is_none(),
+        );
+        // The env override counts as a candidate like any other — with a
+        // complete (exe + models) override dir it wins over the rest.
+        let models = dir_with_models(&root.join("override"));
+        std::fs::write(models.join(langception_core::ppocr::SIDECAR_EXE), "stub").unwrap();
+        let resolved = resolve_ppocrv6_from(
+            Some(models.display().to_string()),
+            Some(root.clone()),
+            Some(root.join("app.exe")),
+        )
+        .unwrap();
+        assert_eq!(resolved.1, models);
+        assert_eq!(resolved.0, models.join(langception_core::ppocr::SIDECAR_EXE));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

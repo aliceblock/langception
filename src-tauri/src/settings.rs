@@ -171,9 +171,14 @@ fn default_ocr_engine_dto() -> String {
 #[serde(rename_all = "camelCase")]
 pub struct EnginesDto {
     pub default_engine: String,
-    /// "paddle" | "windows" (ticket 31): which engine reads on-screen
-    /// text. Defaults to Windows OCR (ticket 55) — the bundled PaddleOCR
-    /// sidecar is the pack-independent alternative.
+    /// Which engine reads on-screen text (ticket 31): "windows" or one of
+    /// the bundled PP-OCRv6 tiers "pp-ocrv6-tiny" | "pp-ocrv6-small" |
+    /// "pp-ocrv6-medium" (pp-ocrv6-sidecar ticket 04; the name is the
+    /// tier — there is no separate tier setting). The legacy "paddle"
+    /// value still arrives from old configs and maps to small in the
+    /// config→engine direction; the dropdown shows the four current
+    /// options (the page maps a saved "paddle" to its tier for display).
+    /// Defaults to Windows OCR (ticket 55).
     #[serde(default = "default_ocr_engine_dto")]
     pub ocr_engine: String,
     /// "ocr" | "fused" (ticket 12).

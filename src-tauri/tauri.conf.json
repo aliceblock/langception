@@ -35,7 +35,7 @@
     "shortDescription": "Screen-capture OCR + Thai translation overlay",
     "longDescription": "Langception watches the screen — a drawn Capture Zone, a full monitor, or a per-app Profile — OCRs the text (the bundled offline PaddleOCR engine by default, Windows OCR as the alternative), and shows its Thai translation in place over the original or in an always-on-top Results Window. Zero-config default engine, optional Azure/DeepL/Gemini/OpenAI-compatible/LM Studio engines, Glossary pinning, Genderless Mode, and a fused vision-LLM reading mode.",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
-    "resources": ["resources/paddleocr/"],
+    "resources": ["resources/paddleocr/", "resources/pp-ocrv6/"],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

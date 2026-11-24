@@ -224,7 +224,14 @@ async function loadEngines() {
     savedEngines = await invoke("get_engines");
     enginesLoaded = true;
     enginesDefault.value = savedEngines.defaultEngine;
-    enginesOcr.value = savedEngines.ocrEngine || "windows";
+    // Ticket 04 (pp-ocrv6-sidecar): the dropdown lists the four current
+    // options. A config saved by an older build can still carry the
+    // legacy "paddle" value — that runs PP-OCRv6 small now, so display
+    // the option that actually runs. Saving writes the explicit tier
+    // value; an unsaved config keeps "paddle" and still runs small (the
+    // mapping lives in the config→engine direction, so nothing breaks).
+    const savedOcr = savedEngines.ocrEngine || "windows";
+    enginesOcr.value = savedOcr === "paddle" ? "pp-ocrv6-small" : savedOcr;
     enginesReading.value = savedEngines.reading || "ocr";
     enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
     // Ticket 54: the saved engine's card is the expanded one.

@@ -17,9 +17,12 @@ serde_json = "1"
 toml = "0.9"
 thiserror = "2"
 reqwest = { version = "0.13", features = ["query"] }
-# "process" + "io-util" + "time" drive the PaddleOCR-json sidecar (ticket
-# 31): piped stdin/stdout, line reads and writes, init/request timeouts.
-tokio = { version = "1", features = ["sync", "process", "io-util", "time"] }
+# "process" + "io-util" + "time" drive the OCR sidecars (ticket 31; the
+# PP-OCRv6 one since the pp-ocrv6-sidecar feature): piped stdin/stdout,
+# line reads and writes, init/request timeouts. "macros" is the
+# orchestrator loop's `tokio::select!` — declared here so the crate
+# compiles on its own, not only under workspace feature unification.
+tokio = { version = "1", features = ["sync", "process", "io-util", "time", "macros"] }
 
 [dev-dependencies]
 # "net" + "io-util" drive the fake HTTP engine of the prompt-seam tests

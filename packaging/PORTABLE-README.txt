@@ -18,10 +18,10 @@ Requirements
   your source language (English, Japanese, Chinese, or Korean) — without
   it nothing is read. Settings > Engines shows what is installed, with a
   jump to Windows' language settings. If you cannot install packs,
-  switch to the bundled Paddle OCR engine there: it works out of the
-  box, fully offline, and lives in the "resources" folder next to
-  Langception.exe — keep the two together when moving the folder. See
-  the project README.
+  switch to one of the bundled PP-OCRv6 tiers there (tiny, small, or
+  medium): they work out of the box, fully offline, and live in the
+  "resources" folder next to Langception.exe — keep the two together
+  when moving the folder. See the project README.
 
 Where settings live
 -------------------

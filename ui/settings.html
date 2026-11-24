@@ -44,9 +44,9 @@
           default, which needs a language pack for the language you will
           read — without it nothing is read. English is usually
           preinstalled; the others install through the button below if
-          missing. If you cannot install packs, switch to the bundled
-          <strong>Paddle OCR</strong> in Settings → Engines — it works with
-          no packs at all.
+          missing. If you cannot install packs, switch to a bundled
+          <strong>PP-OCRv6</strong> tier in Settings → Engines — they work
+          with no packs at all.
         </p>
         <ul id="wizard-packs" class="packs"></ul>
         <div class="row">
@@ -188,7 +188,9 @@
             <span>OCR engine</span>
             <select id="engines-ocr">
               <option value="windows">Windows OCR — default, needs an installed language pack</option>
-              <option value="paddle">Paddle OCR — bundled, offline, no language packs needed</option>
+              <option value="pp-ocrv6-tiny">PP-OCRv6 tiny — bundled, offline, fastest tier (best for English &amp; Chinese)</option>
+              <option value="pp-ocrv6-small">PP-OCRv6 small — bundled, offline, balanced tier, full language coverage</option>
+              <option value="pp-ocrv6-medium">PP-OCRv6 medium — bundled, offline, most accurate tier, heavier per pass</option>
             </select>
           </label>
           <label class="form-row">
@@ -207,8 +209,13 @@
           The OCR engine reads the screen before translation.
           <strong>Windows OCR</strong> (the default) is lighter but needs
           the matching language pack installed (checked below).
-          <strong>Paddle OCR</strong> ships with the app and runs fully
-          offline — heavier per pass, but no language packs needed.
+          <strong>PP-OCRv6</strong> ships with the app and runs fully
+          offline — pick the tier: tiny is fastest (its vocabulary covers
+          English and Chinese only), small is the balanced default read,
+          medium is the most accurate and heaviest per pass. Korean always
+          reads through the dedicated Korean model. If the selected engine
+          cannot run, the pass falls back to Windows OCR automatically and
+          a notice says so.
         </p>
         <p id="engines-reading-warning" class="hint hidden">
           Sends every captured frame to the engine as an image — read and
