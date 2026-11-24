@@ -7,6 +7,12 @@
 // Ticket 62: the window's UI language rides the get_status payload (the
 // bootstrap seam) into I18n.init; every user-visible string resolves
 // through t().
+// Ticket 61 (reopened): the window follows the redesign mock — contextual
+// Start/Pause/Stop buttons, an interactive source-language dropdown
+// (set_source_language), an always-on-top pin (set_results_on_top), the
+// collapsible config section with a per-mode action button, a log toolbar
+// with Clear, the Adjust banner, and the footer status bar fed by the new
+// ocrEngine/appVersion/overlayVisible status fields.
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
@@ -15,13 +21,20 @@ const { t } = window.I18n;
 
 const statusPill = document.getElementById("status-pill");
 const privacyChip = document.getElementById("privacy-chip");
-const adjustChip = document.getElementById("adjust-chip");
-const toggleBtn = document.getElementById("toggle-btn");
+const startBtn = document.getElementById("start-btn");
 const pauseBtn = document.getElementById("pause-btn");
+const pauseLabel = document.getElementById("pause-label");
+const pauseIcon = pauseBtn.querySelector(".icon-pause");
+const resumeIcon = pauseBtn.querySelector(".icon-resume");
+const stopBtn = document.getElementById("stop-btn");
 const adjustBtn = document.getElementById("adjust-btn");
 const settingsBtn = document.getElementById("settings-btn");
+const pinBtn = document.getElementById("pin-btn");
 const warningsLine = document.getElementById("warnings-line");
-const langChip = document.getElementById("lang-chip");
+const langBtn = document.getElementById("lang-btn");
+const langMenu = document.getElementById("lang-menu");
+const langCurrent = document.getElementById("lang-current");
+const langOptions = [...document.querySelectorAll(".lang-option")];
 const profileChip = document.getElementById("profile-chip");
 const profileName = document.getElementById("profile-name");
 const errorBanner = document.getElementById("error-banner");
@@ -29,25 +42,41 @@ const resultsList = document.getElementById("results");
 const emptyState = document.getElementById("empty-state");
 const emptyShortcuts = document.getElementById("empty-shortcuts");
 const copiedToast = document.getElementById("copied-toast");
-const zonesPanel = document.getElementById("zones-panel");
-const zonesTitle = document.getElementById("zones-title");
-const zonesList = document.getElementById("zones-list");
-const zonesEmpty = document.getElementById("zones-empty");
+const logToolbar = document.getElementById("log-toolbar");
+const logCountLabel = document.getElementById("log-count-label");
+const clearBtn = document.getElementById("clear-btn");
+const configPanelBody = document.getElementById("config-panel-body");
+const configToggleBtn = document.getElementById("config-toggle-btn");
+const configToggleText = document.getElementById("config-toggle-text");
+const configToggleIcon = document.getElementById("config-toggle-icon");
+const zoneCountBadge = document.getElementById("zone-count-badge");
 const newZoneBtn = document.getElementById("new-zone-btn");
+const excludeAreaBtn = document.getElementById("exclude-area-btn");
 const modeZones = document.getElementById("mode-zones");
 const modeFullscreen = document.getElementById("mode-fullscreen");
+const viewZones = document.getElementById("view-zones");
+const viewFullscreen = document.getElementById("view-fullscreen");
 const monitorSelect = document.getElementById("monitor-select");
-const monitorRow = document.getElementById("monitor-row");
-const modeHint = document.getElementById("mode-hint");
+const zonesList = document.getElementById("zones-list");
+const zonesEmpty = document.getElementById("zones-empty");
 const excludedTitle = document.getElementById("excluded-title");
 const excludedList = document.getElementById("excluded-list");
 const excludedEmpty = document.getElementById("excluded-empty");
+const adjustBanner = document.getElementById("adjust-banner");
+const adjustDone = document.getElementById("adjust-done");
+const footerEngineName = document.getElementById("footer-engine-name");
+const footerOverlayValue = document.getElementById("footer-overlay-value");
+const footerVersion = document.getElementById("footer-version");
 
 // Frameless window controls (min/close) are wired by titlebar.js, loaded
 // before this script.
 
 let running = false;
 let paused = false;
+let onTop = false;
+let language = "en";
+let configCollapsed = false;
+let translationCount = 0;
 let zones = [];
 let excludedBlocks = [];
 let monitors = [];
@@ -65,11 +94,13 @@ let lastError = null; // { stage, message } — stays visible until the next suc
 function renderStatus(status) {
   running = status.running;
   paused = status.paused;
+  language = status.language || "en";
   zones = status.zones || [];
   excludedBlocks = status.excludedBlocks || [];
   monitors = status.monitors || [];
   mode = status.mode || "zones";
   fullscreenMonitor = status.fullscreenMonitor || "";
+  onTop = !!status.resultsOnTop;
   if (status.hotkeys) hotkeys = status.hotkeys;
 
   if (status.configError) {
@@ -85,8 +116,21 @@ function renderStatus(status) {
     statusPill.textContent = t("results.status.stopped");
     statusPill.className = "pill stopped";
   }
-  adjustChip.classList.toggle("hidden", !status.adjustMode);
-  adjustBtn.textContent = status.adjustMode ? t("results.adjust.exit") : t("results.adjust.enter");
+
+  // The mock's contextual playback trio: Start owns the stopped state,
+  // Pause/Resume + Stop own the running one. The paused sub-state swaps
+  // the Pause button's icon and label for the resume side.
+  startBtn.classList.toggle("hidden", running);
+  pauseBtn.classList.toggle("hidden", !running);
+  stopBtn.classList.toggle("hidden", !running);
+  pauseBtn.disabled = !running;
+  pauseLabel.textContent = paused ? t("results.pause.resume") : t("results.pause.pause");
+  pauseIcon.classList.toggle("hidden", paused);
+  resumeIcon.classList.toggle("hidden", !paused);
+
+  // The mock's Adjust banner replaces the old titlebar chip: the amber
+  // pill floats over the workspace while Adjust Mode is on.
+  adjustBanner.classList.toggle("hidden", !status.adjustMode);
 
   // Privacy badge (ticket 06): shown whenever the active Translate Engine
   // sends screen text off-machine (same data as the tray tooltip).
@@ -96,25 +140,15 @@ function renderStatus(status) {
     privacyChip.title = t("results.privacy_chip.cloud_title", { engine: privacyEngine });
   }
 
-  toggleBtn.textContent = running ? t("results.toggle.stop") : t("results.toggle.start");
-  toggleBtn.classList.toggle("primary", !running);
-  // Ticket 61: the redesign's Stop reads as destructive — a rose-tint
-  // variant, mirroring the primary amber on the Start side.
-  toggleBtn.classList.toggle("danger", running);
-  pauseBtn.disabled = !running;
-  // The empty-state Start CTA repeats the header's start side; the card is
-  // gone once translations exist, but a slow first pass leaves it visible
-  // while the loop already runs — disabled, it can't double-start.
-  const emptyStartBtn = document.getElementById("empty-start");
-  if (emptyStartBtn) emptyStartBtn.disabled = running;
-  pauseBtn.textContent = paused ? t("results.pause.resume") : t("results.pause.pause");
-
   // Ticket 19: the title bar tells you at a glance what the loop is
   // running with — the language pair, and the Profile while one is matched
   // to the foreground app (ticket 07: its settings are what the loop uses).
-  langChip.textContent = `${(status.language || "en").toUpperCase()} → ${(
+  langCurrent.textContent = `${(status.language || "en").toUpperCase()} → ${(
     status.targetLanguage || "th"
   ).toUpperCase()}`;
+  for (const option of langOptions) {
+    option.classList.toggle("current", option.dataset.lang === status.language);
+  }
   const activeProfile = (status.profiles || []).find(
     (p) => p.id && p.id === status.activeProfileId,
   );
@@ -124,6 +158,27 @@ function renderStatus(status) {
   } else {
     profileChip.classList.add("hidden");
   }
+
+  // The pin mirrors the same results_on_top flag the General tab saves.
+  pinBtn.classList.toggle("pinned", onTop);
+  pinBtn.title = t("results.pin.title");
+
+  // The empty-state Start CTA repeats the header's start side; the card is
+  // gone once translations exist, but a slow first pass leaves it visible
+  // while the loop already runs — disabled, it can't double-start.
+  const emptyStartBtn = document.getElementById("empty-start");
+  if (emptyStartBtn) emptyStartBtn.disabled = running;
+
+  // Footer status bar (the mock's): the configured OCR reader (the vision
+  // reading mode reads with the engine instead), whether the overlays are
+  // up, and the app version.
+  footerEngineName.textContent = t(
+    status.reading === "fused" ? "results.footer.engine.fused" : engineKey(status.ocrEngine),
+  );
+  footerOverlayValue.textContent = t(
+    status.overlayVisible ? "results.footer.overlay_on" : "results.footer.overlay_off",
+  );
+  footerVersion.textContent = t("results.footer.version", { version: status.appVersion });
 
   // Ticket 18: the dense config line is gone — engine, cadence, hold,
   // glossary count and the config path live in the Settings tabs and the
@@ -161,6 +216,18 @@ function renderStatus(status) {
   renderErrorBanner();
 }
 
+// The footer's OCR-engine label: the config ids map to their own i18n
+// keys (engine names stay Latin in every language, like the Settings
+// options' brand names).
+function engineKey(id) {
+  switch (id) {
+    case "pp-ocrv6-tiny": return "results.footer.engine.tiny";
+    case "pp-ocrv6-small": return "results.footer.engine.small";
+    case "pp-ocrv6-medium": return "results.footer.engine.medium";
+    default: return "results.footer.engine.windows";
+  }
+}
+
 // One row of the empty-state shortcut card: the label, then the hotkey's
 // modifier/key parts as individual keycaps joined by "+" glyphs.
 function shortcutRow(label, hotkey) {
@@ -170,6 +237,12 @@ function shortcutRow(label, hotkey) {
   const name = document.createElement("span");
   name.textContent = label;
 
+  row.append(name, hotkeyKeys(hotkey));
+  return row;
+}
+
+// A hotkey as pressed keys: <kbd> parts joined by "+" glyphs.
+function hotkeyKeys(hotkey) {
   const keys = document.createElement("span");
   keys.className = "shortcut-keys";
   hotkey.split("+").forEach((part, index) => {
@@ -183,9 +256,24 @@ function shortcutRow(label, hotkey) {
     key.textContent = part;
     keys.append(key);
   });
+  return keys;
+}
 
-  row.append(name, keys);
-  return row;
+// Inline Lucide SVGs for JS-built rows (zone trash, exclusion ✕): the
+// exact path data from lucide-static, same as the markup icons.
+const ICONS = {
+  trash:
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  x: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  crosshair:
+    '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="22" x2="18" y1="12" y2="12"/><line x1="6" x2="2" y1="12" y2="12"/><line x1="12" x2="12" y1="6" y2="2"/><line x1="12" x2="12" y1="22" y2="18"/></svg>',
+  copy: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
+};
+
+function iconEl(name) {
+  const span = document.createElement("span");
+  span.innerHTML = ICONS[name];
+  return span.firstElementChild;
 }
 
 // ---- Capture Target (zones vs full-screen + monitor) ----
@@ -193,11 +281,13 @@ function shortcutRow(label, hotkey) {
 function renderModeControls() {
   modeZones.checked = mode === "zones";
   modeFullscreen.checked = mode === "fullscreen";
-  monitorRow.classList.toggle("hidden", mode !== "fullscreen");
-  modeHint.textContent =
-    mode === "fullscreen"
-      ? t("results.mode_hint.fullscreen")
-      : t("results.mode_hint.zones");
+  // The mock's single config section: the view follows the mode, and so
+  // does the action button (New Zone in zones mode, Exclude Area in
+  // full-screen — which enters Adjust Mode, the real exclusion flow).
+  viewZones.classList.toggle("hidden", mode !== "zones");
+  viewFullscreen.classList.toggle("hidden", mode !== "fullscreen");
+  excludeAreaBtn.classList.toggle("hidden", mode !== "fullscreen");
+  newZoneBtn.classList.toggle("hidden", mode !== "zones");
   fillMonitorSelect();
 }
 
@@ -253,19 +343,13 @@ function renderExcluded() {
     excludedList.append(excludedRow(exclusion));
   }
 
-  if (excludedBlocks.length === 0) {
-    excludedEmpty.textContent = t("results.excluded.empty_hint", {
-      hotkey: hotkeys.adjust,
-    });
-    excludedEmpty.classList.remove("hidden");
-  } else {
-    excludedEmpty.classList.add("hidden");
-  }
+  excludedEmpty.textContent = t("results.excluded.empty_hint");
+  excludedEmpty.classList.toggle("hidden", excludedBlocks.length > 0);
 }
 
 function excludedRow(exclusion) {
   const li = document.createElement("li");
-  li.className = "zone-row excluded-row";
+  li.className = "excluded-row";
 
   const label = document.createElement("span");
   label.className = "excluded-label";
@@ -274,14 +358,10 @@ function excludedRow(exclusion) {
     ? t("results.excluded.position_title_monitor", { region: exclusion.region, monitor: exclusion.monitor })
     : t("results.excluded.position_title", { region: exclusion.region });
 
-  const meta = document.createElement("span");
-  meta.className = "zone-region";
-  meta.textContent = exclusion.region;
-
   const del = document.createElement("button");
   del.className = "zone-delete";
   del.title = t("results.excluded.clear_title");
-  del.textContent = "✕";
+  del.append(iconEl("x"));
   del.addEventListener("click", async () => {
     del.disabled = true;
     try {
@@ -292,7 +372,7 @@ function excludedRow(exclusion) {
     }
   });
 
-  li.append(label, meta, del);
+  li.append(label, del);
   return li;
 }
 
@@ -316,16 +396,10 @@ function renderErrorBanner() {
   }
 }
 
-// ---- Zone management (the minimal list) ----
+// ---- Zone management (the mock's two-line cards) ----
 
 function renderZones() {
-  const enabledCount = zones.filter((z) => z.enabled).length;
-  zonesTitle.textContent =
-    mode === "fullscreen"
-      ? t("results.zones_title.fullscreen", { count: zones.length })
-      : zones.length !== enabledCount
-        ? t("results.zones_title.count_of", { enabled: enabledCount, total: zones.length })
-        : t("results.zones_title.count", { count: enabledCount });
+  zoneCountBadge.textContent = String(zones.length);
 
   zonesList.replaceChildren();
   for (const zone of zones) {
@@ -333,17 +407,44 @@ function renderZones() {
   }
 
   if (zones.length === 0) {
-    zonesEmpty.textContent = t("results.zones.empty_hint", { hotkey: hotkeys.newZone });
+    // The mock's hint, with the live hotkey as keycaps between the two
+    // translated halves: "{prefix}<kbd>Alt</kbd>+…{suffix}".
+    zonesEmpty.replaceChildren(
+      iconEl("crosshair"),
+      textSpan(t("results.zones.empty_prefix")),
+      hotkeyKeys(hotkeys.newZone),
+      textSpan(t("results.zones.empty_suffix")),
+    );
     zonesEmpty.classList.remove("hidden");
   } else {
     zonesEmpty.classList.add("hidden");
   }
 }
 
+function textSpan(text) {
+  const span = document.createElement("span");
+  span.textContent = text;
+  return span;
+}
+
+// Adjust Mode has three entry points (the header button, the banner's
+// Done, and the full-screen view's Exclude Area button — entering Adjust
+// Mode is how a block gets excluded); they all run the same invoke.
+async function toggleAdjust() {
+  await invoke("toggle_adjust_mode");
+  renderStatus(await invoke("get_status"));
+}
+
 function zoneRow(zone) {
   const li = document.createElement("li");
   li.className = "zone-row";
   if (!zone.enabled) li.classList.add("zone-disabled");
+
+  const main = document.createElement("span");
+  main.className = "zone-main";
+
+  const text = document.createElement("span");
+  text.className = "zone-text";
 
   const name = document.createElement("button");
   name.className = "zone-name";
@@ -355,10 +456,13 @@ function zoneRow(zone) {
   region.className = "zone-region";
   region.textContent = zone.monitor ? `${zone.region} · ${zone.monitor}` : zone.region;
 
+  text.append(name, region);
+  main.append(text);
+
   const del = document.createElement("button");
   del.className = "zone-delete";
   del.title = t("results.zone.delete_title", { name: zone.name });
-  del.textContent = "✕";
+  del.append(iconEl("trash"));
   del.addEventListener("click", async () => {
     del.disabled = true;
     try {
@@ -369,7 +473,7 @@ function zoneRow(zone) {
     }
   });
 
-  li.append(name, region, del);
+  li.append(main, del);
   return li;
 }
 
@@ -413,6 +517,9 @@ function addEntry(block, translation, origin, atMs) {
   // the loop is stopped — that is the point of One-shot Capture.
 
   emptyState.classList.add("hidden");
+  translationCount += 1;
+  logCountLabel.textContent = t("results.history.title", { count: translationCount });
+  logToolbar.classList.remove("hidden");
 
   const li = document.createElement("li");
   li.className = "entry slide-in";
@@ -431,7 +538,15 @@ function addEntry(block, translation, origin, atMs) {
   const time = document.createElement("span");
   time.className = "entry-time";
   time.textContent = new Date(atMs).toLocaleTimeString();
-  meta.append(badge, time);
+
+  // The mock's copy affordance at the card's right edge (the whole card
+  // stays clickable-to-copy; this is the visible handle).
+  const copy = document.createElement("button");
+  copy.className = "copy-btn";
+  copy.title = t("results.entry.copy_title");
+  copy.append(iconEl("copy"));
+
+  meta.append(badge, time, copy);
 
   const source = document.createElement("div");
   source.className = "source";
@@ -442,7 +557,7 @@ function addEntry(block, translation, origin, atMs) {
   thai.textContent = translation;
 
   li.append(meta, source, thai);
-  li.addEventListener("click", async () => {
+  const doCopy = async () => {
     try {
       await writeText(translation);
       li.classList.add("copied");
@@ -454,10 +569,25 @@ function addEntry(block, translation, origin, atMs) {
     } catch (e) {
       showError("clipboard", String(e));
     }
+  };
+  li.addEventListener("click", doCopy);
+  copy.addEventListener("click", (e) => {
+    e.stopPropagation();
+    doCopy();
   });
 
   // Newest first.
   resultsList.prepend(li);
+}
+
+// Clear (the mock's log toolbar): wipes the feed client-side — entries
+// live only in this window's DOM, the loop keeps running untouched.
+function clearEntries() {
+  resultsList.replaceChildren();
+  translationCount = 0;
+  logCountLabel.textContent = t("results.history.title", { count: 0 });
+  logToolbar.classList.add("hidden");
+  emptyState.classList.remove("hidden");
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -481,21 +611,27 @@ window.addEventListener("DOMContentLoaded", async () => {
     renderStatus(event.payload);
   });
 
-  toggleBtn.addEventListener("click", async () => {
-    toggleBtn.disabled = true;
+  startBtn.addEventListener("click", async () => {
+    startBtn.disabled = true;
     try {
-      if (running) {
-        await invoke("stop_translation");
-      } else {
-        try {
-          await invoke("start_translation");
-        } catch (e) {
-          showError("config", String(e));
-        }
+      try {
+        await invoke("start_translation");
+      } catch (e) {
+        showError("config", String(e));
       }
       renderStatus(await invoke("get_status"));
     } finally {
-      toggleBtn.disabled = false;
+      startBtn.disabled = false;
+    }
+  });
+
+  stopBtn.addEventListener("click", async () => {
+    stopBtn.disabled = true;
+    try {
+      await invoke("stop_translation");
+      renderStatus(await invoke("get_status"));
+    } finally {
+      stopBtn.disabled = false;
     }
   });
 
@@ -505,7 +641,43 @@ window.addEventListener("DOMContentLoaded", async () => {
       await invoke("toggle_pause_translation");
       renderStatus(await invoke("get_status"));
     } finally {
-      pauseBtn.disabled = false;
+      pauseBtn.disabled = !running; // renderStatus re-derived the state
+    }
+  });
+
+  // The language dropdown (the mock's, real): a pair picks the global
+  // Source Language; apply_state re-broadcasts engine-state, so the chip
+  // and the menu's current mark refresh through the normal path.
+  langBtn.addEventListener("click", () => langMenu.classList.toggle("hidden"));
+  for (const option of langOptions) {
+    option.addEventListener("click", async () => {
+      langMenu.classList.add("hidden");
+      if (option.dataset.lang === language) return; // already active
+      try {
+        await invoke("set_source_language", { language: option.dataset.lang });
+        renderStatus(await invoke("get_status"));
+      } catch (e) {
+        showError("language", String(e));
+      }
+    });
+  }
+  // Click-away closes the menu (the mock's outside-click handler).
+  document.addEventListener("click", (e) => {
+    if (!document.getElementById("lang-dropdown").contains(e.target)) {
+      langMenu.classList.add("hidden");
+    }
+  });
+
+  // The pin flips the same results_on_top flag the General tab saves.
+  pinBtn.addEventListener("click", async () => {
+    pinBtn.disabled = true;
+    try {
+      await invoke("set_results_on_top", { on: !onTop });
+      renderStatus(await invoke("get_status"));
+    } catch (e) {
+      showError("pin", String(e));
+    } finally {
+      pinBtn.disabled = false;
     }
   });
 
@@ -520,6 +692,18 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
+  // Exclude Area (full-screen mode): enters Adjust Mode — in the real app
+  // a block is excluded by clicking it on the overlay while Adjust Mode is
+  // on, so this button opens that flow.
+  excludeAreaBtn.addEventListener("click", async () => {
+    excludeAreaBtn.disabled = true;
+    try {
+      await toggleAdjust();
+    } finally {
+      excludeAreaBtn.disabled = false;
+    }
+  });
+
   // Ticket 61: the empty-state card repeats the two starting actions so a
   // first-run window has them where the eye lands. Same invocations as the
   // header buttons; the Start CTA starts only (the card disappears once
@@ -531,14 +715,30 @@ window.addEventListener("DOMContentLoaded", async () => {
     invoke("start_translation").catch((e) => showError("config", String(e)));
   });
 
+  clearBtn.addEventListener("click", clearEntries);
+
+  // The mock's collapsible config body: Hide/Show flips the body and
+  // rotates the chevron; the label swaps (both strings i18n'd).
+  configToggleBtn.addEventListener("click", () => {
+    configCollapsed = !configCollapsed;
+    configPanelBody.classList.toggle("hidden", configCollapsed);
+    configToggleText.textContent = configCollapsed
+      ? t("results.config.show")
+      : t("results.config.hide");
+    configToggleIcon.style.transform = configCollapsed ? "rotate(180deg)" : "none";
+  });
+
   adjustBtn.addEventListener("click", async () => {
     adjustBtn.disabled = true;
     try {
-      await invoke("toggle_adjust_mode");
-      renderStatus(await invoke("get_status"));
+      await toggleAdjust();
     } finally {
       adjustBtn.disabled = false;
     }
+  });
+
+  adjustDone.addEventListener("click", () => {
+    toggleAdjust().catch((e) => showError("adjust", String(e)));
   });
 
   modeZones.addEventListener("change", () => {

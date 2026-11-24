@@ -15,96 +15,221 @@
          titlebar.js fills .titlebar-buttons; close hides to tray (the Rust
          side turns close requests into hides). Ticket 62: user-visible
          text carries i18n keys (data-i18n / data-i18n-title), applied by
-         i18n.js once main.js resolves the language from get_status. -->
+         i18n.js once main.js resolves the language from get_status.
+         Ticket 61 (reopened): the header follows the redesign mock for
+         real — status badge, an interactive language-pair dropdown, and
+         contextual playback buttons (Start, Pause/Resume, Stop) with
+         inline Lucide icons (the CDN icon set vendored as markup; the
+         CSP forbids the CDN itself). -->
     <header>
       <div class="titlebar-row" data-tauri-drag-region>
         <div class="brand" data-tauri-drag-region>
           <img class="logo" src="logo.png" alt="" data-tauri-drag-region>
           <h1 data-tauri-drag-region>Langception</h1>
           <span id="status-pill" class="pill stopped" data-tauri-drag-region data-i18n="results.status.stopped">Stopped</span>
-          <span id="lang-chip" class="chip" data-tauri-drag-region data-i18n-title="results.lang_chip.title" title="Source language → target language">EN → TH</span>
+          <span class="tb-divider" data-tauri-drag-region></span>
+          <!-- The mock's language-pair dropdown, real: picking a pair sets
+               the global Source Language (set_source_language) — the same
+               config field the General tab saves. The option names are the
+               languages' own native names (untranslated on purpose, like
+               the UI Language options). -->
+          <div class="lang-dropdown" id="lang-dropdown">
+            <button id="lang-btn" class="lang-btn" data-i18n-title="results.lang_chip.title" title="Source language → target language">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg>
+              <span id="lang-current">EN → TH</span>
+              <svg class="icon chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="lang-menu" class="lang-menu hidden">
+              <div class="lang-menu-head" data-i18n="results.lang_menu.title">Translation Pair</div>
+              <button class="lang-option" data-lang="en"><span>English → ไทย</span><span class="lang-code">EN→TH</span></button>
+              <button class="lang-option" data-lang="ja"><span>日本語 → ไทย</span><span class="lang-code">JA→TH</span></button>
+              <button class="lang-option" data-lang="zh"><span>中文 → ไทย</span><span class="lang-code">ZH→TH</span></button>
+              <button class="lang-option" data-lang="ko"><span>한국어 → ไทย</span><span class="lang-code">KO→TH</span></button>
+            </div>
+          </div>
           <span id="profile-chip" class="chip profile hidden" data-tauri-drag-region data-i18n-title="results.profile_chip.title" title="The foreground app matches this Profile — its zones, glossary and language are what the loop runs with"><span data-i18n="results.profile_chip.prefix">Profile: </span><span id="profile-name"></span></span>
-          <span id="privacy-chip" class="chip privacy hidden" data-tauri-drag-region data-i18n-title="results.privacy_chip.title" title="The active Translate Engine sends screen text off-machine" data-i18n="results.privacy_chip.text">☁ cloud</span>
-          <span id="adjust-chip" class="chip hidden" data-tauri-drag-region data-i18n="results.adjust.chip">Adjust</span>
         </div>
         <div class="header-actions">
-          <button id="pause-btn" class="btn" disabled data-i18n="results.pause_btn">Pause</button>
-          <button id="adjust-btn" class="btn" data-i18n="results.adjust_btn">Adjust</button>
-          <button id="toggle-btn" class="btn" data-i18n="results.toggle.start">Start</button>
-          <button id="settings-btn" class="btn" data-i18n="results.settings_btn">Settings</button>
+          <!-- Contextual playback controls (the mock's): Start shows while
+               stopped; Pause/Resume + Stop show while the loop runs. main.js
+               toggles the visibility and swaps the Pause icon + label. -->
+          <button id="start-btn" class="btn primary">
+            <svg class="icon fill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>
+            <span data-i18n="results.toggle.start">Start</span>
+          </button>
+          <button id="pause-btn" class="btn tint hidden" disabled>
+            <svg class="icon icon-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="14" y="3" width="5" height="18" rx="1"/><rect x="5" y="3" width="5" height="18" rx="1"/></svg>
+            <svg class="icon icon-resume hidden" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>
+            <span id="pause-label" data-i18n="results.pause.pause">Pause</span>
+          </button>
+          <button id="stop-btn" class="btn danger hidden">
+            <svg class="icon fill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/></svg>
+            <span data-i18n="results.toggle.stop">Stop</span>
+          </button>
+          <button id="adjust-btn" class="btn">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg>
+            <span data-i18n="results.adjust_btn">Adjust</span>
+          </button>
+          <button id="settings-btn" class="btn">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
+            <span data-i18n="results.settings_btn">Settings</span>
+          </button>
+          <span class="tb-divider"></span>
+          <!-- Always-on-top pin (the mock's): flips the same
+               results_on_top flag the General tab's checkbox saves, so the
+               two controls cannot disagree. Amber while pinned. -->
+          <button id="pin-btn" class="tb-btn pin" data-i18n-title="results.pin.title" title="Always on Top">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>
+          </button>
           <div class="titlebar-buttons"></div>
         </div>
       </div>
       <div id="warnings-line" class="warnings-line hidden"></div>
     </header>
 
-    <details id="mode-panel" class="zones-panel mode-panel" open>
-      <summary>
-        <span data-i18n="results.mode_panel.title">Capture Target</span>
-        <span class="hint" id="mode-hint"></span>
-      </summary>
-      <div class="mode-grid">
-        <!-- Ticket 61: the redesign's segmented Capture-Mode control. The
-             radios stay the real controls (keyboard arrow switching, the
-             change events main.js listens on) — CSS hides them and styles
-             the checked label as the active segment (:has). -->
-        <div class="segmented">
-          <label class="mode-row">
-            <input type="radio" name="capture-target" value="zones" id="mode-zones" />
-            <span data-i18n="results.mode_zones">Capture Zones — watch the zones listed below</span>
-          </label>
-          <label class="mode-row">
-            <input type="radio" name="capture-target" value="fullscreen" id="mode-fullscreen" />
-            <span data-i18n="results.mode_fullscreen">Full screen — every Text Block on one monitor (minus Excluded Blocks)</span>
-          </label>
+    <!-- The mock's collapsible configuration panel: one section whose top
+         bar carries the segmented Capture-Mode control (with the zone
+         count badge), the mode's action button (+ New Zone / Exclude
+         Area), and a Hide/Show toggle. The body swaps between the zones
+         view and the full-screen view. The radios stay the real controls
+         (keyboard arrow switching, main.js's change events) — CSS hides
+         them and styles the checked label via :has(). -->
+    <section id="config-panel" class="config-panel">
+      <div class="config-bar">
+        <div class="config-mode">
+          <span class="config-label" data-i18n="results.mode_label">Capture Mode:</span>
+          <div class="segmented">
+            <label class="mode-row">
+              <input type="radio" name="capture-target" value="zones" id="mode-zones" />
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
+              <span data-i18n="results.mode_zones">Capture Zones</span>
+              <span id="zone-count-badge" class="count-badge">0</span>
+            </label>
+            <label class="mode-row">
+              <input type="radio" name="capture-target" value="fullscreen" id="mode-fullscreen" />
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+              <span data-i18n="results.mode_fullscreen">Full Screen</span>
+            </label>
+          </div>
         </div>
-        <label class="mode-row monitor-row" id="monitor-row">
-          <span class="monitor-label" data-i18n="results.monitor_label">Monitor</span>
-          <select id="monitor-select" class="monitor-select"></select>
-        </label>
+        <div class="config-actions">
+          <button id="new-zone-btn" class="btn small">
+            <svg class="icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+            <span data-i18n="results.new_zone_btn">New Zone</span>
+          </button>
+          <!-- Exclude Area (fullscreen mode): in the real app a block is
+               excluded by clicking it on the overlay while Adjust Mode is
+               on — so this button enters Adjust Mode, the actual flow. -->
+          <button id="exclude-area-btn" class="btn small hidden">
+            <svg class="icon rose" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M4.929 4.929 19.07 19.071"/></svg>
+            <span data-i18n="results.exclude_area_btn">Exclude Area</span>
+          </button>
+          <button id="config-toggle-btn" class="btn ghost small" data-i18n-title="results.config.toggle_title" title="Hide/show the configuration panel to free reading space">
+            <span id="config-toggle-text" data-i18n="results.config.hide">Hide</span>
+            <svg id="config-toggle-icon" class="icon chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6"/></svg>
+          </button>
+        </div>
       </div>
-    </details>
-
-    <details id="zones-panel" class="zones-panel" open>
-      <summary>
-        <span id="zones-title" data-i18n="results.zones_title.initial">Capture Zones (0)</span>
-        <button id="new-zone-btn" class="btn small" data-i18n="results.new_zone_btn">+ New Zone</button>
-      </summary>
-      <ul id="zones-list" class="zones-list"></ul>
-      <div id="zones-empty" class="zones-empty hidden"></div>
-    </details>
-
-    <details id="excluded-panel" class="zones-panel">
-      <summary>
-        <span id="excluded-title" data-i18n="results.excluded_title.initial">Excluded Blocks (0)</span>
-        <span class="hint" data-i18n="results.excluded_panel.hint">full-screen mode skips these positions</span>
-      </summary>
-      <ul id="excluded-list" class="zones-list"></ul>
-      <div id="excluded-empty" class="zones-empty hidden"></div>
-    </details>
+      <div id="config-panel-body" class="config-body">
+        <div id="view-zones" class="config-view">
+          <ul id="zones-list" class="zones-list"></ul>
+          <div id="zones-empty" class="zones-empty hidden"></div>
+        </div>
+        <div id="view-fullscreen" class="config-view hidden">
+          <div class="fullscreen-head">
+            <label id="monitor-row" class="monitor-row">
+              <span class="monitor-label" data-i18n="results.monitor_label">Target Display:</span>
+              <select id="monitor-select" class="monitor-select"></select>
+            </label>
+            <span class="hint" data-i18n="results.fullscreen_hint">Translates everything on screen except Excluded Blocks</span>
+          </div>
+          <div class="excluded-block-area">
+            <span class="excluded-heading">
+              <svg class="icon rose" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m2 2 20 20"/><path d="M5 5a1 1 0 0 0-1 1v7c0 5 3.5 7.5 7.67 8.94a1 1 0 0 0 .67.01c2.35-.82 4.48-1.97 5.9-3.71"/><path d="M9.309 3.652A12.252 12.252 0 0 0 11.24 2.28a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1v7a9.784 9.784 0 0 1-.08 1.264"/></svg>
+              <span id="excluded-title" data-i18n="results.excluded_title.initial">Excluded Blocks (0)</span>
+            </span>
+            <div id="excluded-list" class="excluded-list"></div>
+            <div id="excluded-empty" class="excluded-empty hidden"></div>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <div id="error-banner" class="error-banner hidden"></div>
 
     <main>
+      <!-- The mock's log toolbar: history count + Clear once translations
+           exist (Clear wipes the feed client-side; the loop keeps running).
+           Prototype-only "Simulate Capture" is not adopted. -->
+      <div id="log-toolbar" class="log-toolbar hidden">
+        <span class="log-title">
+          <svg class="icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+          <span id="log-count-label"></span>
+        </span>
+        <button id="clear-btn" class="btn ghost small">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span data-i18n="results.clear_btn">Clear</span>
+        </button>
+      </div>
       <ul id="results" class="results"></ul>
-      <!-- Ticket 61: the redesign's empty-state card — icon, title, the
-           hotkey list as pressed-key rows (main.js builds them from the
-           live hotkey config), and two quick actions mirroring the header's
-           Start and + New Zone. -->
+      <!-- The mock's empty-state card: icon tile, title + lede, the hotkey
+           list as pressed-key rows (main.js builds them from the live
+           hotkey config), and the two quick actions. -->
       <div id="empty-state" class="empty-state">
         <div class="empty-glyph" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="14" x="3" y="5" rx="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/></svg>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="14" x="3" y="5" rx="2" ry="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/></svg>
         </div>
-        <p data-i18n="results.empty_state.title">No translations yet.</p>
+        <h2 data-i18n="results.empty_state.title">Ready to translate text on your screen</h2>
+        <p class="empty-lede" data-i18n="results.empty_state.lede">Pick the areas to translate, or press Start to begin detecting text automatically.</p>
         <div id="empty-shortcuts" class="empty-shortcuts"></div>
         <div class="empty-cta">
-          <button id="empty-new-zone" class="btn" data-i18n="results.new_zone_btn">+ New Zone</button>
-          <button id="empty-start" class="btn primary" data-i18n="results.empty_cta.start">Start now</button>
+          <button id="empty-new-zone" class="btn cta">
+            <svg class="icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
+            <span data-i18n="results.empty_cta.zone">+ Draw Capture Zone</span>
+          </button>
+          <button id="empty-start" class="btn primary cta">
+            <svg class="icon fill" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>
+            <span data-i18n="results.empty_cta.start">Start Now</span>
+          </button>
         </div>
+      </div>
+      <!-- The mock's Adjust banner: the amber pill at the bottom of the
+           workspace while Adjust Mode is on; Done toggles it off. -->
+      <div id="adjust-banner" class="adjust-banner hidden">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/><path d="M2 12h20"/><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/></svg>
+        <span data-i18n="results.adjust.banner">Overlay Adjust Mode Active — drag the text boxes on screen to reposition them</span>
+        <button id="adjust-done" data-i18n="results.adjust.done">Done</button>
       </div>
     </main>
 
-    <div id="copied-toast" class="toast hidden" data-i18n="results.copied_toast">Copied ✓</div>
+    <!-- The mock's footer status bar: the configured OCR reader, whether
+         the overlays are up, the app version. -->
+    <footer id="status-footer" class="status-footer">
+      <div class="footer-left">
+        <span class="footer-item">
+          <span class="footer-dot" aria-hidden="true"></span>
+          <span data-i18n="results.footer.ocr_label">OCR Engine:</span>
+          <span id="footer-engine-name">—</span>
+        </span>
+        <span class="footer-sep" aria-hidden="true">•</span>
+        <span class="footer-item">
+          <span data-i18n="results.footer.overlay_label">Overlay:</span>
+          <span id="footer-overlay-value">—</span>
+        </span>
+        <!-- The privacy badge lives here (ticket 06): the titlebar at
+             800px cannot fit it beside the running state's Pause + Stop —
+             squeezed to zero width there, exactly when a cloud engine IS
+             translating. The footer's status row always has room, and the
+             badge reads as status info anyway. -->
+        <span id="privacy-chip" class="chip privacy hidden" data-i18n-title="results.privacy_chip.title" title="The active Translate Engine sends screen text off-machine" data-i18n="results.privacy_chip.text">☁ cloud</span>
+      </div>
+      <div id="footer-version">—</div>
+    </footer>
+
+    <div id="copied-toast" class="toast hidden">
+      <svg class="icon accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <span id="copied-toast-text" data-i18n="results.copied_toast">Copied ✓</span>
+    </div>
     <script src="i18n.js"></script>
     <script src="titlebar.js"></script>
     <script src="main.js"></script>

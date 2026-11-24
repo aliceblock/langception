@@ -159,6 +159,14 @@ pub struct Status {
     /// The id of the Profile currently matched to the foreground app, or
     /// `None` while the global fallback target applies.
     pub active_profile_id: Option<String>,
+    /// The Results window's footer status bar (ticket 61, the redesign's):
+    /// the configured OCR engine id ("windows" | "pp-ocrv6-tiny" | …) so the
+    /// bar can name the reader, the app version, and whether the overlays
+    /// are up — which is exactly while the loop runs (stop_loop hides them,
+    /// pause keeps them showing).
+    pub ocr_engine: String,
+    pub app_version: String,
+    pub overlay_visible: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -497,6 +505,8 @@ pub fn run() {
             get_status,
             get_ui_language,
             toggle_pause_translation,
+            set_source_language,
+            set_results_on_top,
             toggle_adjust_mode,
             set_capture_mode,
             rename_zone,
@@ -1309,6 +1319,7 @@ fn status_for(app: &AppHandle) -> Status {
         glossary_terms,
         hotkeys,
         text_style,
+        ocr_engine,
     ) = match &*state.config.lock().unwrap_or_else(|p| p.into_inner()) {
         Some(Ok(config)) => (
             None,
@@ -1360,6 +1371,7 @@ fn status_for(app: &AppHandle) -> Status {
                 one_shot: config.hotkeys.one_shot_capture.clone(),
             },
             TextStyleDto::from(&config.text_style),
+            config.ocr.engine.clone(),
         ),
         Some(Err(message)) => (
             Some(message.clone()),
@@ -1376,6 +1388,10 @@ fn status_for(app: &AppHandle) -> Status {
             0,
             default_hotkeys,
             TextStyleDto::default(),
+            // A broken config can't say which reader is configured; the
+            // shipped default is the honest label (same fallback set_general
+            // and the Engines tab assume).
+            langception_core::config::DEFAULT_OCR_ENGINE.to_string(),
         ),
         None => (
             Some("config not loaded yet".into()),
@@ -1392,6 +1408,7 @@ fn status_for(app: &AppHandle) -> Status {
             0,
             default_hotkeys,
             TextStyleDto::default(),
+            langception_core::config::DEFAULT_OCR_ENGINE.to_string(),
         ),
     };
 
@@ -1491,6 +1508,9 @@ fn status_for(app: &AppHandle) -> Status {
         ui_language: ui_language(app).code().to_string(),
         profiles,
         active_profile_id,
+        ocr_engine,
+        app_version: app.package_info().version.to_string(),
+        overlay_visible: running,
     }
 }
 
@@ -3270,6 +3290,49 @@ fn get_ui_language(app: AppHandle) -> String {
 #[tauri::command]
 fn toggle_pause_translation(app: AppHandle) {
     toggle_pause(&app)
+}
+
+/// The Results window's titlebar language dropdown (ticket 61, the
+/// redesign's): sets the global Source Language — the same config field,
+/// accepted spellings, and restart rule as the General tab's save, so a
+/// mid-run switch resets tracking exactly the way a Settings save does.
+#[tauri::command]
+async fn set_source_language(app: AppHandle, language: String) -> Result<(), String> {
+    let language = crate::settings::parse_language(&language)?;
+    run_off_main(app, move |app| {
+        let before = current_config(app)?;
+        with_config_mut(app, |config| {
+            config.source.language = language;
+            Ok(())
+        })?;
+        // Source Language is read when the loop starts (the OCR engine is
+        // rebuilt with it) — restart only when it actually changed, the
+        // General tab's restart_worthy rule narrowed to this field.
+        if before.source.language != language {
+            restart_loop_if_running(app);
+        }
+        apply_state(app);
+        Ok(())
+    })
+    .await
+}
+
+/// The Results window's titlebar pin button (ticket 61, the redesign's):
+/// flips the same `results_on_top` config flag the General tab's checkbox
+/// saves, then applies it to the live window — so the checkbox, the tray,
+/// and the pin can never disagree about the state.
+#[tauri::command]
+async fn set_results_on_top(app: AppHandle, on: bool) -> Result<(), String> {
+    run_off_main(app, move |app| {
+        with_config_mut(app, |config| {
+            config.windows.results_on_top = on;
+            Ok(())
+        })?;
+        apply_always_on_top_from_config(app);
+        apply_state(app);
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]

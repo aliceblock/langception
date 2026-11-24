@@ -1,15 +1,17 @@
 /* Langception Results Window (ui/index.html) — page styles over the shared
-   theme (theme.css): title-bar header layout, Capture Target / Capture
-   Zones / Excluded Blocks panels, and translation entries.
+   theme (theme.css): title-bar header layout, the configuration panel,
+   and the translation feed.
 
-   Ticket 61: the componentry follows the redesign prototype (redesign.html
-   at the repo root) — status badge with a live dot, tinted variant buttons
-   (amber Pause, rose Stop) around the solid-amber primary, a segmented
-   Capture-Mode control, zone cards in a two-column grid, exclusion chips,
-   an empty-state card with keycap shortcut rows and quick actions, and
-   translation cards where the newest one carries an amber edge + slide-in.
-   The 16-18px type scale from the earlier styling pass is kept: the mock's
-   smaller sizes are its own, the user-set scale wins. */
+   Ticket 61 (reopened): follows the redesign prototype (redesign.html at
+   the repo root) AT FULL FIDELITY — the mock's compact type scale (12px
+   labels/controls, 14px titles), icon buttons (inline Lucide SVG), the
+   contextual playback trio, the interactive language dropdown, the single
+   collapsible config section with the segmented mode control + zone-count
+   badge, two-line zone cards with trash buttons, exclusion chips, the log
+   toolbar with Clear, the empty-state card with keycap rows, translation
+   cards with a hover copy affordance, the Adjust banner, and the footer
+   status bar. The mock's "Simulate Capture" button is its own prototype
+   aid, not an app feature — not adopted. */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -17,6 +19,7 @@ html, body { height: 100%; }
 
 body {
   font-family: "Inter", "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
+  font-size: 12px;
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -24,53 +27,78 @@ body {
   overflow: hidden;
 }
 
-/* The first header row is the title bar (chrome in theme.css); the
-   warnings line below owns its own spacing so the bar sits tight, like the
-   Settings window's. */
+/* Inline Lucide icon (vendored as markup — the CSP forbids the CDN).
+   .fill swaps to a filled glyph for play/stop per the mock. */
+.icon { width: 14px; height: 14px; flex: none; }
+.icon.fill path, .icon.fill polygon, .icon.fill rect { fill: currentColor; }
+.icon.accent { color: var(--accent); }
+.icon.rose { color: var(--err); }
+
+/* The first header row is the title bar (chrome in theme.css). */
 header {
-  padding: 0 12px 0 16px;
+  padding: 0 12px 0 14px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   user-select: none;
 }
 
-h1 { font-size: 18px; font-weight: 600; }
+h1 { font-size: 14px; font-weight: 600; color: #fff; }
 
-/* Active-Profile chip (ticket 19): the amber sibling of .chip — amber marks
-   the special state (PRODUCT.md principle 2). Inline-flex + gap keeps the
-   label and name spaced without relying on text spaces; long profile names
-   ellipsize instead of squeezing the row. */
-.chip.profile {
+/* Active-Profile chip (ticket 19): amber marks the special state
+   (PRODUCT.md principle 2). Both state chips shrink under pressure —
+   min-width 0 + ellipsis — so a crowded titlebar (running state adds
+   Pause + Stop around Start) degrades the chip text instead of pushing
+   the window controls out of the frame (the reported Settings overflow,
+   same physics here). */
+.chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+.chip.profile {
   background: rgba(245, 158, 11, 0.16);
   color: var(--accent);
   border: 1px solid rgba(245, 158, 11, 0.45);
-  max-width: 180px;
+  max-width: 160px;
+  min-width: 48px; /* a matched Profile shrinks to "Pr…" before vanishing */
 }
 .chip.profile .profile-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.chip.privacy {
+  display: inline-block;
+  flex: none;
+  background: rgba(242, 182, 60, 0.18);
+  color: var(--glossary);
+  border: 1px solid rgba(242, 182, 60, 0.45);
+  max-width: 110px;
+  text-overflow: ellipsis;
+}
 
-/* The functional buttons (Pause/Adjust/Start/Settings) cluster right of the
-   brand, then the window controls; the divider separates app UI from
-   window chrome. */
-.header-actions { display: flex; align-items: center; gap: 8px; }
+/* Vertical hairline the mock puts between header clusters. */
+.tb-divider { width: 1px; height: 16px; background: var(--border); flex: none; }
 
-/* Status badge (the redesign's titlebar pill): a live dot + state text in
-   a state-tinted pill. The dot is a ::before painted in the text color, so
-   each state restyles it for free. */
+.header-actions { display: flex; align-items: center; gap: 4px; }
+
+/* Status badge: a live dot + state text in a state-tinted pill. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
-  padding: 3px 10px;
+  font-size: 12px;
+  padding: 2px 10px;
   border-radius: 999px;
-  font-weight: 600;
+  font-weight: 500;
   border: 1px solid transparent;
   white-space: nowrap;
 }
@@ -86,33 +114,39 @@ h1 { font-size: 18px; font-weight: 600; }
 .pill.stopped { background: rgba(161, 161, 170, 0.12); color: var(--muted); border-color: rgba(161, 161, 170, 0.28); }
 .pill.error   { background: rgba(251, 113, 133, 0.15); color: var(--err); border-color: rgba(251, 113, 133, 0.3); }
 
-/* Buttons: one hierarchy (the redesign's) — .btn is the elevated
-   secondary (bg/border hover, no text recolor), .btn.primary the solid
-   amber with the ink text and a faint amber glow, .btn.danger the
-   rose-tinted Stop, and the enabled Pause button its amber-tinted sibling
-   (redesign's Pause). Disabled states unchanged from the old scheme. */
+/* Buttons: one hierarchy (the redesign's), compact per the mock. */
 .btn {
-  padding: 5px 14px;
-  font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--panel-2);
   color: var(--text);
   cursor: pointer;
+  white-space: nowrap;
 }
+.btn .icon { width: 13px; height: 13px; }
 .btn:hover { border-color: var(--border-strong); background: var(--panel-3); }
 .btn.primary {
+  padding: 5px 14px;
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
   font-weight: 600;
-  box-shadow: 0 1px 8px rgba(245, 158, 11, 0.25);
+  box-shadow: 0 1px 6px rgba(245, 158, 11, 0.25);
 }
 .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent-ink); }
 .btn.primary:disabled { opacity: 0.5; cursor: default; }
-.btn:disabled:not(.primary) { opacity: 0.45; cursor: default; }
-.btn:disabled:not(.primary):hover { border-color: var(--border); background: var(--panel-2); color: var(--text); }
-
+.btn.tint {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--accent);
+}
+.btn.tint:hover { background: rgba(245, 158, 11, 0.25); border-color: rgba(245, 158, 11, 0.45); color: var(--accent); }
 .btn.danger {
   background: rgba(251, 113, 133, 0.15);
   border-color: rgba(251, 113, 133, 0.3);
@@ -123,190 +157,147 @@ h1 { font-size: 18px; font-weight: 600; }
   border-color: rgba(251, 113, 133, 0.45);
   color: var(--err);
 }
-
-/* The enabled Pause button (redesign: amber tint, amber text). */
-#pause-btn:not(:disabled) {
-  background: rgba(245, 158, 11, 0.15);
-  border-color: rgba(245, 158, 11, 0.3);
-  color: var(--accent);
-}
-#pause-btn:not(:disabled):hover {
-  background: rgba(245, 158, 11, 0.25);
-  border-color: rgba(245, 158, 11, 0.45);
-  color: var(--accent);
-}
-
-.warnings-line {
-  margin: 8px 0;
-  padding: 7px 10px;
-  border-radius: 8px;
-  background: rgba(242, 182, 60, 0.1);
-  border: 1px solid rgba(242, 182, 60, 0.4);
-  color: var(--glossary);
-  font-size: 14px;
-  white-space: pre-wrap;
-}
-
-.btn.small {
-  margin-left: auto;
-  padding: 2px 10px;
-  font-size: 13px;
-}
-
-/* ---- Capture Zones management list ---- */
-
-.zones-panel {
-  margin: 8px 16px 0;
-  padding: 8px 12px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  user-select: none;
-}
-
-.zones-panel summary {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text);
-  list-style: none;
-}
-.zones-panel summary::before {
-  content: "▸";
-  margin-right: 7px;
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
   color: var(--muted);
-  transition: transform 0.12s;
 }
-.zones-panel[open] summary::before { transform: rotate(90deg); }
-
-/* Ticket 61: the redesign's zone cards — a two-column grid of bordered
-   rows, each opening with an amber dot. minmax(0, 1fr) lets long regions
-   ellipsize instead of stretching the column. */
-.zones-list {
-  list-style: none;
-  margin-top: 8px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+.btn.ghost:hover { background: rgba(255, 255, 255, 0.05); border-color: transparent; color: var(--text); }
+.btn.small { padding: 4px 10px; }
+.btn.small:hover { border-color: rgba(245, 158, 11, 0.4); }
+.btn.ghost.small:hover { border-color: transparent; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+/* A disabled variant keeps its own tint on hover — only the plain
+   secondary resets to its resting surface. */
+.btn:not(.tint):not(.danger):not(.primary):disabled:hover {
+  border-color: var(--border);
+  background: var(--panel-2);
+  color: var(--text);
 }
 
-.zone-row {
-  display: flex;
+/* The window-control zone (titlebar.js) plus the Results-only pin: icon
+   buttons, amber when engaged. */
+.tb-btn {
+  width: 28px;
+  height: 26px;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tb-btn:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
+.tb-btn.pin.pinned { background: rgba(245, 158, 11, 0.2); color: var(--accent); }
+
+/* ---- Language dropdown (the mock's, real): the button mirrors the
+   mock's sky-tinted chip; the menu lists the four source pairs with
+   native names + mono codes, the current pair's code in amber. ---- */
+
+.lang-dropdown { position: relative; }
+.lang-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
   border-radius: 8px;
   background: var(--panel-2);
   border: 1px solid var(--border);
-  font-size: 15px;
-  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--info);
+  cursor: pointer;
+  white-space: nowrap;
 }
-.zone-row::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--accent);
-  flex: none;
+.lang-btn .icon { width: 13px; height: 13px; color: var(--info); }
+.lang-btn .chev { color: var(--muted); }
+.lang-btn:hover { background: var(--panel-3); border-color: var(--border-strong); }
+.lang-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 176px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  padding: 6px 0;
+  z-index: 50;
 }
-.zone-row:hover { border-color: var(--border-strong); }
-
-.zone-name {
-  border: none;
-  background: none;
-  color: var(--accent-2);
-  font-size: 15px;
+.lang-menu-head {
+  padding: 2px 12px 6px;
+  font-size: 10px;
   font-weight: 600;
-  cursor: pointer;
-  padding: 1px 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.zone-name:hover { text-decoration: underline; }
-
-.zone-region {
-  flex: 1;
-  color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.zone-delete {
-  border: none;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 15px;
-  padding: 1px 6px;
-  border-radius: 6px;
-  flex: none;
-}
-.zone-delete:hover { color: var(--err); background: rgba(251, 113, 133, 0.12); }
-
-.zone-rename {
-  width: 160px;
-  font-size: 15px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  border: 1px solid var(--accent);
-  background: var(--bg);
-  color: var(--text);
-  outline: none;
-}
-
-.zones-empty {
-  margin-top: 6px;
-  padding: 2px 8px;
-  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   color: var(--muted);
 }
-
-/* Hint text inside a zones-panel summary (mode panel, excluded panel). */
-.zones-panel summary .hint {
-  margin-left: auto;
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--muted);
-}
-
-/* ---- Capture Target (zones vs full-screen): the redesign's segmented
-   control. The radios remain the real controls (keyboard arrow switching,
-   main.js's change events) — visually hidden here and mirrored by the
-   label's checked styling via :has(). ---- */
-
-.mode-grid {
+.lang-option {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 5px 12px;
+  background: none;
+  border: none;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
 }
+.lang-option:hover { background: rgba(255, 255, 255, 0.05); }
+.lang-option .lang-code {
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  color: var(--muted);
+}
+.lang-option.current .lang-code { color: var(--accent); }
+.lang-option.current { font-weight: 600; }
 
+/* The mock's collapsible configuration panel. */
+.config-panel {
+  background: rgba(22, 24, 29, 0.6); /* --panel at 60%, the mock's surface/60 */
+  border-bottom: 1px solid var(--border);
+  flex: none;
+  user-select: none;
+}
+.config-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 16px;
+}
+.config-mode { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.config-label { font-size: 12px; font-weight: 500; color: var(--muted); }
+.config-actions { display: flex; align-items: center; gap: 8px; }
+
+/* Segmented Capture-Mode control over the real radios. */
 .segmented {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 10px;
-  align-self: flex-start;
+  border-radius: 12px;
   max-width: 100%;
 }
-
 .mode-row {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
+  padding: 4px 12px;
   border-radius: 8px;
-  font-size: 15px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--muted);
   cursor: pointer;
   border: 1px solid transparent;
+  white-space: nowrap;
 }
 .mode-row input[type="radio"] {
   position: absolute;
@@ -318,120 +309,232 @@ h1 { font-size: 18px; font-weight: 600; }
   background: var(--panel-2);
   border-color: var(--border-strong);
   color: var(--accent);
-  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 .mode-row:has(input:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-
-.mode-row.monitor-row {
-  margin-left: 2px;
-  align-self: flex-start;
+.count-badge {
+  padding: 0 6px;
+  font-size: 10px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.2);
+  color: var(--accent);
+  font-weight: 600;
 }
 
-.monitor-label {
+.config-body { padding: 0 16px 12px; }
+.config-view {
+  border-radius: 12px;
+  background: rgba(15, 17, 21, 0.8); /* --bg at 80%, the mock's bg/80 */
+  border: 1px solid var(--border);
+  padding: 10px;
+}
+
+/* Zones: the mock's two-line cards — name over mono dims, a trash button
+   on the right. minmax(0, 1fr) lets long names ellipsize. */
+.zones-list {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.zone-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+.zone-row:hover { border-color: var(--border-strong); }
+.zone-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.zone-row::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-2);
   flex: none;
 }
-
-.monitor-select {
-  padding: 4px 7px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+.zone-text { min-width: 0; }
+.zone-name {
+  display: block;
+  border: none;
+  background: none;
   color: var(--text);
-  font-size: 15px;
+  font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+  padding: 0;
+  text-align: left;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.monitor-select:focus { outline: 1px solid var(--accent); }
+.zone-region {
+  display: block;
+  font-family: Consolas, monospace;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zone-delete {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: inline-flex;
+  flex: none;
+}
+.zone-delete .icon { width: 13px; height: 13px; }
+.zone-delete:hover { color: var(--err); background: rgba(251, 113, 133, 0.2); }
 
 /* A zone whose monitor is unplugged: kept, but not watched. */
-.zone-row.zone-disabled {
-  opacity: 0.55;
-}
+.zone-row.zone-disabled { opacity: 0.55; }
 .zone-row.zone-disabled::before { background: var(--muted); }
 .zone-row.zone-disabled .zone-name {
   color: var(--glossary);
   text-decoration: line-through;
 }
 
-/* ---- Excluded Blocks: the redesign's rose chips — one pill per position,
-   wrapping inline instead of filling the zone grid. ---- */
+.zones-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.zones-empty .icon { width: 15px; height: 15px; color: var(--muted); }
+.zones-empty strong { color: var(--text); font-weight: 600; }
 
-#excluded-list {
+/* Full-screen view: Target Display + hint over the exclusion list. */
+.fullscreen-head {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(38, 41, 50, 0.7);
 }
+.monitor-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.monitor-select {
+  padding: 4px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  max-width: 100%;
+  cursor: pointer;
+}
+.fullscreen-head .hint { font-size: 11px; color: var(--muted); }
 
-.zone-row.excluded-row {
+.excluded-block-area { padding-top: 10px; }
+.excluded-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.excluded-list { display: flex; flex-wrap: wrap; gap: 8px; }
+.excluded-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   width: fit-content;
   max-width: 100%;
+  padding: 4px 10px;
+  border-radius: 8px;
   background: rgba(251, 113, 133, 0.1);
-  border-color: rgba(251, 113, 133, 0.25);
+  border: 1px solid rgba(251, 113, 133, 0.25);
+  font-size: 12px;
+  color: #fecdd3;
 }
-.zone-row.excluded-row::before { background: var(--err); }
-.zone-row.excluded-row:hover { border-color: rgba(251, 113, 133, 0.4); }
-
+.excluded-row:hover { border-color: rgba(251, 113, 133, 0.4); }
 .excluded-label {
-  max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
-  color: var(--text);
+}
+.excluded-empty {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
 }
 
-/* Adjust Mode indicator chip next to the status pill. */
-.chip {
-  font-size: 13px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-weight: 600;
-  white-space: nowrap;
-  background: rgba(108, 199, 255, 0.16);
-  color: var(--info);
-  border: 1px solid rgba(108, 199, 255, 0.4);
-}
-
-/* Privacy badge (ticket 06): a cloud engine is sending screen text
-   off-machine — amber-yellow, like the paused pill used to be, to read as
-   "pay attention" while staying apart from the orange accent. */
-.chip.privacy {
-  background: rgba(242, 182, 60, 0.18);
-  color: var(--glossary);
-  border-color: rgba(242, 182, 60, 0.45);
-}
+/* Hint text inside a zones-panel summary is gone with the details panels;
+   the class remains for the fullscreen head only. */
 
 .error-banner {
   margin: 8px 16px 0;
-  padding: 9px 12px;
+  padding: 8px 12px;
   border-radius: 8px;
   background: rgba(251, 113, 133, 0.12);
   border: 1px solid rgba(251, 113, 133, 0.4);
   color: var(--err);
-  font-size: 16px;
+  font-size: 12px;
   white-space: pre-wrap;
 }
 
-main { flex: 1; overflow-y: auto; padding: 10px 16px 20px; }
+.warnings-line {
+  margin: 8px 16px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(242, 182, 60, 0.1);
+  border: 1px solid rgba(242, 182, 60, 0.4);
+  color: var(--glossary);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
 
-.results { list-style: none; }
+main { flex: 1; overflow-y: auto; position: relative; display: flex; flex-direction: column; }
 
-/* Translation cards (the redesign's feed): newest card carries an amber
-   edge and a soft glow, cards slide in on arrival. */
+/* Log toolbar: history count + Clear once translations exist. */
+.log-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(38, 41, 50, 0.6);
+  background: rgba(22, 24, 29, 0.3);
+  flex: none;
+}
+.log-title { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.log-title #log-count { color: var(--text); font-weight: 500; }
+
+.results { list-style: none; padding: 12px 16px 16px; }
+
+/* Translation cards (the mock's feed): the newest card carries an amber
+   edge and glow; the copy affordance sits at the card's right edge and
+   sharpens on hover (the whole card stays clickable-to-copy). */
 .entry {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 12px 14px;
   margin-top: 10px;
   cursor: pointer;
-  transition: border-color 0.12s;
 }
-.entry:hover { border-color: var(--border-strong); }
 .entry:first-child {
   border-color: rgba(245, 158, 11, 0.4);
-  box-shadow: 0 2px 12px rgba(245, 158, 11, 0.06);
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.06);
 }
 .entry.copied { border-color: var(--ok); }
 
@@ -445,66 +548,85 @@ main { flex: 1; overflow-y: auto; padding: 10px 16px 20px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
   margin-bottom: 6px;
 }
-.entry .entry-time { font-family: Consolas, monospace; font-size: 12.5px; }
-
 .badge {
-  padding: 2px 7px;
-  border-radius: 999px;
-  font-weight: 600;
-  font-size: 13px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  white-space: nowrap;
 }
-.badge.engine   { background: rgba(108, 199, 255, 0.16); color: var(--info); }
-.badge.glossary { background: rgba(242, 182, 60, 0.18); color: var(--glossary); }
-.badge.stage    { background: rgba(251, 113, 133, 0.18); color: var(--err); }
-.badge.zone     { background: rgba(52, 211, 153, 0.14); color: var(--ok); }
-.badge.oneshot  { background: rgba(161, 161, 170, 0.16); color: var(--text); border: 1px solid rgba(161, 161, 170, 0.4); }
+.badge.zone { color: var(--accent); }
+.badge.oneshot { color: var(--text); }
+.badge.engine { color: var(--info); }
+.badge.glossary { color: var(--glossary); }
+.badge.stage { color: var(--err); }
+.entry .entry-time { font-family: Consolas, monospace; font-size: 11px; color: var(--muted); }
+.entry .copy-btn {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--muted);
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 6px;
+  display: inline-flex;
+}
+.entry:hover .copy-btn { opacity: 1; }
+.entry .copy-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
 
-.entry .source { font-size: 15px; color: var(--muted); margin-bottom: 4px; }
+.entry .source { font-size: 12px; color: var(--muted); margin-bottom: 5px; line-height: 1.55; }
 
 .entry .thai {
-  font-size: 21px;
-  line-height: 1.45;
-  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.55;
+  color: #f1f5f9;
 }
 
-/* Empty-state card (the redesign's): icon tile, title, the keycap shortcut
-   list, and the two quick actions. */
+/* Empty-state card. */
 .empty-state {
-  margin: 32px auto 0;
-  max-width: 480px;
+  flex: 1;
+  margin: auto;
+  max-width: 448px;
+  width: calc(100% - 48px);
   padding: 20px;
   text-align: center;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: rgba(22, 24, 29, 0.6);
+  border: 1px solid rgba(38, 41, 50, 0.8);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   color: var(--muted);
-  font-size: 15px;
+  font-size: 12px;
 }
+.empty-state h2 { font-size: 14px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+.empty-lede { margin-bottom: 14px; line-height: 1.55; }
 .empty-glyph {
   width: 40px;
   height: 40px;
-  margin: 0 auto 10px;
+  margin: 0 auto 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: 12px;
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.2);
   color: var(--accent);
 }
-.empty-glyph svg { width: 20px; height: 20px; }
+.empty-glyph .icon { width: 20px; height: 20px; }
 
 .empty-shortcuts {
-  margin: 14px 0;
+  margin: 0 0 16px;
   padding: 12px 14px;
   text-align: left;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: rgba(15, 17, 21, 0.9);
+  border: 1px solid rgba(38, 41, 50, 0.8);
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   gap: 9px;
@@ -514,34 +636,103 @@ main { flex: 1; overflow-y: auto; padding: 10px 16px 20px; }
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 14px;
+  font-size: 12px;
   color: var(--text);
 }
 .shortcut-keys { display: inline-flex; align-items: center; gap: 4px; }
-.shortcut-plus { color: var(--muted); font-size: 12px; }
+.shortcut-plus { color: var(--muted); font-size: 11px; }
 
 .empty-cta {
   display: flex;
+  align-items: center;
   justify-content: center;
   gap: 8px;
 }
-.empty-cta .btn { flex: 1; }
-
-.toast {
-  position: fixed;
-  bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--ok);
-  color: var(--ok-ink);
-  font-size: 15px;
-  font-weight: 600;
-  padding: 6px 14px;
-  border-radius: 999px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+.btn.cta {
+  flex: 1;
+  justify-content: center;
+  padding: 8px 12px;
+  border-radius: 12px;
 }
 
-/* !important so component display overrides (e.g. .chip.profile's
-   inline-flex) can never defeat the hide — a profile chip that ignores
-   .hidden once shown is exactly the stale-signal bug (ticket 20). */
+/* Adjust banner: amber pill floating at the bottom of the workspace. */
+.adjust-banner {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  max-width: calc(100% - 32px);
+  z-index: 20;
+}
+.adjust-banner .icon { color: var(--accent-ink); }
+.adjust-banner span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#adjust-done {
+  margin-left: 4px;
+  border: none;
+  background: none;
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  flex: none;
+}
+
+/* Footer status bar: the mock's h-7 strip. */
+.status-footer {
+  height: 28px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+  user-select: none;
+}
+.footer-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.footer-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.footer-item #footer-engine-name, .footer-item #footer-overlay-value { color: var(--text); }
+.footer-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); flex: none; }
+.footer-sep { color: var(--border-strong); }
+#footer-version { white-space: nowrap; }
+
+/* Toast (the mock's): bottom-right dark panel with an info glyph. */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border-strong);
+  color: #fff;
+  font-size: 12px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  z-index: 50;
+}
+
+/* !important so component display overrides (e.g. .chip's inline-flex)
+   can never defeat the hide — a chip that ignores .hidden once shown is
+   exactly the stale-signal bug (ticket 20). */
 .hidden { display: none !important; }

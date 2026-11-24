@@ -828,6 +828,7 @@ async function saveGeneral() {
 const glossaryList = document.getElementById("glossary-list");
 const glossaryEmpty = document.getElementById("glossary-empty");
 const glossaryNote = document.getElementById("glossary-note");
+const glossaryFilter = document.getElementById("glossary-filter");
 const newTermInput = document.getElementById("glossary-new-term");
 const newThaiInput = document.getElementById("glossary-new-thai");
 
@@ -840,9 +841,29 @@ async function renderGlossary() {
     toast(String(e), "error");
     return;
   }
+  // Ticket 61 (reopened): the mock's filter box — a client-side match on
+  // term or Thai, narrowing the rendered list. The count note keeps
+  // reporting the whole glossary; an active filter with no matches gets
+  // its own empty line ("no terms yet" would lie).
+  const needle = glossaryFilter.value.trim().toLowerCase();
+  const visible = needle
+    ? entries.filter(
+        (e) =>
+          e.term.toLowerCase().includes(needle) ||
+          e.thai.toLowerCase().includes(needle),
+      )
+    : entries;
   glossaryList.replaceChildren();
-  for (const entry of entries) glossaryList.append(glossaryRow(entry));
-  glossaryEmpty.classList.toggle("hidden", entries.length > 0);
+  for (const entry of visible) glossaryList.append(glossaryRow(entry));
+  if (entries.length === 0) {
+    glossaryEmpty.textContent = t("settings.glossary.empty");
+    glossaryEmpty.classList.remove("hidden");
+  } else if (visible.length === 0) {
+    glossaryEmpty.textContent = t("settings.glossary.no_match");
+    glossaryEmpty.classList.remove("hidden");
+  } else {
+    glossaryEmpty.classList.add("hidden");
+  }
   glossaryNote.textContent =
     entries.length === 1
       ? t("settings.glossary.count_one", { count: entries.length })
@@ -936,6 +957,10 @@ async function addGlossaryEntry() {
 }
 
 document.getElementById("glossary-add-btn").addEventListener("click", addGlossaryEntry);
+// The filter re-renders on every keystroke (each render re-fetches the
+// glossary — a small list, and the invoke keeps filter/add/import/edit on
+// the one source of truth).
+glossaryFilter.addEventListener("input", () => renderGlossary());
 for (const input of [newTermInput, newThaiInput]) {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") addGlossaryEntry();

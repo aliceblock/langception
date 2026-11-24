@@ -502,23 +502,36 @@
           </select>
           <span id="glossary-note" class="hint"></span>
         </div>
+        <!-- The mock's filter box: client-side match on term or Thai,
+             re-rendering the list below. -->
+        <div class="glossary-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+          <input id="glossary-filter" type="text" data-i18n-placeholder="settings.glossary.filter_placeholder" placeholder="Filter terms..." spellcheck="false" />
+        </div>
         <ul id="glossary-list" class="glossary-list"></ul>
         <div id="glossary-empty" class="empty hidden" data-i18n="settings.glossary.empty">No terms yet.</div>
         </div>
       </section>
 
       <section id="tab-profiles" class="page">
-        <h2 data-i18n="settings.profiles.title">Profiles</h2>
+        <div class="page-head">
+          <h2 data-i18n="settings.profiles.title">Profiles</h2>
+          <!-- The mock's amber "+ New Profile" in the page head. -->
+          <button id="profile-new" class="btn primary small" data-i18n="settings.profiles.new_btn">+ New Profile…</button>
+        </div>
         <p class="hint" data-i18n="settings.profiles.hint">
           A Profile gives one app its own Source Language, engine, Capture
           Zones inside its window, Glossary layer, Genderless Mode and
           System Prompt Preset. It applies while that app is the foreground
           window; with no match, the global settings apply.
         </p>
-        <div class="row">
+        <!-- The mock's profile selector strip: the dropdown and Delete in
+             one bordered card. The select is flexed with min-width: 0 so a
+             long profile name ellipsizes instead of pushing the strip past
+             the window (the reported overflow). -->
+        <div class="profile-strip">
           <select id="profile-select" data-i18n-title="settings.profiles.select_title" title="Choose a profile"></select>
-          <button id="profile-new" class="btn small" data-i18n="settings.profiles.new_btn">New profile…</button>
-          <button id="profile-delete" class="btn small" data-i18n="settings.profiles.delete_btn">Delete</button>
+          <button id="profile-delete" class="btn danger small" data-i18n="settings.profiles.delete_btn">Delete</button>
           <span id="profile-active-chip" class="chip ok hidden" data-i18n-title="settings.profiles.active_chip_title" title="This profile's app owns the foreground window right now" data-i18n="settings.profiles.active_chip">active</span>
         </div>
         <div id="profile-empty" class="empty" data-i18n="settings.profiles.empty">

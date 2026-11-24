@@ -146,14 +146,14 @@ kbd {
 .titlebar-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   height: 52px;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: 1;
   min-width: 0;
 }

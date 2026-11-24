@@ -6,8 +6,14 @@
    the bottom) instead of the old horizontal tab strip, 12px cards, the
    elevated-secondary button hover, and the sticky save bar in its final
    form (unsaved-changes note + pulsing dot, Discard beside Save, amber
-   top edge). Zero behavior change: every id and JS-created class below is
-   load-bearing (settings.js). */
+   top edge). Ticket 61 reopened: the mock's COMPACT type scale everywhere
+   (12px labels/controls, 16px page titles) replaces the earlier 16–18px
+   pass — the reporter asked for mock fidelity and the scale was the
+   biggest visible divergence; the Profiles tab gains the mock's selector
+   strip (styled select + Delete in one bordered card, "+ New Profile" as
+   the amber primary in the page head), and the Glossary tab the mock's
+   filter box. Zero behavior change beyond the filter: every id and
+   JS-created class below is load-bearing (settings.js). */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -24,6 +30,7 @@ html, body { height: 100%; }
 
 body {
   font-family: "Inter", "Segoe UI", "Noto Sans Thai", system-ui, sans-serif;
+  font-size: 12px;
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -39,25 +46,26 @@ header {
   user-select: none;
 }
 
-/* ---- Type scale (ticket 41, sizes from the 16-18px pass): one step per
-   role ---- h1 titlebar 18px/600 · h2 page title 18px/600 · h3 section
-   heading 14px/600 (the redesign's section headers: plain text color, no
-   uppercase) · labels+values 16px · hints 14px muted. */
+/* ---- Type scale (ticket 61 reopened: the redesign mock's compact scale,
+   replacing the 16-18px pass) ---- h1 titlebar 14px/600 · h2 page title
+   16px/600 · h3 section heading 12px/600 (the redesign's section headers:
+   plain text color, no uppercase) · labels+values 12px · hints 12px muted ·
+   auxiliary buttons/chips 10-11px. */
 
-h1 { font-size: 18px; font-weight: 600; }
-h2 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+h1 { font-size: 14px; font-weight: 600; color: #fff; }
+h2 { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 4px; }
 h3 {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text);
+  color: #fff;
   margin: 0 0 8px;
 }
 
 .chip {
-  font-size: 13px;
-  padding: 3px 9px;
+  font-size: 10px;
+  padding: 2px 8px;
   border-radius: 999px;
-  font-weight: 600;
+  font-weight: 500;
   border: 1px solid transparent;
 }
 /* Chip borders match the Results Window's (style.css) so a badge reads the
@@ -69,12 +77,16 @@ h3 {
 /* ---- Buttons: one hierarchy (ticket 41, hover scheme from ticket 61) ----
    .btn secondary (the workhorse), .btn.small auxiliary, .btn.primary ONLY
    for a view's own primary action: the sticky footer's Save on the tab
-   pages, the wizard's flow buttons inside the wizard. Nothing else in the
-   tabs is primary (the per-list Add buttons were demoted in markup). */
+   pages, the wizard's flow buttons inside the wizard, and (ticket 61
+   reopened) the Profiles page head's "+ New Profile". .btn.danger is the
+   mock's rose-tinted destructive (the Profiles strip's Delete). Nothing
+   else in the tabs is primary (the per-list Add buttons were demoted in
+   markup). */
 
 .btn {
-  padding: 6px 14px;
-  font-size: 15px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
   border-radius: var(--radius-control);
   border: 1px solid var(--border);
   background: var(--panel-2);
@@ -91,17 +103,34 @@ h3 {
 }
 .btn.primary:hover { background: var(--accent-2); border-color: var(--accent-2); color: var(--accent-ink); }
 .btn.primary:disabled { opacity: 0.5; cursor: default; }
-.btn:disabled:not(.primary) { opacity: 0.45; cursor: default; }
-.btn:disabled:not(.primary):hover { border-color: var(--border); background: var(--panel-2); color: var(--text); }
-.btn.small { padding: 4px 10px; font-size: 14px; }
+.btn.danger {
+  background: rgba(251, 113, 133, 0.15);
+  border-color: rgba(251, 113, 133, 0.3);
+  color: var(--err);
+}
+.btn.danger:hover { background: rgba(251, 113, 133, 0.25); border-color: rgba(251, 113, 133, 0.45); color: var(--err); }
+.btn:disabled:not(.primary):not(.danger) { opacity: 0.45; cursor: default; }
+.btn:disabled:not(.primary):not(.danger):hover { border-color: var(--border); background: var(--panel-2); color: var(--text); }
+.btn.small { padding: 4px 10px; font-size: 11px; }
 
-.hint { font-size: 14px; color: var(--muted); line-height: 1.5; }
+.hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
 .row { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 
-.mono { font-family: Consolas, monospace; font-size: 14px; }
+.mono { font-family: Consolas, monospace; font-size: 11px; }
 
 .hidden { display: none !important; }
+
+/* The mock's page head: title on the left, the page's primary action on
+   the right (Profiles: "+ New Profile"). */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.page-head h2 { margin-bottom: 0; }
 
 /* ---- Section cards (ticket 41) ----
    The one grouping unit: every tab's concerns live in these. Single-concern
@@ -133,8 +162,8 @@ h3 {
 /* One content width, centered when the window grows past it (same 680px
    cap as the tab pages). */
 .wizard > * { max-width: 680px; margin-left: auto; margin-right: auto; }
-.wizard h2 { font-size: 19px; margin-bottom: 8px; }
-.wizard-lede { font-size: 16px; color: var(--muted); line-height: 1.55; max-width: 640px; }
+.wizard h2 { font-size: 16px; margin-bottom: 8px; }
+.wizard-lede { font-size: 12px; color: var(--muted); line-height: 1.55; max-width: 640px; }
 
 .wizard-step {
   margin-top: 14px;
@@ -159,16 +188,16 @@ h3 {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
-  font-size: 16px;
+  font-size: 12px;
 }
 .pack-row .pack-name { min-width: 90px; font-weight: 600; }
-.pack-row .pack-tag { font-family: Consolas, monospace; font-size: 13px; color: var(--muted); }
-.pack-row .pack-instructions { font-size: 14px; color: var(--muted); }
+.pack-row .pack-tag { font-family: Consolas, monospace; font-size: 10px; color: var(--muted); }
+.pack-row .pack-instructions { font-size: 11px; color: var(--muted); }
 .pill {
-  font-size: 13px;
-  padding: 3px 9px;
+  font-size: 10px;
+  padding: 2px 8px;
   border-radius: 999px;
-  font-weight: 600;
+  font-weight: 500;
   border: 1px solid transparent;
 }
 .pill.ok { background: rgba(52, 211, 153, 0.16); color: var(--ok); border-color: rgba(52, 211, 153, 0.4); }
@@ -184,7 +213,7 @@ h3 {
   margin-top: 12px;
 }
 .engine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.engine-title strong { font-size: 16px; }
+.engine-title strong { font-size: 12px; }
 
 /* Collapsible engine cards (ticket 54): the Engines tab's six cards carry
    data-engine + an .engine-body wrapper — only the SELECTED Translation
@@ -197,7 +226,7 @@ h3 {
   content: "▾";
   margin-left: auto;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 11px;
 }
 .engine-card[data-engine].collapsed > .engine-title::after { transform: rotate(-90deg); }
 .engine-card[data-engine].collapsed > .engine-title { margin-bottom: 0; }
@@ -233,9 +262,10 @@ h3 {
 .tab {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
   padding: 7px 10px;
-  font-size: 15px;
+  font-size: 12px;
+  font-weight: 500;
   text-align: left;
   color: var(--muted);
   background: transparent;
@@ -262,24 +292,26 @@ h3 {
 .page.active { display: block; }
 
 /* ---- Form grid (ticket 41): one label+control pattern ----
-   180px label column, control column beside it, and a per-control hint on
-   its own line UNDER the control (grid-column 2) — the one hint placement
+   150px label column (the mock's ~third-of-card label side, compact
+   scale), control column beside it, and a per-control hint on its own
+   line UNDER the control (grid-column 2) — the one hint placement
    app-wide. minmax(0, 1fr) lets long content shrink instead of overflowing
    at the window minimum. */
 
-.form-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+.form-grid { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
 .form-row {
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   align-items: center;
   column-gap: 12px;
   row-gap: 3px;
 }
-.form-row > span:first-child { font-size: 16px; color: var(--text); }
+.form-row > span:first-child { font-size: 12px; color: var(--text); }
 .form-row > .hint { grid-column: 2; }
 
 /* ---- Unified controls (ticket 41): one surface, one height, one focus;
-   ticket 61 adds the elevated hover step ---- */
+   ticket 61 adds the elevated hover step; ticket 61 reopened compacts the
+   metrics to the mock's (12px text, py-1.5) ---- */
 
 .form-row input[type="text"],
 .form-row input[type="number"],
@@ -290,13 +322,14 @@ h3 {
 .glossary-add input[type="number"],
 .glossary-add select,
 .glossary-io select,
+.glossary-search input[type="text"],
 .prompt-field textarea {
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
   color: var(--text);
-  padding: 6px 9px;
-  font-size: 16px;
+  padding: 5px 10px;
+  font-size: 12px;
   font-family: inherit;
 }
 .form-row input[type="text"]:hover,
@@ -308,11 +341,13 @@ h3 {
 .glossary-add input[type="number"]:hover,
 .glossary-add select:hover,
 .glossary-io select:hover,
+.glossary-search input[type="text"]:hover,
 .prompt-field textarea:hover { border-color: var(--border-strong); }
 .form-row input[type="text"],
 .form-row input[type="number"],
 .form-row select {
   max-width: 320px;
+  min-width: 0;
 }
 .form-row input:disabled, .form-row select:disabled { opacity: 0.5; }
 .form-row input[type="text"]:focus,
@@ -322,23 +357,45 @@ h3 {
 .glossary-add input:focus,
 .glossary-add select:focus,
 .glossary-io select:focus,
+.glossary-search input:focus,
 .prompt-field textarea:focus { outline: none; border-color: var(--accent); }
 
+/* Ticket 61 reopened — the reported overflow: selects/inputs flexed or
+   gridded at narrow widths never shrink below their content min-width (a
+   select's widest option, an input's size attribute). min-width: 0 +
+   max-width: 100% let them ellipsize/wrap instead of pushing the card
+   past the frame. */
+.row select,
+.style-pair select,
+.glossary-add input,
+.glossary-add select {
+  min-width: 0;
+  max-width: 100%;
+}
+.glossary-add input[type="text"],
+.glossary-add input[type="password"] {
+  min-width: 120px;
+}
+
 /* Hotkey bindings (ticket 61): the redesign shows these as mono keycap
-   material — the fields stay editable text, but read in the mono face. */
+   material — the fields stay editable text, but read in the mono face,
+   with the mock's fixed-width centered box. */
 #tab-hotkeys .form-row input[type="text"] {
   font-family: Consolas, monospace;
   color: var(--accent);
+  text-align: center;
+  min-width: 140px;
+  max-width: 180px;
 }
 
 /* Toggles and sliders take the accent, checkboxes keep their own cell
    alignment (a stretched checkbox would drift mid-column). */
-input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; }
 input[type="range"] { accent-color: var(--accent); width: 160px; max-width: 100%; }
 .form-row input[type="checkbox"] { justify-self: start; }
 input[type="color"] {
-  width: 44px;
-  height: 28px;
+  width: 34px;
+  height: 24px;
   padding: 2px 3px;
   background: var(--panel-2);
   border: 1px solid var(--border);
@@ -353,13 +410,61 @@ input[type="color"] {
 .style-pair { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .style-pair.stack { flex-direction: column; align-items: stretch; }
 
+/* ---- Profile selector strip (ticket 61 reopened): the mock's ----
+   select + Delete in one bordered card; the select flexes with
+   min-width: 0 so long profile names ellipsize (this row was the
+   reported unstyled select and the reported overflow). */
+.profile-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 10px;
+  margin-top: 12px;
+}
+.profile-strip select {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 10px;
+  font-family: inherit;
+}
+.profile-strip select:hover { border-color: var(--border-strong); }
+.profile-strip select:focus { outline: none; border-color: var(--accent); }
+.profile-strip .chip { flex: none; }
+
+/* ---- Glossary filter (ticket 61 reopened): the mock's search box ----
+   icon nested left of the input, like the mock's relative wrapper. */
+.glossary-search {
+  position: relative;
+  margin-top: 10px;
+}
+.glossary-search .icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.glossary-search input { width: 100%; padding-left: 30px; }
+
 /* Exact Text Style preview (ticket 26): the pill element inside is styled
    by the overlay's shared renderer (pill-style.js) against the in-form
-   values, so the preview shows what the In-place Overlay will draw. The
-   stage backdrop is only a stand-in scene — real pills float over
-   arbitrary screen content. Ticket 41 keeps the scene gradient (it must
-   read as "game content", not as app chrome) and fits the frame to the
-   card system. */
+   values, so the preview shows what an In-place Overlay pill would draw
+   once Save lands it. The stage backdrop is only a stand-in scene — real
+   pills float over arbitrary screen content. Ticket 41 keeps the scene
+   gradient (it must read as "game content", not as app chrome) and fits
+   the frame to the card system. */
 
 /* (The bundled Noto Sans Thai faces are declared in theme.css since
    ticket 63 — both weights, shared by every normal window.) */
@@ -395,7 +500,7 @@ input[type="color"] {
 }
 
 #style-preview-note {
-  font-size: 13px;
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.65);
 }
 
@@ -446,7 +551,7 @@ input[type="color"] {
   justify-content: space-between;
   gap: 8px;
 }
-.prompt-label { font-size: 16px; color: var(--text); }
+.prompt-label { font-size: 12px; color: var(--text); }
 .prompt-field textarea {
   line-height: 1.45;
   width: 100%;
@@ -472,13 +577,13 @@ input[type="color"] {
 }
 .glossary-row input {
   flex: 1;
+  min-width: 0;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 6px;
   color: var(--text);
   padding: 4px 6px;
-  font-size: 16px;
-  min-width: 0;
+  font-size: 12px;
 }
 .glossary-row input:hover { border-color: var(--border); }
 .glossary-row input:focus { outline: none; border-color: var(--accent); background: var(--panel); }
@@ -491,7 +596,7 @@ input[type="color"] {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: 12px;
   padding: 2px 6px;
   border-radius: 6px;
   flex: none;
@@ -507,7 +612,7 @@ input[type="color"] {
   padding: 16px 12px;
   border: 1px dashed var(--border);
   border-radius: 8px;
-  font-size: 15px;
+  font-size: 12px;
   color: var(--muted);
   text-align: center;
   line-height: 1.5;
@@ -517,9 +622,9 @@ input[type="color"] {
 
 .about-grid {
   display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-columns: 150px minmax(0, 1fr);
   gap: 8px 12px;
-  font-size: 16px;
+  font-size: 12px;
   margin-bottom: 2px;
 }
 .about-grid > span:first-child { color: var(--muted); }
@@ -529,12 +634,12 @@ input[type="color"] {
 
 /* Update Check (ticket 28): the About tab's inline launch-check toggle,
    sitting beside the check button in a plain flex row (a .form-row's
-   180px label grid would be dead weight here). */
+   label grid would be dead weight here). */
 .inline-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 16px;
+  font-size: 12px;
   color: var(--text);
   cursor: pointer;
 }
@@ -554,7 +659,7 @@ input[type="color"] {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 10px 22px;
+  padding: 8px 22px;
   border-top: 1px solid rgba(245, 158, 11, 0.4);
   background: var(--panel);
   box-shadow: var(--shadow-footer);
@@ -565,7 +670,7 @@ input[type="color"] {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--accent);
 }
@@ -582,8 +687,8 @@ input[type="color"] {
 }
 .save-actions { display: inline-flex; align-items: center; gap: 8px; }
 .save-footer .btn.primary {
-  padding: 8px 24px;
-  font-size: 16px;
+  padding: 6px 18px;
+  font-size: 12px;
   border-radius: 8px;
   box-shadow: 0 2px 12px rgba(245, 158, 11, 0.25);
 }
@@ -592,17 +697,17 @@ input[type="color"] {
 
 .toast {
   position: fixed;
-  bottom: 64px; /* clears the sticky footer when it is showing */
+  bottom: 56px; /* clears the sticky footer when it is showing */
   left: 50%;
   transform: translateX(-50%);
   background: var(--panel-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   color: var(--text);
-  padding: 8px 14px;
-  border-radius: 8px;
-  font-size: 15px;
+  padding: 7px 14px;
+  border-radius: 12px;
+  font-size: 12px;
   max-width: 80%;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
   z-index: 2;
 }
 .toast.error { border-color: var(--err); color: var(--err); }

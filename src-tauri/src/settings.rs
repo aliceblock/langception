@@ -1162,7 +1162,10 @@ pub(crate) fn with_profile_mut<T>(
     })
 }
 
-fn parse_language(code: &str) -> Result<SourceLanguage, String> {
+// pub(crate): the Results window's set_source_language (ticket 61, the
+// titlebar language dropdown) shares the General tab's accepted spellings
+// and error wording through this one match.
+pub(crate) fn parse_language(code: &str) -> Result<SourceLanguage, String> {
     match code {
         "en" => Ok(SourceLanguage::En),
         "ja" => Ok(SourceLanguage::Ja),
