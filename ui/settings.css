@@ -179,6 +179,27 @@ h3 {
 .engine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
 .engine-title strong { font-size: 12.5px; }
 
+/* Collapsible engine cards (ticket 54): the Engines tab's six cards carry
+   data-engine + an .engine-body wrapper — only the SELECTED Translation
+   engine's card is expanded, the rest collapse to their title bar until
+   clicked (settings.js owns the class). The wizard's cards have neither
+   attribute nor wrapper, so they never collapse. */
+.engine-card[data-engine] > .engine-title { cursor: pointer; user-select: none; }
+.engine-card[data-engine]:hover { border-color: var(--border-strong); }
+.engine-card[data-engine] > .engine-title::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.engine-card[data-engine].collapsed > .engine-title::after { transform: rotate(-90deg); }
+.engine-card[data-engine].collapsed > .engine-title { margin-bottom: 0; }
+.engine-card[data-engine].collapsed > .engine-body { display: none; }
+.engine-card[data-engine] > .engine-title:focus-visible {
+  outline: 1px dashed var(--accent);
+  outline-offset: 2px;
+}
+
 /* ---- Tabs ---- */
 
 .tabs {

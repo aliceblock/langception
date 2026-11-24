@@ -227,6 +227,8 @@ async function loadEngines() {
     enginesOcr.value = savedEngines.ocrEngine || "paddle";
     enginesReading.value = savedEngines.reading || "ocr";
     enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
+    // Ticket 54: the saved engine's card is the expanded one.
+    expandSelectedEngineCard();
     enginesAzureKey.value = savedEngines.azure.key;
     enginesAzureRegion.value = savedEngines.azure.region;
     enginesDeeplKey.value = savedEngines.deepl.key;
@@ -599,6 +601,47 @@ for (const [field, buttonId] of [
 enginesReading.addEventListener("change", () => {
   enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
 });
+
+// Engine cards (ticket 54): the card of the engine picked in the Translation
+// engine select is the expanded one; the rest stay reachable but collapse to
+// their title bars. A title-bar click toggles any card, and switching the
+// selection (or a rejected-save revert) moves the expansion to the newly
+// selected card. Collapsed ≠ untracked: the footer's dirty tracker reads the
+// fields themselves, so an edit made while a card was open still counts as
+// unsaved changes after it collapses.
+const engineCards = document.querySelectorAll(".engine-card[data-engine]");
+
+function setCardExpanded(card, expanded) {
+  card.classList.toggle("collapsed", !expanded);
+  card.querySelector(".engine-title").setAttribute("aria-expanded", String(expanded));
+}
+
+function expandSelectedEngineCard() {
+  for (const card of engineCards) {
+    setCardExpanded(card, card.dataset.engine === enginesDefault.value);
+  }
+}
+
+for (const card of engineCards) {
+  const title = card.querySelector(".engine-title");
+  title.setAttribute("role", "button");
+  title.setAttribute("tabindex", "0");
+  setCardExpanded(card, false);
+  title.addEventListener("click", () => {
+    setCardExpanded(card, card.classList.contains("collapsed"));
+  });
+  title.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      title.click();
+    }
+  });
+}
+
+enginesDefault.addEventListener("change", expandSelectedEngineCard);
+// The select's pre-load markup value (Google) seeds the initial expansion;
+// loadEngines re-syncs it to the saved value before the tab is used.
+expandSelectedEngineCard();
 
 // LM Studio server check (ticket 10): one round-trip answers reachability
 // AND fills the model dropdown from /models. Runs against the URL as typed
@@ -1771,11 +1814,12 @@ function restoreFields(fields) {
 // failed set_engines paths (per-tab Save, footer Save-all, prompt reset —
 // the wizard's upgrade deliberately does not revert: its payload is built
 // from saved values and its fields are its own): the fused-reading
-// warning follows the restored select, the footer follows the restored
-// fields.
+// warning follows the restored select, the card expansion follows the
+// restored engine, the footer follows the restored fields.
 function revertEnginesFields() {
   restoreFields(TRACKED_ENGINES);
   enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
+  expandSelectedEngineCard();
   updateSaveFooter();
 }
 

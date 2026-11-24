@@ -135,10 +135,6 @@
             <span>Translation Context</span>
             <input id="general-context" type="number" min="0" max="20" step="1" />
           </label>
-          <label class="form-row" title="Translates without speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns are removed from the output">
-            <span>Genderless Mode</span>
-            <input id="general-genderless" type="checkbox" />
-          </label>
           <label class="form-row">
             <span>Start with Windows</span>
             <input id="general-autostart" type="checkbox" />
@@ -170,7 +166,7 @@
         <!-- Ticket 41: three concern groups — the engine choice, the
              per-engine cards (their own cards), and prompts + OCR packs. -->
         <div class="settings-section">
-        <h3>Translate Engine</h3>
+        <h3>Translation</h3>
         <p class="hint">
           The engine that translates every Text Block; per-app Profiles can
           override it (Settings → Profiles). Cloud engines send screen text
@@ -178,14 +174,10 @@
         </p>
         <div class="form-grid">
           <label class="form-row">
-            <span>Default engine</span>
-            <select id="engines-default">
-              <option value="google">Google Translate (unofficial) — free, no key</option>
-              <option value="azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
-              <option value="deepl">DeepL — free tier, 500k chars/month</option>
-              <option value="openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
-              <option value="lmstudio">LM Studio — local & offline, no key</option>
-              <option value="gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
+            <span>Processing</span>
+            <select id="engines-reading">
+              <option value="ocr">Classic — OCR engine reads, then the engine translates (default)</option>
+              <option value="fused">Vision model — reads and translates in one call</option>
             </select>
           </label>
           <label class="form-row">
@@ -196,10 +188,14 @@
             </select>
           </label>
           <label class="form-row">
-            <span>Screen reading</span>
-            <select id="engines-reading">
-              <option value="ocr">OCR engine + engine translation (default)</option>
-              <option value="fused">Vision model — read & translate in one call</option>
+            <span>Translation engine</span>
+            <select id="engines-default">
+              <option value="google">Google Translate (unofficial) — free, no key</option>
+              <option value="azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
+              <option value="deepl">DeepL — free tier, 500k chars/month</option>
+              <option value="openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
+              <option value="lmstudio">LM Studio — local & offline, no key</option>
+              <option value="gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
             </select>
           </label>
         </div>
@@ -218,110 +214,122 @@
           for stylized fonts the OCR engines cannot read.
         </p>
         </div>
-        <div class="engine-card">
+        <div class="engine-card" data-engine="google">
           <div class="engine-title">
             <strong>Google Translate (unofficial)</strong>
             <span class="chip privacy" title="Screen text is sent to Google's translation endpoint">☁ cloud</span>
           </div>
-          <p class="hint">
-            Free, no key, no setup — the keyless default. Unofficial
-            endpoint, so it can rate-limit or break without notice.
-          </p>
+          <div class="engine-body">
+            <p class="hint">
+              Free, no key, no setup — the keyless default. Unofficial
+              endpoint, so it can rate-limit or break without notice.
+            </p>
+          </div>
         </div>
-        <div class="engine-card">
+        <div class="engine-card" data-engine="azure">
           <div class="engine-title">
             <strong>Azure AI Translator</strong>
             <span class="chip privacy" title="Screen text is sent to Azure's translation service">☁ cloud</span>
           </div>
-          <p class="hint">
-            Permanently free on the F0 tier (2M chars/month). Create a
-            Translator resource with the link (tier "Free F0", region
-            "Global") and paste its key — the region must match the
-            resource; empty means global.
-          </p>
-          <div class="row glossary-add">
-            <input id="engines-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
-            <input id="engines-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
-          </div>
-          <div class="row">
-            <button id="engines-azure-link" class="btn small">Create a free key…</button>
+          <div class="engine-body">
+            <p class="hint">
+              Permanently free on the F0 tier (2M chars/month). Create a
+              Translator resource with the link (tier "Free F0", region
+              "Global") and paste its key — the region must match the
+              resource; empty means global.
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
+              <input id="engines-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
+            </div>
+            <div class="row">
+              <button id="engines-azure-link" class="btn small">Create a free key…</button>
+            </div>
           </div>
         </div>
-        <div class="engine-card">
+        <div class="engine-card" data-engine="deepl">
           <div class="engine-title">
             <strong>DeepL</strong>
             <span class="chip privacy" title="Screen text is sent to DeepL's translation service">☁ cloud</span>
           </div>
-          <p class="hint">
-            The DeepL API free plan (500k chars/month, Thai supported). Sign
-            up with the link and paste the key — free keys end with ":fx",
-            which picks the right API host.
-          </p>
-          <div class="row glossary-add">
-            <input id="engines-deepl-key" type="password" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
-          </div>
-          <div class="row">
-            <button id="engines-deepl-link" class="btn small">Sign up for a free key…</button>
+          <div class="engine-body">
+            <p class="hint">
+              The DeepL API free plan (500k chars/month, Thai supported). Sign
+              up with the link and paste the key — free keys end with ":fx",
+              which picks the right API host.
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-deepl-key" type="password" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="row">
+              <button id="engines-deepl-link" class="btn small">Sign up for a free key…</button>
+            </div>
           </div>
         </div>
-        <div class="engine-card">
+        <div class="engine-card" data-engine="openai">
           <div class="engine-title">
             <strong>OpenAI-compatible</strong>
             <span class="chip privacy" title="Screen text is sent to whatever server the base URL points at">☁ cloud (unless your URL is local)</span>
           </div>
-          <p class="hint">
-            Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
-            set the base URL (must include <code>/v1</code>), paste its key,
-            and type the model name (e.g. <code>gpt-4o-mini</code>).
-          </p>
-          <div class="row glossary-add">
-            <input id="engines-openai-base-url" type="text" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
-            <input id="engines-openai-key" type="password" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
-          </div>
-          <div class="row glossary-add">
-            <input id="engines-openai-model" type="text" placeholder="Model name (e.g. gpt-4o-mini)" spellcheck="false" />
-            <input id="engines-openai-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+          <div class="engine-body">
+            <p class="hint">
+              Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
+              set the base URL (must include <code>/v1</code>), paste its key,
+              and type the model name (e.g. <code>gpt-4o-mini</code>).
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-openai-base-url" type="text" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
+              <input id="engines-openai-key" type="password" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="row glossary-add">
+              <input id="engines-openai-model" type="text" placeholder="Model name (e.g. gpt-4o-mini)" spellcheck="false" />
+              <input id="engines-openai-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+            </div>
           </div>
         </div>
-        <div class="engine-card">
+        <div class="engine-card" data-engine="lmstudio">
           <div class="engine-title">
             <strong>LM Studio</strong>
             <span class="chip ok" title="Runs on this machine — screen text never leaves it">Local · offline</span>
           </div>
-          <p class="hint">
-            Local and offline — screen text never leaves this machine.
-            Start LM Studio's server (Developer → Start server, default
-            port 1234), load a model, then Check server here to pick it.
-          </p>
-          <div class="row glossary-add">
-            <input id="engines-lmstudio-base-url" type="text" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
-            <button id="engines-lmstudio-check" class="btn small">Check server</button>
+          <div class="engine-body">
+            <p class="hint">
+              Local and offline — screen text never leaves this machine.
+              Start LM Studio's server (Developer → Start server, default
+              port 1234), load a model, then Check server here to pick it.
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-lmstudio-base-url" type="text" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
+              <button id="engines-lmstudio-check" class="btn small">Check server</button>
+            </div>
+            <div class="row glossary-add">
+              <select id="engines-lmstudio-model" title="Models served by the LM Studio server">
+                <option value="">— check the server to list models —</option>
+              </select>
+              <input id="engines-lmstudio-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+            </div>
+            <span id="engines-lmstudio-note" class="hint"></span>
           </div>
-          <div class="row glossary-add">
-            <select id="engines-lmstudio-model" title="Models served by the LM Studio server">
-              <option value="">— check the server to list models —</option>
-            </select>
-            <input id="engines-lmstudio-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
-          </div>
-          <span id="engines-lmstudio-note" class="hint"></span>
         </div>
-        <div class="engine-card">
+        <div class="engine-card" data-engine="gemini">
           <div class="engine-title">
             <strong>Gemini</strong>
             <span class="chip privacy" title="Screen text is sent to Google's Generative Language API">☁ cloud</span>
           </div>
-          <p class="hint">
-            Google's LLM API: create a free API key at AI Studio with the
-            link, paste it, and type a model id (e.g.
-            <code>gemini-2.0-flash</code>).
-          </p>
-          <div class="row glossary-add">
-            <input id="engines-gemini-key" type="password" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
-            <button id="engines-gemini-link" class="btn small">Create a free key…</button>
-          </div>
-          <div class="row glossary-add">
-            <input id="engines-gemini-model" type="text" placeholder="Model name (e.g. gemini-2.0-flash)" spellcheck="false" />
-            <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+          <div class="engine-body">
+            <p class="hint">
+              Google's LLM API: create a free API key at AI Studio with the
+              link, paste it, and type a model id (e.g.
+              <code>gemini-2.0-flash</code>).
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-gemini-key" type="password" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
+              <button id="engines-gemini-link" class="btn small">Create a free key…</button>
+            </div>
+            <div class="row glossary-add">
+              <input id="engines-gemini-model" type="text" placeholder="Model name (e.g. gemini-2.0-flash)" spellcheck="false" />
+              <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+            </div>
           </div>
         </div>
         <div class="settings-section">
@@ -333,6 +341,16 @@
           <code>{target}</code> are replaced with the language names —
           Glossary terms and Genderless Mode are added automatically.
         </p>
+        <!-- Ticket 54: Genderless Mode moved here from General — it shapes
+             the same translation output these prompts produce. Same id and
+             save command as before (set_general); only the row's home moved. -->
+        <div class="form-grid">
+          <label class="form-row" title="Translates without speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns are removed from the output">
+            <span>Genderless Mode</span>
+            <input id="general-genderless" type="checkbox" />
+            <span class="hint">Applies when translation (re)starts.</span>
+          </label>
+        </div>
         <div class="form-grid">
           <label class="form-row">
             <span>System Prompt Preset</span>
@@ -378,10 +396,10 @@
             </button>
           </div>
           <textarea id="engines-prompt-screen-reading" rows="5" spellcheck="false" placeholder="Leave empty to use the built-in screen-reading instruction."></textarea>
-          <span class="hint">Used only when Screen reading above is “Vision model” (one fused call reads and translates every block).</span>
+          <span class="hint">Used only when Processing above is “Vision model” (one fused call reads and translates every block).</span>
         </div>
         <div class="row">
-          <button id="engines-test" class="btn small">Test default engine</button>
+          <button id="engines-test" class="btn small">Test translation engine</button>
           <span id="engines-note" class="hint"></span>
         </div>
         </div>
@@ -493,7 +511,7 @@
             <label class="form-row">
               <span>Genderless Mode</span>
               <select id="profile-genderless">
-                <option value="inherit">Inherit global (Settings → General)</option>
+                <option value="inherit">Inherit global (Settings → Engines)</option>
                 <option value="on">Force on</option>
                 <option value="off">Force off</option>
               </select>
