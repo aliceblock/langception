@@ -2,288 +2,170 @@
 
 [![CI](https://github.com/aliceblock/langception/actions/workflows/ci.yml/badge.svg)](https://github.com/aliceblock/langception/actions/workflows/ci.yml)
 
-Langception reads the text on your screen and shows it in Thai, in place over
-the original or in a separate always-on-top window. Point it at a game or an
-app written in **English, Japanese, Chinese, or Korean** and it keeps the
-translation current as the text changes. Windows first (10/11, 64-bit); the
-translation core is platform-independent so macOS/Linux ports can come later.
+Langception อ่านข้อความบนหน้าจอของคุณแล้วแปลเป็นภาษาไทย โดยแสดงผลทับลงบนตำแหน่งเดิมหรือแสดงในหน้าต่างแยกแบบ Always-on-top เพียงเปิดใช้งานกับเกมหรือแอปที่เป็นภาษา **English, Japanese, Chinese หรือ Korean** ตัวโปรแกรมจะอัปเดตคำแปลให้อัตโนมัติทันทีที่ข้อความเปลี่ยนไป รองรับ Windows เป็นหลัก (Windows 10/11 แบบ 64-bit) ส่วนแกนหลักของการแปลถูกออกแบบให้ไม่ผูกติดกับแพลตฟอร์ม จึงสามารถพอร์ตไปยัง macOS/Linux ได้ในอนาคต
 
-Built for Thai players and users: machine translation that defaults to zero
-configuration, that never assumes the speaker's gender, and where character
-names can be pinned so `Vertin` always renders as `เวอร์ติน`.
+สร้างขึ้นเพื่อผู้เล่นและผู้ใช้งานชาวไทยโดยเฉพาะ: ระบบแปลภาษาที่พร้อมใช้งานทันทีแบบ Zero Configuration โดยไม่เดาเพศของผู้พูด และสามารถปักหมุดชื่อตัวละครได้ เช่น ตั้งค่าให้ `Vertin` แปลเป็น `เวอร์ติน` เสมอ
 
 ## Features
 
-- **Capture Targets** — draw Capture Zones over just the text you care about
-  (Alt+Shift+Z), translate an entire monitor (full-screen mode, with per-position
-  Excluded Blocks), or scope everything to one app with per-app **Profiles**
-  that activate when their app comes to the foreground.
-- **Two display surfaces** — the In-place Overlay (translated text drawn over
-  the original on a transparent, click-through window, one per monitor) and
-  the Results Window (always-on-top list with click-to-copy and an error
-  banner).
-- **Auto-translate loop** — captures continuously, hashes each Text Block
-  (dHash), and re-translates only what actually changed; a stability window
-  debounces animations. Pause with Alt+Shift+P.
-- **Zero-config default engine** — works on first launch with no accounts and
-  no keys (unofficial Google endpoint; see the engine table for the trade-off).
-- **Upgradeable engines** — Azure AI Translator, DeepL, Gemini API, any
-  OpenAI-compatible endpoint, and LM Studio for fully local, private
-  translation.
-- **Two reading modes** — classic (Windows OCR feeds per-block translation)
-  or **fused** (one vision-LLM call reads every Text Block and translates it).
-- **Glossary** — pin exact Thai translations for terms; whole-block matches
-  short-circuit the engine entirely, in-sentence terms are injected into LLM
-  prompts. JSON import/export.
-- **Genderless Mode** — strips gendered Thai politeness particles and
-  pronouns (ครับ/ค่ะ, ผม/ฉัน) from output, via prompt instruction for LLM
-  engines and a rule-based scrubber for the rest. Global toggle, per-Profile
-  override.
-- **Adjust Mode** (Alt+Shift+A) — zones and overlays become draggable/resizable
-  (click-through off) so you can fine-tune positions live; full-screen blocks
-  can be marked as Excluded Blocks by clicking them.
-- **One-shot Capture** (Alt+Shift+Q) — translate an arbitrary screen area once,
-  no zone setup.
-- **Text style** — font, size, color, outline, and a semi-transparent
-  background pill, with auto-shrink so long Thai never covers the screen.
-  Noto Sans Thai ships with the app, so Thai always renders.
-- **Tray-first shell** — start/stop, modes, one-shot, and Settings live in the
-  tray menu; global hotkeys are rebindable (Settings → Hotkeys).
-- **Visible privacy state** — whenever the active engine is sending screen
-  text to a cloud, the Results Window and the tray tooltip say so.
+- **Capture Targets** — ลากเส้นกำหนด Capture Zones เฉพาะจุดที่ต้องการแปล (`Alt+Shift+Z`), แปลทั้งหน้าจอ (โหมด Full-screen พร้อมฟีเจอร์ Excluded Blocks สำหรับยกเว้นบางตำแหน่ง) หรือตั้งค่าเฉพาะแอปด้วย **Profiles** ที่จะทำงานอัตโนมัติเมื่อเปิดหน้าต่างแอปนั้นขึ้นมา
+- **Two display surfaces** — เลือกแสดงผลได้ 2 แบบ คือ **In-place Overlay** (แสดงคำแปลทับลงบนตำแหน่งเดิมผ่านหน้าต่างโปร่งใสที่คลิกทะลุได้ แยกตามแต่ละ Monitor) และ **Results Window** (หน้าต่างรายการคำแปลแบบ Always-on-top ที่คลิกเพื่อ Copy ได้ทันที พร้อมแถบแจ้งเตือน Error)
+- **Auto-translate loop** — จับภาพหน้าจออย่างต่อเนื่อง คำนวณ Hash ของแต่ละ Text Block (`dHash`) และแปลใหม่เฉพาะส่วนที่มีการเปลี่ยนแปลงจริง พร้อมระบบหน่วงเวลา (Stability window) เพื่อป้องกันการแปลซ้ำระหว่างอนิเมชัน กดหยุดชั่วคราวได้ด้วย `Alt+Shift+P`
+- **Zero-config default engine** — ใช้งานได้ทันทีตั้งแต่เปิดครั้งแรกโดยไม่ต้องสมัครบัญชีหรือใส่ API Key (ใช้ Endpoint อย่างไม่เป็นทางการของ Google; ดูรายละเอียดข้อจำกัดได้ในตาราง Engine)
+- **Upgradeable engines** — รองรับ Azure AI Translator, DeepL, Gemini API, Endpoint ใดๆ ที่รองรับมาตรฐาน OpenAI-compatible และ LM Studio สำหรับการแปลแบบ Local ที่เป็นส่วนตัว 100%
+- **Two reading modes** — โหมด **Classic** (ใช้ Windows OCR อ่านข้อความแล้วส่งแปลทีละบล็อก) หรือโหมด **Fused** (ใช้ Vision-LLM อ่านและแปลทุก Text Block ในเฟรมเดียวจบ)
+- **Glossary** — ปักหมุดคำแปลภาษาไทยที่ต้องการแบบเป๊ะๆ หากตรงกับทั้งบล็อกระบบจะดึงคำแปลมาใช้ทันทีโดยไม่ผ่าน Engine แต่หากเป็นคำในประโยคจะถูกแทรกเข้าไปใน Prompt ของ LLM รองรับการ Import/Export เป็นไฟล์ JSON
+- **Genderless Mode** — ตัดคำลงท้ายและสรรพนามที่ระบุเพศในภาษาไทย (เช่น ครับ/ค่ะ, ผม/ฉัน) ออกจากผลลัพธ์ โดยสั่งผ่าน Prompt สำหรับ LLM และใช้ระบบคัดกรองตามกฎ (Rule-based scrubber) สำหรับ Engine อื่นๆ สามารถเปิด/ปิดเป็นค่าหลัก หรือตั้งค่าแยกตาม Profile ได้
+- **Adjust Mode** (`Alt+Shift+A`) — เปลี่ยน Zone และ Overlay ให้ลากย้ายและปรับขนาดได้ (ปิดโหมดคลิกทะลุชั่วคราว) เพื่อจัดตำแหน่งแบบเรียลไทม์ รวมถึงคลิกที่บล็อกในโหมด Full-screen เพื่อตั้งเป็น Excluded Blocks ได้
+- **One-shot Capture** (`Alt+Shift+Q`) — ลากครอบพื้นที่ใดก็ได้บนหน้าจอเพื่อแปลแบบครั้งเดียวโดยไม่ต้องสร้าง Zone
+- **Text style** — ปรับแต่ง Font, ขนาด, สี, เส้นขอบ (Outline) และพื้นหลังแบบกึ่งโปร่งใส พร้อมระบบย่อขนาดอัตโนมัติเพื่อไม่ให้คำแปลภาษาไทยที่ยาวเกินไปบังหน้าจอ ตัวโปรแกรมมาพร้อมกับฟอนต์ Noto Sans Thai จึงมั่นใจได้ว่าแสดงผลภาษาไทยได้สมบูรณ์เสมอ
+- **Tray-first shell** — สั่งเริ่ม/หยุด, เปลี่ยนโหมด, ใช้งาน One-shot และเปิด Settings ได้จากเมนูใน System Tray สามารถตั้งค่า Global Hotkeys ใหม่ได้ตามต้องการ (Settings → Hotkeys)
+- **Visible privacy state** — เมื่อใดก็ตามที่ Engine ที่ใช้งานอยู่มีการส่งข้อความบนหน้าจอไปยัง Cloud หน้าต่าง Results Window และ Tooltip ของไอคอนใน Tray จะแสดงสถานะแจ้งเตือนให้ทราบทันที
 
 ## Requirements
 
-- Windows 10 or 11, 64-bit.
-- The **WebView2 Runtime** — preinstalled on Windows 11 and on up-to-date
-  Windows 10. The installer sets it up automatically if it is missing; the
-  portable build needs it present (see below).
-- An **OCR language pack** for your source language — the default OCR
-  engine (Windows OCR) needs one (see next section). If you cannot install
-  packs, the bundled PP-OCRv6 engine tiers work without any.
-- Internet access for every engine except LM Studio.
+- Windows 10 หรือ 11 แบบ 64-bit
+- **WebView2 Runtime** — ติดตั้งมาให้แล้วบน Windows 11 และ Windows 10 ที่อัปเดตล่าสุด ตัว Installer จะติดตั้งให้โดยอัตโนมัติหากยังไม่มี ส่วนเวอร์ชัน Portable จำเป็นต้องมีติดตั้งอยู่ในเครื่องก่อน (ดูรายละเอียดด้านล่าง)
+- **OCR language pack** สำหรับภาษาต้นทาง — OCR Engine เริ่มต้น (Windows OCR) จำเป็นต้องใช้แพ็กภาษาเหล่านี้ (ดูหัวข้อถัดไป) หากไม่สามารถติดตั้งได้ สามารถใช้ PP-OCRv6 ที่รวมมาให้ในโปรแกรมแทนได้โดยไม่ต้องลงแพ็กภาษาเพิ่ม
+- การเชื่อมต่ออินเทอร์เน็ต (จำเป็นสำหรับทุก Engine ยกเว้น LM Studio)
 
 ## Install
 
-Grab both artifacts from the
-[Releases page](../../releases) — every release ships:
+ดาวน์โหลดไฟล์ติดตั้งได้จากหน้า [Releases](../../releases) โดยในแต่ละเวอร์ชันจะมีไฟล์ให้เลือก 2 แบบ:
 
-| Artifact | What it is |
+| Artifact | รายละเอียด |
 | --- | --- |
-| `Langception_<version>_x64-setup.exe` | NSIS installer. Installs for the current user (no admin), adds Start-menu shortcuts, and **downloads the WebView2 Runtime automatically if it is missing**. |
-| `Langception_<version>_x64-portable.zip` | Portable zip: one `Langception.exe`, no installer, no registry entries. WebView2 must already be present (Windows 11 has it; otherwise install the [Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) once). A `README.txt` inside the zip repeats this. |
+| `Langception_<version>_x64-setup.exe` | ตัวติดตั้งแบบ NSIS ติดตั้งเฉพาะสำหรับ User ปัจจุบัน (ไม่ต้องใช้สิทธิ์ Admin) สร้าง Shortcut ใน Start Menu และ **ดาวน์โหลด WebView2 Runtime ให้อัตโนมัติหากยังไม่มีในเครื่อง** |
+| `Langception_<version>_x64-portable.zip` | ไฟล์ Zip แบบพกพา: มีไฟล์ `Langception.exe` ไฟล์เดียว ไม่ต้องติดตั้งและไม่มีการเขียน Registry ต้องมี WebView2 ติดตั้งอยู่ในเครื่องแล้ว (Windows 11 มีมาให้แล้ว หรือติดตั้ง [Evergreen Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) เพียงครั้งเดียว) มีรายละเอียดระบุซ้ำไว้ใน `README.txt` ภายในไฟล์ Zip |
 
-The binaries are not code-signed, so Windows SmartScreen may show
-"Windows protected your PC" on first run — choose **More info → Run
-anyway**. This is expected for unsigned open-source apps.
+เนื่องจากไฟล์โปรแกรมไม่ได้ทำ Code-signed ระบบ Windows SmartScreen อาจแสดงหน้าต่าง "Windows protected your PC" เมื่อเปิดใช้งานครั้งแรก ให้กด **More info → Run anyway** ซึ่งเป็นเรื่องปกติสำหรับแอป Open-source ที่ไม่ได้ลงนามใบรับรอง
 
 ## First run
 
-On the very first launch the **setup wizard** opens automatically (it is a
-page inside the Settings window; you can skip it at any time — Langception
-works with zero configuration). It:
+เมื่อเปิดโปรแกรมเป็นครั้งแรก **Setup Wizard** จะเปิดขึ้นมาโดยอัตโนมัติ (เป็นหน้าหนึ่งภายในหน้าต่าง Settings ซึ่งคุณสามารถกดข้ามได้ทุกเมื่อ เพราะ Langception ทำงานได้ทันทีโดยไม่ต้องตั้งค่า) โดย Wizard จะช่วยคุณ:
 
-1. **Checks your OCR language packs** — the default OCR engine is
-   Windows OCR, which needs a pack for your source language. The wizard
-   shows exactly which of the four source languages are readable, with a
-   button that jumps to Windows' language settings if something is missing
-   (and points at the bundled PP-OCRv6 tiers if you cannot install packs).
-2. Walks through **choosing an engine** — the default needs nothing; keyed
-   engines have links to their signup pages.
-3. Shows the **hotkeys** so the app is usable without touching a window.
+1. **ตรวจสอบ OCR language packs** — OCR Engine เริ่มต้นคือ Windows OCR ซึ่งต้องมีแพ็กภาษาของภาษาต้นทาง ตัว Wizard จะแสดงให้เห็นชัดเจนว่าใน 4 ภาษาต้นทาง ภาษาใดบ้างที่พร้อมอ่านได้ พร้อมปุ่มลัดไปยังหน้าตั้งค่าภาษาของ Windows หากมีภาษาที่ขาดไป (และแนะนำระดับต่างๆ ของ PP-OCRv6 ที่ติดมากับโปรแกรม หากคุณไม่สามารถติดตั้งแพ็กภาษาได้)
+2. แนะนำการ **เลือก Engine** — ค่าเริ่มต้นใช้งานได้ทันที ส่วน Engine ที่ต้องใช้ API Key จะมีลิงก์ไปยังหน้าสมัครใช้งานให้
+3. แสดงรายการ **Hotkeys** เพื่อให้คุณควบคุมโปรแกรมได้ทันทีโดยไม่ต้องคลิกหน้าต่าง
 
-The wizard can be re-run any time from **Settings → About**. After that:
+สามารถเรียกเปิด Setup Wizard ใหม่ได้ทุกเมื่อที่ **Settings → About** หลังจากตั้งค่าเสร็จแล้ว:
 
-1. Start translation (tray menu → *Start Translation*, or Alt+Shift+T).
-2. Draw a zone over some text (Alt+Shift+Z), or switch to full-screen mode in
-   the Results Window or tray menu.
-3. Translations appear — in place over the original, and in the Results
-   Window.
+1. เริ่มการแปล (คลิกขวาที่ไอคอนใน Tray → *Start Translation* หรือกด `Alt+Shift+T`)
+2. ลากกรอบ Zone คลุมข้อความที่ต้องการ (`Alt+Shift+Z`) หรือสลับเป็นโหมด Full-screen ในหน้าต่าง Results Window หรือเมนูใน Tray
+3. คำแปลจะปรากฏขึ้นทันที ทั้งแบบทับบนตำแหน่งเดิมและในหน้าต่าง Results Window
 
-Everything the app keeps lives in one config file:
-`%APPDATA%\langception\config.toml` (tray menu → *Open Config Folder*).
-API keys, glossaries, and profiles are stored only there, on your machine.
+ข้อมูลการตั้งค่าทั้งหมดของโปรแกรมจะถูกเก็บไว้ในไฟล์เดียวที่:
+`%APPDATA%\langception\config.toml` (เข้าถึงได้จากเมนูใน Tray → *Open Config Folder*)
+ทั้ง API Keys, Glossaries และ Profiles จะถูกเก็บไว้ในไฟล์นี้บนเครื่องของคุณเท่านั้น
 
 ## OCR language packs
 
-The default OCR engine is **Windows OCR** (Windows.Media.Ocr) — lighter and
-faster than bundling models, but it needs a **language pack** for your
-source language — English, Japanese, Chinese, or Korean. Without the right
-pack you get no text at all, so this is the first thing to check:
+OCR Engine เริ่มต้นคือ **Windows OCR** (`Windows.Media.Ocr`) ซึ่งเบาและรวดเร็วกว่าการรวมโมเดลไว้ในตัว แต่จำเป็นต้องมี **Language pack** ของภาษาต้นทาง (English, Japanese, Chinese หรือ Korean) หากไม่มีแพ็กภาษาที่ตรงกัน โปรแกรมจะอ่านข้อความไม่ได้เลย ดังนั้นควรตรวจสอบสิ่งนี้เป็นอันดับแรก:
 
-1. In Langception: **Settings → Engines** lists the installed packs and which
-   source languages are covered.
-2. To install a missing pack, use the wizard's jump button (or open Windows
-   **Settings → Time & Language → Language & region** yourself), click
-   **Add a language**, pick the language, and install it. Windows installs
-   text recognition as part of the language's features.
-3. Re-check Settings → Engines (the list is probed fresh on each visit); if
-   the new pack still doesn't show, sign out of Windows and back in, or
-   restart, so the language feature registers system-wide.
+1. ใน Langception: ไปที่ **Settings → Engines** เพื่อดูรายชื่อแพ็กภาษาที่ติดตั้งไว้และภาษาต้นทางที่รองรับ
+2. หากต้องการติดตั้งแพ็กภาษาที่ขาดไป ให้กดปุ่มลัดใน Wizard (หรือเปิด Windows **Settings → Time & Language → Language & region** ด้วยตัวเอง) คลิก **Add a language** เลือกภาษาที่ต้องการแล้วกดติดตั้ง Windows จะติดตั้งฟีเจอร์การรู้จำข้อความ (Text recognition) มาพร้อมกับภาษานั้น
+3. กลับมาตรวจสอบที่ Settings → Engines อีกครั้ง (ระบบจะสแกนใหม่ทุกครั้งที่เปิดหน้านี้) หากยังไม่แสดงแพ็กภาษาที่เพิ่งติดตั้ง ให้ลอง Sign out แล้ว Sign in กลับเข้า Windows ใหม่ หรือ Restart เครื่อง เพื่อให้ระบบลงทะเบียนฟีเจอร์ภาษาอย่างสมบูรณ์
 
-> For Chinese, both Simplified and Traditional recognizers are supported;
-> when a Profile or config asks for generic `zh`, the Simplified pack wins.
+> สำหรับภาษาจีน รองรับทั้งแบบตัวย่อ (Simplified) และตัวเต็ม (Traditional) หาก Profile หรือไฟล์ Config ระบุเป็นรหัสทั่วไป `zh` ระบบจะเลือกใช้แพ็กภาษาจีนตัวย่อก่อน
 
-**No pack, or prefer offline reads?** Every release also bundles the
-**PP-OCRv6** engine in three tiers: select **PP-OCRv6 tiny**, **PP-OCRv6
-small**, or **PP-OCRv6 medium** in **Settings → Engines → OCR engine** and
-reads work with no Windows language packs at all, fully offline — tiny is
-the fastest, medium the most accurate. They are heavier per pass than
-Windows OCR (the bundled models total ~190 MB), and if the engine cannot
-run a pass it automatically falls back to Windows OCR. One quirk: tiny's
-vocabulary has no kana, so a Japanese source runs the small model set
-instead (the app says so in its log); Korean reads through a dedicated
-Korean model at every tier.
+**ไม่มีแพ็กภาษา หรือต้องการใช้งานแบบ Offline เต็มรูปแบบ?** ในทุกเวอร์ชันได้รวม **PP-OCRv6** Engine มาให้เลือกใช้ 3 ระดับ: เพียงเลือก **PP-OCRv6 tiny**, **PP-OCRv6 small** หรือ **PP-OCRv6 medium** ที่ **Settings → Engines → OCR engine** ก็สามารถอ่านข้อความได้ทันทีโดยไม่ต้องพึ่งพาแพ็กภาษาของ Windows และทำงานแบบ Offline ได้ 100% โดยระดับ tiny จะเร็วที่สุด และ medium จะแม่นยำที่สุด อย่างไรก็ตาม โมเดลเหล่านี้จะใช้ทรัพยากรต่อรอบการอ่านมากกว่า Windows OCR (ขนาดโมเดลรวม ~190 MB) และหากเกิดข้อผิดพลาดในการประมวลผล ระบบจะสลับกลับไปใช้ Windows OCR ให้อัตโนมัติ ข้อสังเกตเล็กน้อย: ชุดคำศัพท์ของระดับ tiny ไม่มีตัวอักษร Kana ดังนั้นหากเลือกภาษาต้นทางเป็นภาษาญี่ปุ่น ระบบจะสลับไปใช้โมเดลระดับ small แทนโดยอัตโนมัติ (มีแจ้งเตือนใน Log) ส่วนภาษาเกาหลีจะอ่านผ่านโมเดลเฉพาะของภาษาเกาหลีในทุกระดับ
 
 ## Translation engines
 
-Choose the global default in **Settings → Engines** (per-Profile overrides
-exist too). Cloud engines show a privacy badge in the Results Window and the
-tray tooltip while they are in flight.
+เลือก Engine หลักได้ที่ **Settings → Engines** (และสามารถตั้งค่าแยกตามแต่ละ Profile ได้) สำหรับ Cloud Engine จะมีการแสดงป้ายสถานะความเป็นส่วนตัว (Privacy badge) ในหน้าต่าง Results Window และ Tooltip ใน Tray ขณะที่กำลังส่งข้อมูลแปล
 
-| Engine | Key needed | Notes |
+| Engine | Key ที่ต้องใช้ | หมายเหตุ |
 | --- | --- | --- |
-| **Google** *(default)* | none | Unofficial free endpoint (`translate.googleapis.com`); zero-config but unofficial — it can slow down or break without notice, and it sends screen text to Google. |
-| **Azure AI Translator** | key (+ optional region) | The recommended upgrade: free F0 tier, official and stable. Create a Translator resource in the [Azure portal](https://portal.azure.com) (Settings has this link) and paste the key; leave the region empty for a global resource. |
-| **DeepL** | key | [DeepL API](https://www.deepl.com/en/pro-api) — free tier available. Paste the key; free keys (ending `:fx`) are routed to DeepL's free host automatically. |
-| **Gemini** | key | Google AI Studio models. Get a key at [aistudio.google.com](https://aistudio.google.com/apikey), set a model id — `gemini-4-hydrogen` or `gemini-3.8-flash` are good picks. |
-| **OpenAI-compatible** | key | Any `/chat/completions` server: OpenAI (`https://api.openai.com/v1`), OpenRouter, or anything speaking the same API. Set base URL, key, and model. |
-| **LM Studio** | none (local) | Fully offline and private — see the next section. |
+| **Google** *(ค่าเริ่มต้น)* | ไม่ต้องใช้ | ใช้ Endpoint ฟรีอย่างไม่เป็นทางการ (`translate.googleapis.com`) ไม่ต้องตั้งค่าใดๆ แต่อาจทำงานช้าลงหรือใช้งานไม่ได้โดยไม่แจ้งล่วงหน้า และมีการส่งข้อความบนหน้าจอไปยัง Google |
+| **Azure AI Translator** | Key (+ Region ไม่บังคับ) | ตัวเลือกอัปเกรดที่แนะนำ: มีแพ็กเกจฟรีระดับ F0 เป็นทางการและเสถียร สร้าง Translator resource ได้ที่ [Azure portal](https://portal.azure.com) (มีลิงก์ให้ในหน้า Settings) แล้วนำ Key มาวาง หากเป็น Global resource ให้เว้นช่อง Region ว่างไว้ |
+| **DeepL** | Key | [DeepL API](https://www.deepl.com/en/pro-api) — มีแพ็กเกจฟรีให้ใช้งาน นำ Key มาวางได้เลย หากเป็น Key แบบฟรี (ลงท้ายด้วย `:fx`) ระบบจะส่งไปยัง Host ฟรีของ DeepL ให้อัตโนมัติ |
+| **Gemini** | Key | โมเดลจาก Google AI Studio รับ Key ได้ที่ [aistudio.google.com](https://aistudio.google.com/apikey) และระบุ Model ID ที่ต้องการ — แนะนำ `gemini-4-hydrogen` หรือ `gemini-3.8-flash` |
+| **OpenAI-compatible** | Key | รองรับ Server ใดๆ ที่ใช้มาตรฐาน `/chat/completions` เช่น OpenAI (`https://api.openai.com/v1`), OpenRouter หรือบริการอื่นๆ ที่ใช้ API รูปแบบเดียวกัน โดยตั้งค่า Base URL, Key และชื่อโมเดล |
+| **LM Studio** | ไม่ต้องใช้ (Local) | ทำงานแบบ Offline และเป็นส่วนตัว 100% — ดูรายละเอียดในหัวข้อถัดไป |
 
-Engine errors are never silent: they surface in the Results Window and as a
-tray notification (throttled so a dead engine doesn't spam you every capture
-tick). **Settings → Engines → Test** sends one real request to verify a
-configuration.
+เมื่อ Engine เกิดข้อผิดพลาด ระบบจะไม่ปล่อยผ่านอย่างเงียบๆ แต่จะแสดงข้อความแจ้งเตือนในหน้าต่าง Results Window และเด้งแจ้งเตือนที่ Tray (จำกัดความถี่ในการแจ้งเตือนเพื่อไม่ให้รบกวนทุกรอบที่จับภาพ) สามารถกด **Settings → Engines → Test** เพื่อส่งคำขอทดสอบการเชื่อมต่อจริงได้
 
-### LM Studio (local translation)
+### LM Studio (Local translation)
 
-[LM Studio](https://lmstudio.ai/) lets you run open models on your own
-machine, so nothing ever leaves it:
+[LM Studio](https://lmstudio.ai/) ช่วยให้คุณรันโมเดล Open-source บนเครื่องของคุณเอง ทำให้ไม่มีข้อมูลใดๆ ถูกส่งออกไปนอกเครื่อง:
 
-1. Install LM Studio, download a model (`gemma-4-e4b` and
-   `qwen3-4b-instruct` are good picks), and start its server:
-   **Developer tab → Start server** (default port 1234). Leave LM Studio
-   running while you translate.
-2. In Langception: **Settings → Engines → LM Studio**. The default base URL
-   (`http://localhost:1234/v1`) matches LM Studio's server. Press **Check**
-   to list the loaded models and pick one from the dropdown.
-3. Choose **LM Studio** as the engine. No API key is needed and the privacy
-   badge stays off — translation is entirely on-machine.
+1. ติดตั้ง LM Studio, ดาวน์โหลดโมเดล (แนะนำ `gemma-4-e4b` และ `qwen3-4b-instruct`) และเปิดใช้งาน Server โดยไปที่ **แถบ Developer → Start server** (พอร์ตเริ่มต้นคือ 1234) และเปิด LM Studio ทิ้งไว้ระหว่างที่ใช้งานแปลภาษา
+2. ใน Langception: ไปที่ **Settings → Engines → LM Studio** ค่า Base URL เริ่มต้น (`http://localhost:1234/v1`) จะตรงกับ Server ของ LM Studio อยู่แล้ว กดปุ่ม **Check** เพื่อดึงรายชื่อโมเดลที่โหลดไว้แล้วเลือกจาก Dropdown
+3. เลือก **LM Studio** เป็น Engine หลัก ไม่จำเป็นต้องใส่ API Key และป้ายแจ้งเตือน Privacy badge จะไม่แสดงขึ้น เนื่องจากการแปลทั้งหมดเกิดขึ้นภายในเครื่องของคุณ
 
-Tips: pick a model that translates well into Thai; small instruct models are
-fast but rough. If you enable **fused reading** (below), the model must
-accept images (a vision model), since the screen capture is attached to the
-prompt.
+คำแนะนำ: ควรเลือกโมเดลที่แปลเป็นภาษาไทยได้ดี โมเดล Instruct ขนาดเล็กจะทำงานได้เร็วแต่อาจแปลได้ไม่สละสลวยเท่าที่ควร หากคุณเปิดใช้งานโหมด **Fused reading** (อธิบายด้านล่าง) โมเดลที่เลือกต้องรองรับการรับข้อมูลรูปภาพ (Vision model) เนื่องจากระบบจะแนบภาพหน้าจอไปพร้อมกับ Prompt
 
-### Reading modes (classic vs fused)
+### Reading modes (Classic vs Fused)
 
-- **Classic** (default): Windows OCR reads Text Blocks, the chosen engine
-  translates each block. Works with every engine and is fast.
-- **Fused** (Settings → Engines → Reading): one vision-LLM call reads *and*
-  translates the whole frame — the OCR stage is bypassed and layout context
-  helps with game UI text. Requires an LLM engine (Gemini, OpenAI-compatible,
-  or LM Studio) with a vision-capable model.
+- **Classic** (ค่าเริ่มต้น): ใช้ Windows OCR อ่านข้อความเป็น Text Blocks แล้วส่งให้ Engine ที่เลือกแปลทีละบล็อก ใช้งานได้กับทุก Engine และทำงานได้รวดเร็ว
+- **Fused** (Settings → Engines → Reading): เรียกใช้งาน Vision-LLM เพียงครั้งเดียวเพื่ออ่าน *และ* แปลทั้งเฟรมพร้อมกัน โดยข้ามขั้นตอน OCR ไปเลย วิธีนี้ช่วยให้เข้าใจบริบทการจัดวางหน้าจอ (Layout) ของ UI ในเกมได้ดียิ่งขึ้น จำเป็นต้องใช้ร่วมกับ LLM Engine (Gemini, OpenAI-compatible หรือ LM Studio) และเลือกใช้โมเดลที่รองรับ Vision
 
 ## Usage
 
-| Hotkey | Action |
+| Hotkey | การทำงาน |
 | --- | --- |
-| `Alt+Shift+T` | Start / stop translation |
-| `Alt+Shift+Z` | Draw a new Capture Zone (drag on the dimmed screen) |
-| `Alt+Shift+P` | Pause / resume Auto-translate |
-| `Alt+Shift+A` | Adjust Mode (drag/resize zones; click full-screen blocks to exclude them) |
-| `Alt+Shift+Q` | One-shot Capture (translate an area once) |
+| `Alt+Shift+T` | เริ่ม / หยุด การแปลภาษา |
+| `Alt+Shift+Z` | ลากสร้าง Capture Zone ใหม่ (ลากเมาส์บนหน้าจอที่หรี่แสงลง) |
+| `Alt+Shift+P` | หยุดชั่วคราว / ทำงานต่อ สำหรับระบบ Auto-translate |
+| `Alt+Shift+A` | เข้าสู่ Adjust Mode (ลากย้าย/ปรับขนาด Zone; คลิกบล็อกในโหมด Full-screen เพื่อยกเว้นการแปล) |
+| `Alt+Shift+Q` | One-shot Capture (ลากครอบพื้นที่เพื่อแปลเพียงครั้งเดียว) |
 
-All hotkeys are rebindable in **Settings → Hotkeys** and apply live. The
-tray menu exposes the same actions; left-clicking the tray icon focuses the
-Results Window.
+สามารถเปลี่ยนปุ่มลัดทั้งหมดได้ใน **Settings → Hotkeys** และมีผลบังคับใช้ทันที เมนูใน System Tray ก็มีคำสั่งเหล่านี้เช่นกัน และการคลิกซ้ายที่ไอคอนใน Tray จะเป็นการดึงหน้าต่าง Results Window ขึ้นมาด้านหน้า
 
-> The defaults use `Alt+Shift+{Key}` so they don't collide with games' and
-> apps' common `Alt+{Key}` menu shortcuts. If you remapped Windows'
-> input-language switch to Alt+Shift, note that the bare two-key chord
-> still swaps your layout — the three-key hotkeys above are distinct
-> chords and never trigger the swap. A config saved by an older version
-> keeps its old hotkeys; nothing is rewritten on upgrade.
+> ค่าเริ่มต้นใช้รูปแบบ `Alt+Shift+{Key}` เพื่อหลีกเลี่ยงการชนกับปุ่มลัดเมนู `Alt+{Key}` ที่พบบ่อยในเกมและแอปต่างๆ หากคุณตั้งค่าปุ่มเปลี่ยนภาษาของ Windows เป็น `Alt+Shift` โปรดทราบว่าการกดแค่ 2 ปุ่มนั้นยังคงสลับภาษาตามปกติ แต่ Hotkey แบบ 3 ปุ่มด้านบนถือเป็นคนละชุดคำสั่งกันและจะไม่ไปกระตุ้นการเปลี่ยนภาษาของ Windows สำหรับไฟล์ Config ที่บันทึกจากเวอร์ชันเก่าจะยังคงใช้ Hotkey เดิมต่อไปโดยไม่ถูกเขียนทับเมื่ออัปเกรด
 
-- **Capture Targets**: Capture Zones (global or per-Profile), or full-screen
-  mode on a selected monitor. Exactly one target is active at a time;
-  Profiles take over whenever their app is the foreground window and fall
-  back to the global target otherwise.
-- **Excluded Blocks** (full-screen mode): click a block in Adjust Mode to
-  stop translating that position — useful for menus, HUDs, and logs that
-  never change.
-- **Profiles** (Settings → Profiles): per-app source language, engine,
-  Genderless override, glossary layer, and window-relative zones that follow
-  the app's window around.
-- **Glossary** (Settings → Glossary): map a source term to a fixed Thai
-  translation; Profile glossaries layer over the global one. Import/export
-  as JSON.
-- **Genderless Mode** (Settings → General): removes gendered particles and
-  first-person pronouns from Thai output (ครับ/ค่ะ/ผม/ฉัน → neutral forms).
-- **Text Style** (Settings → Text Style): font, size, color, outline,
-  background pill, all applied to the overlay live.
-- **UI Language** (Settings → General): the language of Langception's own
-  windows and tray — English or ไทย (Thai). Saving applies it to every
-  open window immediately (log entries already shown keep their original
-  language). (Source/target language names in the selects are
-  native names, not localized.)
+- **Capture Targets**: เลือกจับภาพแบบ Capture Zones (แบบ Global หรือแยกตาม Profile) หรือโหมด Full-screen บน Monitor ที่เลือก สามารถเปิดใช้งาน Target ได้ทีละ 1 รูปแบบ โดย Profile จะทำงานแทนที่โดยอัตโนมัติเมื่อเปิดหน้าต่างของแอปนั้นขึ้นมา และจะสลับกลับไปใช้ Global Target เมื่อพับหน้าต่างลง
+- **Excluded Blocks** (โหมด Full-screen): คลิกที่บล็อกข้อความระหว่างอยู่ใน Adjust Mode เพื่อสั่งหยุดแปลตำแหน่งนั้น เหมาะสำหรับส่วนของเมนู, HUD หรือ Log ที่ไม่มีการเปลี่ยนแปลง
+- **Profiles** (Settings → Profiles): ตั้งค่าแยกเฉพาะแอป ทั้งภาษาต้นทาง, Engine, การเปิด/ปิด Genderless Mode, ชั้นข้อมูล Glossary และ Zone ที่อ้างอิงตำแหน่งตามหน้าต่างแอป (ขยับตามเมื่อย้ายหน้าต่างแอป)
+- **Glossary** (Settings → Glossary): จับคู่คำศัพท์ต้นทางกับคำแปลภาษาไทยที่ตายตัว โดย Glossary ของ Profile จะทำงานซ้อนทับ (Override) ค่าของ Global สามารถ Import/Export เป็นไฟล์ JSON ได้
+- **Genderless Mode** (Settings → General): ลบคำลงท้ายและสรรพนามบุรุษที่หนึ่งที่ระบุเพศออกจากคำแปลภาษาไทย (เช่น ครับ/ค่ะ/ผม/ฉัน → รูปแบบที่เป็นกลาง)
+- **Text Style** (Settings → Text Style): ปรับแต่ง Font, ขนาด, สี, เส้นขอบ และพื้นหลัง โดยจะแสดงผลบน Overlay แบบเรียลไทม์
+- **UI Language** (Settings → General): เลือกภาษาของหน้าต่างโปรแกรมและเมนู Tray ของ Langception ระหว่าง English หรือ ไทย (Thai) เมื่อกดบันทึกจะมีผลกับทุกหน้าต่างที่เปิดอยู่ทันที (ยกเว้นข้อความ Log ที่แสดงไปแล้วจะยังคงเป็นภาษาเดิม) *(ส่วนชื่อภาษาต้นทาง/ปลายทางในเมนูเลือกภาษาจะแสดงเป็นชื่อภาษานั้นๆ โดยตรง)*
 
 ## Privacy
 
-- Screen text leaves your machine **only** while a cloud engine (Google,
-  Azure, DeepL, Gemini, OpenAI-compatible) is translating; the Results
-  Window and tray tooltip show a badge whenever that is happening.
-- LM Studio translation never sends anything off-machine.
-- Even with **Show Langception in screen captures** on (Settings →
-  General), the translation loop masks Langception's own windows out of
-  every frame it processes — the app never reads, translates, or uploads
-  its own output, and the In-place Overlay is never visible to captures.
-- The optional update check is fetch-only: it sends nothing beyond the
-  request itself and never downloads or installs anything.
-- Config, keys, and glossaries stay in `%APPDATA%\langception\` on your
-  machine. Langception has no telemetry.
+- ข้อความบนหน้าจอจะถูกส่งออกจากเครื่องของคุณ **เฉพาะตอนที่** ใช้งาน Cloud Engine (Google, Azure, DeepL, Gemini, OpenAI-compatible) ในการแปลเท่านั้น โดยหน้าต่าง Results Window และ Tooltip ใน Tray จะแสดงป้ายสถานะแจ้งเตือนทุกครั้งที่มีการส่งข้อมูล
+- การแปลผ่าน LM Studio จะไม่มีการส่งข้อมูลใดๆ ออกนอกเครื่องโดยเด็ดขาด
+- แม้ว่าจะเปิดใช้งานตัวเลือก **Show Langception in screen captures** (Settings → General) ระบบวนลูปการแปลจะทำการบดบัง (Mask) หน้าต่างของ Langception เองออกจากทุกเฟรมที่ประมวลผล ทำให้โปรแกรมไม่อ่าน ไม่แปล และไม่อัปโหลดข้อความคำแปลของตัวเองซ้ำ รวมถึงตัว In-place Overlay จะไม่ปรากฏในการจับภาพประมวลผลด้วย
+- ระบบตรวจสอบอัปเดต (Optional update check) เป็นการดึงข้อมูลสถานะเวอร์ชันเท่านั้น ไม่มีการส่งข้อมูลส่วนตัวใดๆ ออกไป และไม่มีการดาวน์โหลดหรือติดตั้งอัตโนมัติ
+- ไฟล์ Config, API Keys และ Glossaries ทั้งหมดจะถูกเก็บไว้ในโฟลเดอร์ `%APPDATA%\langception\` บนเครื่องของคุณเท่านั้น Langception ไม่มีการเก็บข้อมูล Telemetry ใดๆ
 
 ## Anti-cheat and overlay caution
 
-Langception draws always-on-top, click-through overlay windows, registers
-global hotkeys, and reads the screen with GDI capture. It does **not**
-inject into or attach to any game process — it is a plain external Windows
-app — but anti-cheat systems (EasyAntiCheat, BattlEye, Vanguard, and
-friends) are deliberately paranoid about overlays, global hooks, and screen
-automation, and some flag even external tools like this one.
+Langception ทำงานโดยการวาดหน้าต่าง Overlay แบบ Always-on-top ที่คลิกทะลุได้, ลงทะเบียน Global Hotkeys และอ่านหน้าจอด้วย GDI Capture ตัวโปรแกรม **ไม่ได้** ทำการ Inject หรือแทรกแซงเข้าไปใน Process ของเกมแต่อย่างใด (เป็นเพียงแอป Windows ภายนอกทั่วไป) อย่างไรก็ตาม ระบบ Anti-cheat ต่างๆ (เช่น EasyAntiCheat, BattlEye, Vanguard และระบบอื่นๆ) มักมีความเข้มงวดสูงต่อโปรแกรมประเภท Overlay, Global Hooks และการจับภาพหน้าจออัตโนมัติ ซึ่งอาจตรวจพบและแจ้งเตือนแม้จะเป็นเครื่องมือภายนอกลักษณะนี้ก็ตาม
 
-**Use good judgment:**
+**โปรดใช้วิจารณญาณในการใช้งาน:**
 
-- Offline / single-player games: safe in practice.
-- Online games with kernel-level or strict anti-cheat: Langception may be
-  detected as suspicious **even though it does nothing to the game**. A ban
-  risk is yours to take — read the game's rules, and prefer the Results
-  Window (rather than the overlay) or a second monitor where possible.
-- Any anti-cheat that forbids screen-reading tools outright: don't use
-  Langception there.
+- เกม Offline / Single-player: ใช้งานได้อย่างปลอดภัย
+- เกม Online ที่มีระบบ Anti-cheat ระดับ Kernel หรือมีความเข้มงวดสูง: Langception อาจถูกมองว่าเป็นโปรแกรมต้องสงสัย **แม้ว่าจะไม่ได้เข้าไปยุ่งเกี่ยวกับตัวเกมเลยก็ตาม** ความเสี่ยงในการถูกแบนถือเป็นความรับผิดชอบของผู้ใช้งาน โปรดอ่านกฎของเกมนั้นๆ และแนะนำให้ใช้หน้าต่าง Results Window (แทนการใช้ Overlay) หรือเปิดไว้บนหน้าจอที่สอง (Second monitor) หากทำได้
+- เกมที่มีกฎข้อห้ามใช้เครื่องมืออ่านหน้าจออย่างชัดเจน: ห้ามใช้งาน Langception กับเกมเหล่านั้นโดยเด็ดขาด
 
 ## Building from source
 
-Prerequisites: [Rust](https://rustup.rs/) (stable) and
-[Node.js](https://nodejs.org/) (for the Tauri CLI; the frontend itself is
-static files in `ui/` and needs no build step).
+สิ่งที่ต้องติดตั้งล่วงหน้า: [Rust](https://rustup.rs/) (เวอร์ชัน Stable) และ [Node.js](https://nodejs.org/) (สำหรับใช้งาน Tauri CLI ส่วนตัว Frontend เป็นไฟล์ Static ในโฟลเดอร์ `ui/` จึงไม่จำเป็นต้องมีขั้นตอน Build แยก)
 
 ```sh
-npm install -g @tauri-apps/cli   # or: cargo install tauri-cli --locked
-cargo test --workspace           # offline unit tests (570+)
-cargo tauri dev                  # run the app
-cargo tauri build                # NSIS installer in target/release/bundle/nsis/
+npm install -g @tauri-apps/cli   # หรือใช้คำสั่ง: cargo install tauri-cli --locked
+cargo test --workspace           # รัน Unit tests แบบ Offline (570+ รายการ)
+cargo tauri dev                  # รันแอปในโหมดพัฒนา
+cargo tauri build                # สร้างไฟล์ติดตั้ง NSIS ใน target/release/bundle/nsis/
 ```
 
-`cargo test` never touches the network (fakes + golden recorded fixtures);
-there is an opt-in manual capture smoke:
-`cargo test -p langception --test manual_smoke -- --ignored --nocapture`.
+คำสั่ง `cargo test` จะไม่เชื่อมต่ออินเทอร์เน็ตเลย (ใช้ข้อมูลจำลองและ Golden fixtures ที่บันทึกไว้)
+และมีการทดสอบระบบจับภาพแบบ Manual ให้เลือกใช้ต่างหากผ่านคำสั่ง:
+`cargo test -p langception --test manual_smoke -- --ignored --nocapture`
 
-Cutting a release (tag → CI → published installer + zip) is described in
-[docs/releasing.md](docs/releasing.md).
+ขั้นตอนการออก Release เวอร์ชันใหม่ (การติด Tag → CI → เผยแพร่ไฟล์ Installer + Zip) มีอธิบายไว้ใน [docs/releasing.md](docs/releasing.md)
+
+## Developer
+
+Langception พัฒนาโดย **Intception**
+
+- เว็บไซต์: <https://intception.app>
+- อีเมล: `arm@intception.app`
+- สนับสนุนโครงการ: <https://intception.app/donate>
 
 ## License
 
-[Apache-2.0](LICENSE). The bundled [Noto Sans Thai](ui/fonts/) font is
-© The Noto Project Authors, under the
-[SIL Open Font License 1.1](ui/fonts/LICENSE.txt).
+[Apache-2.0](LICENSE) ส่วนฟอนต์ [Noto Sans Thai](ui/fonts/) ที่รวมมาในโปรแกรมเป็นลิขสิทธิ์ของ
+© The Noto Project Authors ภายใต้สัญญาอนุญาต [SIL Open Font License 1.1](ui/fonts/LICENSE.txt)
