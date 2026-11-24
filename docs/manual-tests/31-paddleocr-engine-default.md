@@ -13,9 +13,12 @@ desktop and the ~300 MB bundle.
 
 ## Setup
 
-1. Fetch the sidecar (git-ignored, one command):
-   `powershell -File packaging/fetch-paddleocr.ps1` — or point
-   `LANGCEPTION_PADDLEOCR_DIR` at an extracted release archive.
+1. The sidecar bundle (git-ignored) must be in place at
+   `src-tauri/resources/paddleocr/` — it was fetched from the old release
+   archive by the fetch script that ticket 03 of the pp-ocrv6-sidecar
+   feature retired; fresh checkouts can extract it from the previous
+   release's portable zip, or point `LANGCEPTION_PADDLEOCR_DIR` at an
+   extracted archive.
    Optional headless check:
    `cargo test -p langception --test manual_smoke paddle_ocr_smoke -- --ignored --nocapture`
    proves spawn → handshake → base64 PNG → parsed blocks against the real

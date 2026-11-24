@@ -14,12 +14,15 @@ models (both stay out of CI).
 ## One-time setup
 
 ```powershell
-# the old engine's sidecar bundle (git-ignored)
-powershell -File packaging/fetch-paddleocr.ps1
-
 # the new pipeline's CLI (installs the `oar` command on PATH)
 cargo install oar-ocr-cli
 ```
+
+The paddle half of the harness also needs the old engine's sidecar
+bundle (`src-tauri/resources/paddleocr/`, git-ignored). It predates the
+fetch-script rework (ticket 03 retired the old archive fetch): machines
+that fetched it keep it, fresh checkouts can extract it from the
+previous release's portable zip. It leaves entirely with ticket 06.
 
 The oar CLI fetches each model on first use into its cache (`~/.oar`,
 override with `$env:OAR_HOME`) with SHA-256 verification: the three

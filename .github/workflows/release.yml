@@ -47,12 +47,15 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-      # The bundled PaddleOCR-json sidecar + models (ticket 31): fetched
-      # before the build so bundle.resources picks it up — the default OCR
-      # engine must work with zero setup on a fresh install.
-      - name: Fetch the PaddleOCR-json sidecar
+      # The PP-OCRv6 models for the new OCR sidecar (pp-ocrv6-sidecar
+      # tickets 02/03): fetched before the build, SHA-256-verified, into
+      # the layout the sidecar's launch contract fixes. Until tickets
+      # 04/06 wire the new engine in and retire the old one, interim
+      # releases carry no bundled OCR engine — a fresh install falls back
+      # to Windows OCR (supported behavior, spec story 22).
+      - name: Fetch the PP-OCRv6 models
         shell: pwsh
-        run: packaging/fetch-paddleocr.ps1
+        run: packaging/fetch-pp-ocrv6.ps1
 
       - name: Install the Tauri CLI
         run: npm install -g @tauri-apps/cli@^2

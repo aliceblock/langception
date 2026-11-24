@@ -12,7 +12,9 @@
 #   ... -ArtSource C:\path\to\game-capture.png
 #
 # The script reads the text/font/layout tables as UTF-8 data files, and the
-# script itself is plain ASCII (see packaging/fetch-paddleocr.ps1 for why).
+# script itself is plain ASCII (Windows PowerShell 5.1 reads .ps1 scripts
+# in the system codepage unless a BOM is present - same rule as the other
+# packaging scripts).
 
 param(
     # A game screenshot to crop the shared dialogue background from
