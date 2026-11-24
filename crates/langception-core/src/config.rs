@@ -523,6 +523,10 @@ impl Default for PromptSettings {
 /// values for the global engine setting and a Profile's `engine` choice.
 /// An unknown name in a hand-edited config must be a visible validation
 /// error, never a silent fallback.
+///
+/// The order here is only membership validation, not UI semantics: the
+/// Settings UI lists the engines in its own fixed display order
+/// (ticket 59), independent of this const.
 pub const TRANSLATE_ENGINES: [&str; 6] = ["google", "azure", "deepl", "openai", "lmstudio", "gemini"];
 
 fn default_engine() -> String {
@@ -1091,7 +1095,7 @@ key = ""
 region = ""
 
 [engines.deepl]
-# DeepL free tier (500k chars/month, Thai supported). Free keys end with
+# DeepL free tier (1M chars total, Thai supported). Free keys end with
 # ":fx"; the suffix picks the right API host, so paste the whole key.
 key = ""
 

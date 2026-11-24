@@ -1,5 +1,5 @@
 //! The DeepL engine (ticket 09): the second keyed cloud option, sized for
-//! the free tier (500k chars/month, Thai supported; free keys end with
+//! the free tier (1M chars total, Thai supported; free keys end with
 //! `:fx` and use the `api-free` host). Quota exhaustion, invalid keys, and
 //! network failures surface as classified [`TranslateError`]s — never a
 //! silent stop.
@@ -97,7 +97,7 @@ pub fn classify_error(status: u16, body: &str) -> TranslateError {
             "DeepL rate limit hit (HTTP {status}) — too many requests; the loop retries when the text changes"
         ),
         456 => format!(
-            "DeepL quota exhausted (HTTP {status}) — the free tier allows 500k chars/month; it resets on the 1st"
+            "DeepL quota exhausted (HTTP {status}) — the free tier allows 1M chars total (lifetime); upgrade to a paid plan to keep translating"
         ),
         _ => format!("DeepL endpoint returned HTTP {status}"),
     };

@@ -195,11 +195,11 @@
             <span>Translation engine</span>
             <select id="engines-default">
               <option value="google">Google Translate (unofficial) — free, no key</option>
-              <option value="azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
-              <option value="deepl">DeepL — free tier, 500k chars/month</option>
-              <option value="openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
               <option value="lmstudio">LM Studio — local & offline, no key</option>
               <option value="gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
+              <option value="azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
+              <option value="openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
+              <option value="deepl">DeepL — free tier, 1M chars total</option>
             </select>
           </label>
         </div>
@@ -228,67 +228,6 @@
               Free, no key, no setup — the keyless default. Unofficial
               endpoint, so it can rate-limit or break without notice.
             </p>
-          </div>
-        </div>
-        <div class="engine-card" data-engine="azure">
-          <div class="engine-title">
-            <strong>Azure AI Translator</strong>
-            <span class="chip privacy" title="Screen text is sent to Azure's translation service">☁ cloud</span>
-          </div>
-          <div class="engine-body">
-            <p class="hint">
-              Permanently free on the F0 tier (2M chars/month). Create a
-              Translator resource with the link (tier "Free F0", region
-              "Global") and paste its key — the region must match the
-              resource; empty means global.
-            </p>
-            <div class="row glossary-add">
-              <input id="engines-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
-              <input id="engines-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
-            </div>
-            <div class="row">
-              <button id="engines-azure-link" class="btn small">Create a free key…</button>
-            </div>
-          </div>
-        </div>
-        <div class="engine-card" data-engine="deepl">
-          <div class="engine-title">
-            <strong>DeepL</strong>
-            <span class="chip privacy" title="Screen text is sent to DeepL's translation service">☁ cloud</span>
-          </div>
-          <div class="engine-body">
-            <p class="hint">
-              The DeepL API free plan (500k chars/month, Thai supported). Sign
-              up with the link and paste the key — free keys end with ":fx",
-              which picks the right API host.
-            </p>
-            <div class="row glossary-add">
-              <input id="engines-deepl-key" type="password" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
-            </div>
-            <div class="row">
-              <button id="engines-deepl-link" class="btn small">Sign up for a free key…</button>
-            </div>
-          </div>
-        </div>
-        <div class="engine-card" data-engine="openai">
-          <div class="engine-title">
-            <strong>OpenAI-compatible</strong>
-            <span class="chip privacy" title="Screen text is sent to whatever server the base URL points at">☁ cloud (unless your URL is local)</span>
-          </div>
-          <div class="engine-body">
-            <p class="hint">
-              Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
-              set the base URL (must include <code>/v1</code>), paste its key,
-              and type the model name (e.g. <code>gpt-4o-mini</code>).
-            </p>
-            <div class="row glossary-add">
-              <input id="engines-openai-base-url" type="text" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
-              <input id="engines-openai-key" type="password" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
-            </div>
-            <div class="row glossary-add">
-              <input id="engines-openai-model" type="text" placeholder="Model name (e.g. gpt-4o-mini)" spellcheck="false" />
-              <input id="engines-openai-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
-            </div>
           </div>
         </div>
         <div class="engine-card" data-engine="lmstudio">
@@ -333,6 +272,67 @@
             <div class="row glossary-add">
               <input id="engines-gemini-model" type="text" placeholder="Model name (e.g. gemini-2.0-flash)" spellcheck="false" />
               <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+            </div>
+          </div>
+        </div>
+        <div class="engine-card" data-engine="azure">
+          <div class="engine-title">
+            <strong>Azure AI Translator</strong>
+            <span class="chip privacy" title="Screen text is sent to Azure's translation service">☁ cloud</span>
+          </div>
+          <div class="engine-body">
+            <p class="hint">
+              Permanently free on the F0 tier (2M chars/month). Create a
+              Translator resource with the link (tier "Free F0", region
+              "Global") and paste its key — the region must match the
+              resource; empty means global.
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
+              <input id="engines-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
+            </div>
+            <div class="row">
+              <button id="engines-azure-link" class="btn small">Create a free key…</button>
+            </div>
+          </div>
+        </div>
+        <div class="engine-card" data-engine="openai">
+          <div class="engine-title">
+            <strong>OpenAI-compatible</strong>
+            <span class="chip privacy" title="Screen text is sent to whatever server the base URL points at">☁ cloud (unless your URL is local)</span>
+          </div>
+          <div class="engine-body">
+            <p class="hint">
+              Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
+              set the base URL (must include <code>/v1</code>), paste its key,
+              and type the model name (e.g. <code>gpt-4o-mini</code>).
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-openai-base-url" type="text" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
+              <input id="engines-openai-key" type="password" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="row glossary-add">
+              <input id="engines-openai-model" type="text" placeholder="Model name (e.g. gpt-4o-mini)" spellcheck="false" />
+              <input id="engines-openai-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+            </div>
+          </div>
+        </div>
+        <div class="engine-card" data-engine="deepl">
+          <div class="engine-title">
+            <strong>DeepL</strong>
+            <span class="chip privacy" title="Screen text is sent to DeepL's translation service">☁ cloud</span>
+          </div>
+          <div class="engine-body">
+            <p class="hint">
+              The DeepL API free plan (1M chars total, Thai supported). Sign
+              up with the link and paste the key — free keys end with ":fx",
+              which picks the right API host.
+            </p>
+            <div class="row glossary-add">
+              <input id="engines-deepl-key" type="password" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
+            </div>
+            <div class="row">
+              <button id="engines-deepl-link" class="btn small">Sign up for a free key…</button>
             </div>
           </div>
         </div>
@@ -505,11 +505,11 @@
               <select id="profile-engine">
                 <option value="">Inherit global engine</option>
                 <option value="google">Google Translate (unofficial)</option>
-                <option value="azure">Azure AI Translator</option>
-                <option value="deepl">DeepL</option>
-                <option value="openai">OpenAI-compatible</option>
                 <option value="lmstudio">LM Studio (local)</option>
                 <option value="gemini">Gemini</option>
+                <option value="azure">Azure AI Translator</option>
+                <option value="openai">OpenAI-compatible</option>
+                <option value="deepl">DeepL</option>
               </select>
             </label>
             <label class="form-row">
