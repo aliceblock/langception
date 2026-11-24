@@ -1,5 +1,7 @@
 # Langception
 
+[![CI](https://github.com/aliceblock/langception/actions/workflows/ci.yml/badge.svg)](https://github.com/aliceblock/langception/actions/workflows/ci.yml)
+
 Langception reads the text on your screen and shows it in Thai, in place over
 the original or in a separate always-on-top window. Point it at a game or an
 app written in **English, Japanese, Chinese, or Korean** and it keeps the
@@ -221,9 +223,9 @@ Results Window.
 - **Text Style** (Settings → Text Style): font, size, color, outline,
   background pill, all applied to the overlay live.
 - **UI Language** (Settings → General): the language of Langception's own
-  windows and tray — English or ไทย (Thai). Applies to the Settings window
-  on save; other windows pick it up when next shown and the tray on the
-  next state change. (Source/target language names in the selects are
+  windows and tray — English or ไทย (Thai). Saving applies it to every
+  open window immediately (log entries already shown keep their original
+  language). (Source/target language names in the selects are
   native names, not localized.)
 
 ## Privacy
@@ -268,7 +270,7 @@ static files in `ui/` and needs no build step).
 
 ```sh
 npm install -g @tauri-apps/cli   # or: cargo install tauri-cli --locked
-cargo test --workspace           # offline unit tests (300+)
+cargo test --workspace           # offline unit tests (570+)
 cargo tauri dev                  # run the app
 cargo tauri build                # NSIS installer in target/release/bundle/nsis/
 ```
