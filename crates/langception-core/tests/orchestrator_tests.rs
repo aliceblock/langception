@@ -4298,7 +4298,7 @@ async fn a_read_pass_where_nothing_fires_reports_no_translate_stage() {
     // Pass 2: the frame changed only at a corner (OCR re-runs), but every
     // block drops out again — Hello's pixels match its shown translation
     // (unchanged), the other two are excluded/empty. No fire was attempted.
-    let frame = frame_animated(&[hello.clone()], 1, text_mark("Hello"));
+    let frame = frame_animated(std::slice::from_ref(&hello), 1, text_mark("Hello"));
     feed(
         &h,
         1,
@@ -4465,7 +4465,7 @@ async fn a_read_pass_traces_every_block_with_its_disposition() {
     // Hello's pixels are identical to what its shown translation was
     // rendered for → the trace names it "unchanged", the invisible skip
     // that used to be the only unexplained zero.
-    let frame = frame_animated(&[hello.clone()], 1, text_mark("Hello"));
+    let frame = frame_animated(std::slice::from_ref(&hello), 1, text_mark("Hello"));
     feed(&h, 1, &frame, Some(vec![hello.clone()])).await;
     orch.tick().await;
     let (_, reads) = next_reads(&mut h.events).await;
@@ -4650,7 +4650,7 @@ async fn one_shot_traces_only_translated_and_empty_dispositions() {
     // is pinned on the fused path below.)
     let (mut h, orch) = harness().await;
     let hello = block(0, 0, "Hello");
-    h.images.send(frame_for(&[hello.clone()])).await.unwrap();
+    h.images.send(frame_for(std::slice::from_ref(&hello))).await.unwrap();
     h.ocr_results.send(Ok(vec![hello.clone()])).await.unwrap();
 
     orch.capture_once(REGION).await;
