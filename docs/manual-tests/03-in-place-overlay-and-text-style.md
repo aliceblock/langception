@@ -14,15 +14,16 @@ browser mock. This checklist covers what only a human can see and feel.
 ## Setup
 
 1. `cargo run` from the repo root; create a Capture Zone over some on-screen
-   text (Alt+Z) or keep one from `config.toml`.
-2. Start translation (Alt+T or the Start button).
+   text (Alt+Shift+Z) or keep one from `config.toml`.
+2. Start translation (Alt+Shift+T or the Start button).
 
 ## Checklist
 
 - [ ] **Overlay renders in place**: each Text Block's Thai appears exactly
       over the original text, styled per the config's `[text_style]`
-      (default: Noto Sans Thai 20px, white, 2px black outline, dark pill at
-      60% opacity).
+      (ticket-56 defaults: Noto Sans Thai 30px, white, 2px black outline,
+      dark pill at 80% opacity, Auto Colors and Background Cover Source on;
+      a config saved by an older build keeps the values it saved).
 - [ ] **Underlying apps receive mouse input**: click buttons, drag windows,
       and scroll inside the zone region — the overlay never intercepts
       anything (whole-window click-through; per-pixel click-through is a
@@ -59,7 +60,7 @@ browser mock. This checklist covers what only a human can see and feel.
       loop. Note the trade (ADR-0004): while a window is visible, text
       BEHIND it is a hole for the loop — exclusion used to compose
       through.
-- [ ] **Zone picker interplay**: with translations on screen, press Alt+Z →
+- [ ] **Zone picker interplay**: with translations on screen, press Alt+Shift+Z →
       the picker dims cleanly over everything (no stale Thai fighting the
       dim); Esc → translations return. With Capture Visibility ON the loop
       pauses for the session instead (see ticket 02's checklist) — pills
@@ -84,7 +85,7 @@ browser mock. This checklist covers what only a human can see and feel.
       `[text_style]` validation error; overlay keeps the last valid style.
 - [ ] **Stop hides the overlay**: Stop translation → pills clear and the
       overlay windows hide; Start → they come back.
-- [ ] **One-shot stays out of the overlay**: Alt+Q drag → results only in
+- [ ] **One-shot stays out of the overlay**: Alt+Shift+Q drag → results only in
       the Results Window (no pills appear for one-shot blocks).
 
 ## Known slice-3 limitations (not bugs)

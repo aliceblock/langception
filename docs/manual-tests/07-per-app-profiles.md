@@ -117,6 +117,6 @@ real machine.
 ### One-shot with profile active
 
 - [ ] **One-shot follows the active profile**: with the profile active
-      (its app focused), Alt+Q → the pass uses the profile's language
+      (its app focused), Alt+Shift+Q → the pass uses the profile's language
       and glossary layer (a glossary term on screen shows the profile's
       Thai in the Results Window).

@@ -59,7 +59,7 @@ round-trip. Run once on a real machine.
       `[fused]` error and a tray notification appears (throttled); restart
       the server / fix the key and the loop recovers on the next pass
       without restarting the app.
-- [ ] **One-shot capture**: Alt+Q over an area → one fused pass into the
+- [ ] **One-shot capture**: Alt+Shift+Q over an area → one fused pass into the
       Results Window (One-shot badge), OCR never involved.
 - [ ] **Status line names it**: while running, the Results Window config
       line shows "· fused vision reading".

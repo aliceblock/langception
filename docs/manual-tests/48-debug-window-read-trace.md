@@ -53,7 +53,7 @@ building changed nothing about the loop.
       source window under the zone) — two passes trace `gone from the
       read · miss 1` then `miss 2`, beside the BlocksRemoved-driven
       overlay clear.
-- [ ] **One-shot rows trace**: Alt+Q a One-shot Capture — its row's pill
+- [ ] **One-shot rows trace**: Alt+Shift+Q a One-shot Capture — its row's pill
       lists the blocks with `translated · engine` (or `translated ·
       fused read` in fused mode) and never waiting/unchanged/gone
       entries.

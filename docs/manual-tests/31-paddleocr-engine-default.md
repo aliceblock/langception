@@ -31,7 +31,7 @@ desktop and the ~300 MB bundle.
       loop runs.
 - [ ] **Paddle out of the box when selected**: with Paddle OCR selected in
       Settings → Engines (the ticket-31 default behavior), NO Windows OCR
-      language packs are needed — starting translation (Alt+T) reads the
+      language packs are needed — starting translation (Alt+Shift+T) reads the
       text. The sidecar spawns on the first capture (first pass takes
       ~1–3s to load models; later passes are fast). Log line says
       `ocr=paddle`.

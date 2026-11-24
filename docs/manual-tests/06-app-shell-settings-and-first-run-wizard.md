@@ -38,7 +38,7 @@ the Windows autostart registry behavior. Run once on a real machine.
       Language & region.
 - [ ] **Skippable**: "Skip setup" and "Get started" both reveal the six
       tabs; nothing is required. Translation works immediately afterward
-      (draw a zone with Alt+Z → translation appears in the Results Window)
+      (draw a zone with Alt+Shift+Z → translation appears in the Results Window)
       with zero configuration.
 - [ ] **Shows exactly once**: quit and relaunch — the app starts with the
       tabs, not the wizard. (It returns only if the config file is deleted
@@ -133,7 +133,7 @@ the Windows autostart registry behavior. Run once on a real machine.
 ### Hotkeys tab
 
 - [ ] **Live rebind WITHOUT restart**: change Toggle translation to `F9`,
-      Save → press F9 immediately → translation toggles. Alt+T no longer
+      Save → press F9 immediately → translation toggles. Alt+Shift+T no longer
       fires (old binding dropped). The change is in config.toml.
 - [ ] **Conflict is visible**: bind two actions to the same key → toast
       "…is bound to both…" and nothing is saved. Bind a key another app
@@ -150,7 +150,7 @@ the Windows autostart registry behavior. Run once on a real machine.
       header while translation runs (or a one-shot pass is in flight) and
       disappears when stopped. Tooltip names the engine.
 - [ ] **One-shot only**: with translation stopped, run a One-shot Capture
-      (Alt+Q) → the badge appears during the pass and clears after it.
+      (Alt+Shift+Q) → the badge appears during the pass and clears after it.
 
 ### Single instance + misc
 

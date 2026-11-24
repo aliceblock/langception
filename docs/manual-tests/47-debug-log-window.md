@@ -44,7 +44,7 @@ that opening/closing it never touches the loop.
       `error · translate · …` row appears in the stream between timing
       rows, and the tray toast still fires as before.
 - [ ] **One-shot rows**: with the window open, run a One-shot Capture
-      (Alt+Q) — its pass produces a row badged **One-shot** like a zone
+      (Alt+Shift+Q) — its pass produces a row badged **One-shot** like a zone
       row (works whether the loop is running or stopped).
 - [ ] **Fused mode**: switch `reading = "fused"` (Settings → Engines) and
       restart — rows show `capture · fused · total`, no ocr/translate

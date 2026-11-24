@@ -3,20 +3,20 @@
 Run on a machine with a live desktop session (Windows). Start with the app
 built (`cargo run -p langception`) and `%APPDATA%\langception\config.toml`
 present. Scripted verification already covered by the agent: boot to tray,
-legacy `[region]` → zone migration, Alt+Z picker open/Esc-cancel, Alt+T start
-→ zone translations in the Results Window, Alt+P pause/resume, Alt+Q one-shot
+legacy `[region]` → zone migration, Alt+Shift+Z picker open/Esc-cancel, Alt+Shift+T start
+→ zone translations in the Results Window, Alt+Shift+P pause/resume, Alt+Shift+Q one-shot
 drag → "one-shot" badge entry, zone persistence across restarts. The items
 below are the ones a human must eyeball.
 
-## Alt+Z → dim → drag → zone saved; ESC cancels
+## Alt+Shift+Z → dim → drag → zone saved; ESC cancels
 
-- [ ] Press Alt+Z: the screen dims (content visible through the tint) and an
+- [ ] Press Alt+Shift+Z: the screen dims (content visible through the tint) and an
       instruction pill appears: "Drag to draw a Capture Zone · Esc to cancel".
 - [ ] Press Esc: the dimming disappears instantly, nothing is saved.
-- [ ] Alt+Z again, click without dragging (or a tiny drag): the session
+- [ ] Alt+Shift+Z again, click without dragging (or a tiny drag): the session
       cancels (standard snip behavior), nothing is saved.
-- [ ] Alt+Z while the overlay is already open: it closes (toggle).
-- [ ] Alt+Z, drag a rectangle over some text: overlay closes and a zone named
+- [ ] Alt+Shift+Z while the overlay is already open: it closes (toggle).
+- [ ] Alt+Shift+Z, drag a rectangle over some text: overlay closes and a zone named
       "Zone N" appears in the Results Window's "Capture Zones" panel with the
       correct pixel geometry.
 - [ ] If translation was stopped, it starts automatically after the first
@@ -44,21 +44,21 @@ below are the ones a human must eyeball.
 - [ ] Deleting all zones leaves the loop running but idle (no events, no
       errors).
 
-## Alt+T / Alt+P and tray state
+## Alt+Shift+T / Alt+Shift+P and tray state
 
-- [ ] Alt+T starts translation; Alt+T again stops it (same as the tray's
+- [ ] Alt+Shift+T starts translation; Alt+Shift+T again stops it (same as the tray's
       Start/Stop item).
-- [ ] Alt+P while running: the Results Window pill shows amber "Paused", the
+- [ ] Alt+Shift+P while running: the Results Window pill shows amber "Paused", the
       pause button reads "Resume", and the tray tooltip reads
       "Langception — paused". Text on screen does not get re-translated.
-- [ ] Alt+P while paused: resumes; unchanged text is NOT re-translated
+- [ ] Alt+Shift+P while paused: resumes; unchanged text is NOT re-translated
       (dedup survived the pause).
-- [ ] Alt+P while stopped: no effect; the tray's Pause item is disabled
+- [ ] Alt+Shift+P while stopped: no effect; the tray's Pause item is disabled
       while stopped.
 
-## Alt+Q One-shot Capture
+## Alt+Shift+Q One-shot Capture
 
-- [ ] Alt+Q: the picker opens with "One-shot Capture — drag a rectangle to
+- [ ] Alt+Shift+Q: the picker opens with "One-shot Capture — drag a rectangle to
       translate it once · Esc to cancel".
 - [ ] Drag over text while translation is STOPPED: exactly one pass runs and
       the entry appears with a purple "one-shot" badge — no zone is created
@@ -79,9 +79,9 @@ changes what the picker session looks like to OTHER capture tools:
       zone over unchanged text produces nothing new) nor clears existing
       pills. Tray tooltip still reads "running" (this pause is internal —
       it is NOT the amber user pause).
-- [ ] With the setting ON: closing the picker (Esc, drag commit, or Alt+Z
+- [ ] With the setting ON: closing the picker (Esc, drag commit, or Alt+Shift+Z
       toggle) resumes the loop — the next text change translates again.
-- [ ] Alt+Q one-shot with the setting ON: the pass runs only after the
+- [ ] Alt+Shift+Q one-shot with the setting ON: the pass runs only after the
       picker closes (unchanged), so the captured rectangle is clean.
 - [ ] Toggling the setting applies live: the NEXT picker open follows the
       new mode without restarting the app (pickers are created per
@@ -90,7 +90,7 @@ changes what the picker session looks like to OTHER capture tools:
 ## Hotkeys rebindable via config
 
 - [ ] In config.toml set `new_zone = "F9"` under `[hotkeys]`, restart the
-      app: F9 now opens the zone picker and Alt+Z does nothing.
+      app: F9 now opens the zone picker and Alt+Shift+Z does nothing.
 - [ ] Set a deliberately invalid value (`pause_translation = "Not+A+Key"`):
       the app still starts, the Results Window shows a yellow warning line
       naming the bad binding, and the other hotkeys keep working.
@@ -108,6 +108,6 @@ changes what the picker session looks like to OTHER capture tools:
 - Over exclusive-fullscreen games the picker/dim may not render above the
   game (documented spec limitation of always-on-top windows; borderless
   windowed works).
-- Alt+T / Alt+P / Alt+Z / Alt+Q are global: they fire even when Langception
+- Alt+Shift+T / Alt+Shift+P / Alt+Shift+Z / Alt+Shift+Q are global: they fire even when Langception
   is not focused, and can clash with other apps' bindings (rebind via
   config).

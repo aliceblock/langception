@@ -13,7 +13,7 @@ acceptance criteria pin, against a live session.
 3. Draw a Capture Zone over a window with changing text, start
    translation (an LLM engine makes the rows and traces interesting).
 4. Let it run a bit: some translated passes, an idle stretch (unchanged
-   collapse), a One-shot (Alt+Q), and — to get an error row — briefly
+   collapse), a One-shot (Alt+Shift+Q), and — to get an error row — briefly
    break the engine key.
 
 ## Checklist

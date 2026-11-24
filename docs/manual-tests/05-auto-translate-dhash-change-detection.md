@@ -12,7 +12,7 @@ a real Windows display; a game with an animated HUD is the ideal target.
 1. `cargo run` from the repo root. Have text on screen over an ANIMATED
    background (a game UI, a video, or a page with CSS animation) and some
    static text elsewhere.
-2. Create a Capture Zone covering the animated text (Alt+Z) — or use
+2. Create a Capture Zone covering the animated text (Alt+Shift+Z) — or use
    full-screen mode.
 
 ## Checklist
@@ -64,15 +64,15 @@ a real Windows display; a game with an animated HUD is the ideal target.
 - [ ] **cadence floor enforced**: `cadence_ms = 1` → config validation
       error on restart (must be at least 50).
 
-### Pause (Alt+P)
+### Pause (Alt+Shift+P)
 
-- [ ] **Pause stops everything**: Alt+P with a running loop → tray tooltip
+- [ ] **Pause stops everything**: Alt+Shift+P with a running loop → tray tooltip
       "paused"; CPU drops to zero (no capture, no OCR — not just no
       translation); changing text on screen does nothing.
-- [ ] **Resume does not retranslate**: Alt+P again after a minute of paused
+- [ ] **Resume does not retranslate**: Alt+Shift+P again after a minute of paused
       stillness → unchanged text produces no new Results Window entries
       (tracking state survived the pause); changed text translates.
-- [ ] **Stop clears**: Alt+T → pills disappear; Start → the screen
+- [ ] **Stop clears**: Alt+Shift+T → pills disappear; Start → the screen
       re-translates from scratch (fresh state — expected after stop, unlike
       pause).
 

@@ -11,7 +11,7 @@ change.
 ## Setup
 
 1. An LLM engine configured (Gemini / OpenAI-compatible / LM Studio), the
-   loop running (Alt+T) over a Capture Zone covering a game's dialogue box.
+   loop running (Alt+Shift+T) over a Capture Zone covering a game's dialogue box.
 2. Fresh `context_translations = 0` in `config.toml` (the default template
    writes it; a pre-ticket-44 config without the key loads as 0).
 

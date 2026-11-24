@@ -11,15 +11,15 @@ ticket comment for what was already verified offline.
 
 1. `cargo run` from the repo root. Have some non-Thai text on screen (a
    browser page or editor works; a game is the real target).
-2. Create a Capture Zone over text (Alt+Z) or keep one from `config.toml`.
+2. Create a Capture Zone over text (Alt+Shift+Z) or keep one from `config.toml`.
 
 ## Checklist
 
-### Adjust Mode (Alt+A)
+### Adjust Mode (Alt+Shift+A)
 
-- [ ] **Enter/exit toggles cleanly**: Alt+A → the instruction bar appears at
+- [ ] **Enter/exit toggles cleanly**: Alt+Shift+A → the instruction bar appears at
       the top of each monitor, zone rectangles render on their monitor with
-      a name label and 8 handles; Alt+A again → everything disappears and
+      a name label and 8 handles; Alt+Shift+A again → everything disappears and
       click-through is fully restored (click apps under the overlay to
       prove it). Esc also exits Adjust Mode.
 - [ ] **Click-through off while adjusting**: during Adjust Mode, clicks land
@@ -37,11 +37,11 @@ ticket comment for what was already verified offline.
 - [ ] **Drag round-trip**: hand-edit a zone's `region` in config.toml
       (bigger numbers), restart, enter Adjust Mode → the rect appears where
       the config says.
-- [ ] **Adjust while stopped**: stop translation (Alt+T), press Alt+A →
+- [ ] **Adjust while stopped**: stop translation (Alt+Shift+T), press Alt+Shift+A →
       overlays appear with zone rects; drag/resize works; the Results
       Window's zones list updates. Exit Adjust → overlays hide again (no
       loop → nothing to show).
-- [ ] **Picker interplay**: enter Adjust Mode, then Alt+Z → Adjust Mode
+- [ ] **Picker interplay**: enter Adjust Mode, then Alt+Shift+Z → Adjust Mode
       exits and the picker opens (the two must not fight over the screen);
       Esc → back to normal.
 
@@ -56,7 +56,7 @@ ticket comment for what was already verified offline.
 - [ ] **Monitor selection**: with two monitors, pick the second one in the
       Monitor dropdown → blocks from THAT monitor are translated, not the
       primary. The choice persists across restart (`[mode]` in config.toml).
-- [ ] **Exclusion click**: in full-screen mode press Alt+A → hover a Thai
+- [ ] **Exclusion click**: in full-screen mode press Alt+Shift+A → hover a Thai
       pill (dashed outline + pointer cursor) → click → the pill disappears
       immediately and the Results Window's "Excluded Blocks" panel gains an
       entry labeled with the original text. The position is never
@@ -92,11 +92,11 @@ ticket comment for what was already verified offline.
 ### Misc
 
 - [ ] **Adjust hotkey is rebindable**: set `adjust_mode = "F7"` in
-      `[hotkeys]`, restart → F7 toggles Adjust Mode, Alt+A does not. The
+      `[hotkeys]`, restart → F7 toggles Adjust Mode, Alt+Shift+A does not. The
       hotkey hint in the empty state updates.
 - [ ] **Invalid mode surfaces**: set `target = "window"` in `[mode]` →
       Results Window shows the config validation error on restart; fix it.
-- [ ] **One-shot excludes too** (full-screen target): Alt+Q over the
+- [ ] **One-shot excludes too** (full-screen target): Alt+Shift+Q over the
       excluded area → no entry for that position.
 
 ## Known slice-4 limitations (not bugs)
