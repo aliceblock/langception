@@ -21,9 +21,10 @@
     <header>
       <div class="titlebar-row" data-tauri-drag-region>
         <div class="brand" data-tauri-drag-region>
-          <img class="logo" src="logo.png" alt="" data-tauri-drag-region>
-          <h1 data-tauri-drag-region>Langception — Settings</h1>
-          <span id="privacy-chip" class="chip privacy hidden" data-tauri-drag-region data-i18n-title="settings.header.privacy_chip.title" title="The active Translate Engine sends screen text off-machine" data-i18n="results.privacy_chip.text">☁ cloud</span>
+          <!-- The reporter's ask: no app name here, and the app icon is a
+               gear (the window IS Settings). The config-error chip stays —
+               a real error signal the mock has no counterpart for. -->
+          <svg class="header-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tauri-drag-region><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
           <span id="config-error-chip" class="chip error hidden" data-tauri-drag-region data-i18n-title="settings.header.config_error_chip.title" title="config.toml is broken — see the Results Window" data-i18n="settings.header.config_error_chip">config error</span>
         </div>
         <div class="titlebar-buttons"></div>
@@ -161,14 +162,15 @@
             </select>
           </label>
           <label class="form-row">
-            <span data-i18n="settings.general.ui_language">UI Language</span>
+            <!-- The v1 limitation wording lives in the tooltip (the
+                 reporter: visible details out, tooltips in). -->
+            <span data-i18n="settings.general.ui_language" data-i18n-title="settings.general.ui_language.hint">UI Language</span>
             <select id="general-ui-language">
               <!-- Native names on purpose (each option shows its own
                    language); the values are the config's UiLanguage codes. -->
               <option value="en" data-i18n="settings.general.ui_language.en">English</option>
               <option value="th" data-i18n="settings.general.ui_language.th">ไทย</option>
             </select>
-            <span class="hint" data-i18n="settings.general.ui_language.hint"></span>
           </label>
           <label class="form-row">
             <span data-i18n="settings.general.cadence">Cadence (ms)</span>
@@ -199,12 +201,6 @@
             <input id="general-capture-visible" type="checkbox" />
           </label>
         </div>
-        <div class="row">
-          <span class="hint" data-i18n="settings.general.profiles_hint">
-            Per-app Profiles can override some of these (Settings →
-            Profiles).
-          </span>
-        </div>
         </div>
       </section>
 
@@ -214,10 +210,10 @@
              per-engine cards (their own cards), and prompts + OCR packs. -->
         <div class="settings-section">
         <h3 data-i18n="settings.engines.translation_h3">Translation</h3>
-        <p class="hint" data-i18n="settings.engines.translation_hint">
-          The engine that translates every Text Block; per-app Profiles can
-          override it (Settings → Profiles). Cloud engines send screen text
-          to their service — the ☁ badge shows when one is active.
+        <!-- The mock's one-line lede; the ☁ / Profiles-override details
+             moved into the Translation-engine label's tooltip. -->
+        <p class="hint" data-i18n="settings.engines.lede">
+          Configure the OCR reader and the active translation provider.
         </p>
         <div class="form-grid">
           <label class="form-row">
@@ -228,7 +224,7 @@
             </select>
           </label>
           <label class="form-row">
-            <span data-i18n="settings.engines.ocr_engine">OCR engine</span>
+            <span data-i18n="settings.engines.ocr_engine" data-i18n-title="settings.engines.ocr_tooltip">OCR engine</span>
             <select id="engines-ocr">
               <option value="windows" data-i18n="settings.engines.ocr.windows">Windows OCR — default, needs an installed language pack</option>
               <option value="pp-ocrv6-tiny" data-i18n="settings.engines.ocr.tiny">PP-OCRv6 tiny — bundled, offline, fastest tier (best for English &amp; Chinese)</option>
@@ -237,7 +233,7 @@
             </select>
           </label>
           <label class="form-row">
-            <span data-i18n="settings.engines.translate_engine">Translation engine</span>
+            <span data-i18n="settings.engines.translate_engine" data-i18n-title="settings.engines.engine_tooltip">Translation engine</span>
             <select id="engines-default">
               <option value="google" data-i18n="settings.engines.engine.google">Google Translate (unofficial) — free, no key</option>
               <option value="lmstudio" data-i18n="settings.engines.engine.lmstudio">LM Studio — local & offline, no key</option>
@@ -248,18 +244,6 @@
             </select>
           </label>
         </div>
-        <p class="hint" data-i18n-html="settings.engines.ocr_hint_html">
-          The OCR engine reads the screen before translation.
-          <strong>Windows OCR</strong> (the default) is lighter but needs
-          the matching language pack installed (checked below).
-          <strong>PP-OCRv6</strong> ships with the app and runs fully
-          offline — pick the tier: tiny is fastest (its vocabulary covers
-          English and Chinese only), small is the balanced default read,
-          medium is the most accurate and heaviest per pass. Korean always
-          reads through the dedicated Korean model. If the selected engine
-          cannot run, the pass falls back to Windows OCR automatically and
-          a notice says so.
-        </p>
         <p id="engines-reading-warning" class="hint hidden" data-i18n-html="settings.engines.fused_warning_html">
           Sends every captured frame to the engine as an image — read and
           translate in one call. Slower per pass and billed per image on
@@ -389,22 +373,14 @@
           </div>
         </div>
         <div class="settings-section">
-        <h3 data-i18n="settings.prompts.title">Prompts (advanced)</h3>
-        <p class="hint" data-i18n-html="settings.prompts.hint_html">
-          The system prompts sent to the LLM engines (Gemini,
-          OpenAI-compatible, LM Studio) with every translation; Google, Azure
-          and DeepL never see prompts. <code>{source}</code> and
-          <code>{target}</code> are replaced with the language names —
-          Glossary terms and Genderless Mode are added automatically.
-        </p>
+        <h3 data-i18n="settings.prompts.title" data-i18n-title="settings.prompts.tooltip">Prompts (advanced)</h3>
         <!-- Ticket 54: Genderless Mode moved here from General — it shapes
              the same translation output these prompts produce. Same id and
              save command as before (set_general); only the row's home moved. -->
         <div class="form-grid">
-          <label class="form-row" data-i18n-title="settings.prompts.genderless.title" title="Translates without speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns are removed from the output">
+          <label class="form-row" data-i18n-title="settings.prompts.genderless.title">
             <span data-i18n="settings.prompts.genderless">Genderless Mode</span>
             <input id="general-genderless" type="checkbox" />
-            <span class="hint" data-i18n="settings.prompts.genderless.hint">Applies when translation (re)starts.</span>
           </label>
         </div>
         <div class="form-grid">
@@ -414,11 +390,6 @@
             <select id="engines-preset"></select>
           </label>
         </div>
-        <p class="hint" data-i18n-html="settings.presets.pick_hint_html">
-          Picking a preset loads its two prompts below — <strong>General</strong>
-          clears both (the built-in default). Editing a loaded prompt turns the
-          selection into <strong>Custom</strong>.
-        </p>
         <div class="row glossary-add">
           <input id="engines-preset-name" type="text" maxlength="80" data-i18n-placeholder="settings.presets.name_placeholder" placeholder="Preset name" spellcheck="false" />
           <button id="engines-preset-save" class="btn small" data-i18n-title="settings.presets.save_btn_title" title="Store the two prompts below under this name and select the new preset" data-i18n="settings.presets.save_btn">
@@ -431,10 +402,6 @@
             Delete
           </button>
         </div>
-        <p class="hint" data-i18n-html="settings.presets.manage_hint_html">
-          <em>Save as preset</em> stores the two prompts as they read right now.
-          Saved presets can be renamed and deleted; built-ins cannot.
-        </p>
         <div class="prompt-field">
           <div class="row prompt-head">
             <span class="prompt-label" data-i18n="settings.prompt.translation_label">Translation prompt</span>
@@ -446,13 +413,12 @@
         </div>
         <div class="prompt-field">
           <div class="row prompt-head">
-            <span class="prompt-label" data-i18n="settings.prompt.screen_label">Screen-reading prompt</span>
+            <span class="prompt-label" data-i18n="settings.prompt.screen_label" data-i18n-title="settings.prompt.screen_hint">Screen-reading prompt</span>
             <button id="engines-prompt-screen-reading-reset" class="btn small" data-i18n-title="settings.prompt.screen_reset_title" title="Clear the field — the built-in screen-reading instruction applies again" data-i18n="settings.prompt.reset_btn">
               Reset to default
             </button>
           </div>
           <textarea id="engines-prompt-screen-reading" rows="5" spellcheck="false" data-i18n-placeholder="settings.prompt.screen_placeholder" placeholder="Leave empty to use the built-in screen-reading instruction."></textarea>
-          <span class="hint" data-i18n="settings.prompt.screen_hint">Used only when Processing above is “Vision model” (one fused call reads and translates every block).</span>
         </div>
         <div class="row">
           <button id="engines-test" class="btn small" data-i18n="settings.engines.test_btn">Test translation engine</button>
@@ -460,16 +426,13 @@
         </div>
         </div>
         <div class="settings-section">
-        <h3 data-i18n="settings.packs_section.title">OCR Engine — Windows OCR language packs</h3>
-        <p class="hint" data-i18n="settings.packs_section.hint">
-          Windows OCR needs a language pack for the Source Language you read —
-          a missing pack silently reads nothing, so the packs are checked
-          here.
-        </p>
+        <div class="section-head">
+          <h3 data-i18n="settings.packs_section.title" data-i18n-title="settings.packs_section.hint">Windows OCR Language Packs</h3>
+          <button id="engines-recheck" class="btn small" data-i18n="settings.packs_section.recheck_btn">Re-check</button>
+        </div>
         <ul id="engines-packs" class="packs"></ul>
         <div class="row">
-          <button id="engines-recheck" class="btn small" data-i18n="settings.packs_section.recheck_btn">Re-check</button>
-          <button id="engines-open-language-settings" class="btn small" data-i18n="settings.packs_section.open_language_settings">
+          <button id="engines-open-language-settings" class="btn small ghost" data-i18n="settings.packs_section.open_language_settings">
             Open Windows language settings
           </button>
           <span id="engines-packs-note" class="hint"></span>
@@ -478,11 +441,11 @@
       </section>
 
       <section id="tab-glossary" class="page">
-        <h2 data-i18n="settings.glossary.title">Glossary</h2>
-        <p class="hint" data-i18n="settings.glossary.hint">
-          When a block's entire text matches a term (trimmed,
-          case-insensitive), its pinned Thai is shown without calling the
-          engine.
+        <h2 data-i18n="settings.glossary.title" data-i18n-title="settings.glossary.hint">Glossary</h2>
+        <!-- The mock's one-line lede; the matching rule moved into the
+             title's tooltip. -->
+        <p class="hint" data-i18n="settings.glossary.lede">
+          Pinned translations applied across all apps and games.
         </p>
         <!-- Ticket 41: the management area (add/import/export/list) in one
              section card; the Add button is a plain secondary — the sticky
@@ -515,15 +478,15 @@
 
       <section id="tab-profiles" class="page">
         <div class="page-head">
-          <h2 data-i18n="settings.profiles.title">Profiles</h2>
+          <h2 data-i18n="settings.profiles.title" data-i18n-title="settings.profiles.hint">Profiles</h2>
           <!-- The mock's amber "+ New Profile" in the page head. -->
           <button id="profile-new" class="btn primary small" data-i18n="settings.profiles.new_btn">+ New Profile…</button>
         </div>
-        <p class="hint" data-i18n="settings.profiles.hint">
-          A Profile gives one app its own Source Language, engine, Capture
-          Zones inside its window, Glossary layer, Genderless Mode and
-          System Prompt Preset. It applies while that app is the foreground
-          window; with no match, the global settings apply.
+        <!-- The mock's one-line lede; the full explanation moved into the
+             title's tooltip. -->
+        <p class="hint" data-i18n="settings.profiles.lede">
+          Auto-switch engine, zones, and glossary when a specific window is
+          focused.
         </p>
         <!-- The mock's profile selector strip: the dropdown and Delete in
              one bordered card. The select is flexed with min-width: 0 so a
@@ -543,7 +506,7 @@
           <!-- Ticket 41: the editor's three concerns (identity, glossary
                layer, capture zones) each get a section card. -->
           <div class="settings-section">
-          <h3 data-i18n="settings.profiles.editor.title">Profile</h3>
+          <h3 data-i18n="settings.profiles.editor.title" data-i18n-title="settings.profiles.foreground_hint">Profile</h3>
           <div class="form-grid">
             <label class="form-row">
               <span data-i18n="settings.profiles.name_label">Name</span>
@@ -591,12 +554,6 @@
                 <option value="" data-i18n="settings.profiles.preset.inherit">Inherit global (Settings → Engines)</option>
               </select>
             </label>
-          </div>
-          <div class="row">
-            <span class="hint" data-i18n="settings.profiles.foreground_hint">
-              While the app owns the foreground window, only its window (or
-              the zones below) is watched.
-            </span>
           </div>
           </div>
 
@@ -652,7 +609,17 @@
              renderer (pill-style.js) against the CURRENT form values —
              unsaved edits included — so it shows what an In-place Overlay
              pill would draw once Save lands it. The corner marker says
-             when the form differs from the saved style. -->
+             when the form differs from the saved style. Ticket 61
+             reopened: the mock's LIVE PREVIEW head with the backdrop
+             switcher (Dark / Light / Game Scene — client-side only). -->
+        <div class="preview-head">
+          <span class="preview-label" data-i18n="settings.style.preview_label">LIVE PREVIEW</span>
+          <div class="preview-switch" id="style-preview-switch">
+            <button type="button" data-bg="dark" class="active" data-i18n="settings.style.bg.dark">Dark</button>
+            <button type="button" data-bg="light" data-i18n="settings.style.bg.light">Light</button>
+            <button type="button" data-bg="game" data-i18n="settings.style.bg.game">Game Scene</button>
+          </div>
+        </div>
         <div class="row">
           <div id="style-preview" data-i18n-title="settings.style.preview_title" title="Exact preview — rendered with the same pill code as the In-place Overlay, from the form's current values">
             <span id="style-preview-pill"><span id="style-preview-text">เรือลำนี้ไม่อาจรอดชีวิตในปี 1999</span></span>
@@ -664,22 +631,24 @@
         </div>
         <div class="form-grid">
           <label class="form-row">
-            <span data-i18n="settings.style.font">Font</span>
+            <span data-i18n="settings.style.font" data-i18n-title="settings.style.font_title">Font</span>
             <span class="style-pair stack">
               <input id="style-font" type="text" spellcheck="false" list="font-list" data-i18n-title="settings.style.font_title" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" placeholder="Noto Sans Thai" />
               <datalist id="font-list"></datalist>
             </span>
           </label>
           <label class="form-row">
-            <span data-i18n="settings.style.size">Size (6–96)</span>
-            <input id="style-size" type="number" min="6" max="96" step="1" />
+            <!-- The mock's slider with the live px label. The label is
+                 split so applyStatic's textContent write can't wipe the
+                 live value span. -->
+            <span><span data-i18n="settings.style.size_label">Font Size</span> (<span id="style-size-val">30</span>px)</span>
+            <input id="style-size" type="range" min="6" max="96" step="1" />
           </label>
           <label class="form-row">
-            <span data-i18n="settings.style.auto_colors">Auto colors</span>
+            <span data-i18n="settings.style.auto_colors" data-i18n-title="settings.style.auto_colors_hint">Auto colors</span>
             <span class="style-pair">
               <input id="style-auto-colors" type="checkbox" data-i18n-title="settings.style.auto_colors_input_title" title="Sample each block's text and pill colors from the captured pixels" />
             </span>
-            <span class="hint" data-i18n="settings.style.auto_colors_hint">colors follow the game — sampled text/pill adapt per block; the manual Color is the fallback</span>
           </label>
           <label class="form-row">
             <span data-i18n="settings.style.color">Color</span>
@@ -703,18 +672,17 @@
             </span>
           </label>
           <label class="form-row">
-            <span data-i18n="settings.style.cover_source">Background cover source</span>
+            <span data-i18n="settings.style.cover_source" data-i18n-title="settings.style.cover_source_hint">Background cover source</span>
             <span class="style-pair">
               <input id="style-cover-source" type="checkbox" data-i18n-title="settings.style.cover_source_title" title="Stretch the pill over the whole original text block" />
             </span>
-            <span class="hint" data-i18n="settings.style.cover_source_hint">stretch the pill over the whole original block instead of hugging the translation (needs Background pill)</span>
           </label>
           <!-- Text Alignment (tickets 36/38) only means anything inside a
                Background Cover Source pill — horizontal and vertical — so
                the row appears only while Background Cover Source is checked
                (settings.js toggles it). -->
           <label id="style-alignment-row" class="form-row hidden">
-            <span data-i18n="settings.style.alignment">Text alignment</span>
+            <span data-i18n="settings.style.alignment" data-i18n-title="settings.style.alignment_hint">Text alignment</span>
             <span class="style-pair">
               <select id="style-text-alignment" data-i18n-title="settings.style.alignment_h_title" title="Where the translated text sits horizontally inside the stretched pill">
                 <option value="left" data-i18n="settings.style.align.left">Left</option>
@@ -727,10 +695,9 @@
                 <option value="bottom" data-i18n="settings.style.align.bottom">Bottom</option>
               </select>
             </span>
-            <span class="hint" data-i18n="settings.style.alignment_hint">where the translated text sits inside the stretched pill (horizontal, vertical)</span>
           </label>
           <label class="form-row">
-            <span data-i18n="settings.style.placement">Placement</span>
+            <span data-i18n="settings.style.placement" data-i18n-title="settings.style.placement_hint">Placement</span>
             <span class="style-pair">
               <select id="style-placement" data-i18n-title="settings.style.placement_title" title="Where translated text sits relative to each original text block">
                 <option value="over" data-i18n="settings.style.placement.over">Over the original (in place)</option>
@@ -739,41 +706,37 @@
                 <option value="beside" data-i18n="settings.style.placement.beside">Beside the original</option>
               </select>
             </span>
-            <span class="hint" data-i18n="settings.style.placement_hint">where the translation sits relative to each block; Background Cover Source wins when it is on</span>
           </label>
         </div>
         </div>
       </section>
 
       <section id="tab-hotkeys" class="page">
-        <h2 data-i18n="settings.hotkeys.title">Hotkeys</h2>
-        <p class="hint" data-i18n="settings.hotkeys.hint">
-          Global hotkeys, system-wide. Format: modifiers + key, e.g.
-          "Alt+Shift+T", "Ctrl+Shift+Z", "F9". If a key is already taken by
-          another app, a
-          warning appears in the Results Window.
-        </p>
+        <h2 data-i18n="settings.hotkeys.title" data-i18n-title="settings.hotkeys.hint">Hotkeys</h2>
+        <!-- Ticket 61 reopened: the mock's recorder — click a box, press
+             the combination (settings.js captures the next keydown;
+             Esc cancels). The format examples live in the tooltip. -->
         <div class="settings-section">
         <div class="form-grid">
           <label class="form-row">
             <span data-i18n="settings.hotkeys.toggle">Toggle translation</span>
-            <input id="hotkey-toggle" type="text" spellcheck="false" />
+            <input id="hotkey-toggle" type="text" class="hotkey-input" readonly spellcheck="false" data-i18n-title="settings.hotkeys.record_title" title="Click, then press the new combination — Esc cancels" />
           </label>
           <label class="form-row">
             <span data-i18n="settings.hotkeys.new_zone">New Capture Zone</span>
-            <input id="hotkey-new-zone" type="text" spellcheck="false" />
+            <input id="hotkey-new-zone" type="text" class="hotkey-input" readonly spellcheck="false" data-i18n-title="settings.hotkeys.record_title" title="Click, then press the new combination — Esc cancels" />
           </label>
           <label class="form-row">
             <span data-i18n="settings.hotkeys.pause">Pause / resume</span>
-            <input id="hotkey-pause" type="text" spellcheck="false" />
+            <input id="hotkey-pause" type="text" class="hotkey-input" readonly spellcheck="false" data-i18n-title="settings.hotkeys.record_title" title="Click, then press the new combination — Esc cancels" />
           </label>
           <label class="form-row">
             <span data-i18n="settings.hotkeys.adjust">Adjust Mode</span>
-            <input id="hotkey-adjust" type="text" spellcheck="false" />
+            <input id="hotkey-adjust" type="text" class="hotkey-input" readonly spellcheck="false" data-i18n-title="settings.hotkeys.record_title" title="Click, then press the new combination — Esc cancels" />
           </label>
           <label class="form-row">
             <span data-i18n="settings.hotkeys.one_shot">One-shot Capture</span>
-            <input id="hotkey-one-shot" type="text" spellcheck="false" />
+            <input id="hotkey-one-shot" type="text" class="hotkey-input" readonly spellcheck="false" data-i18n-title="settings.hotkeys.record_title" title="Click, then press the new combination — Esc cancels" />
           </label>
         </div>
         </div>
@@ -810,7 +773,7 @@
              result area doubles as the launch-time check's surface (the
              outcome arrives as an event or rides the page's boot status). -->
         <div class="settings-section">
-        <h3 data-i18n="settings.about.updates.title">Updates</h3>
+        <h3 data-i18n="settings.about.updates.title" data-i18n-title="settings.about.updates.check_only_hint">Updates</h3>
         <div class="row">
           <button id="about-check-updates" class="btn small" data-i18n="settings.about.updates.check_btn">Check for new version</button>
           <label class="inline-toggle" data-i18n-title="settings.about.updates.launch_toggle_title" title="Check automatically every time Langception starts. Off by default — nothing is fetched at launch unless you turn this on.">
@@ -822,11 +785,6 @@
         <div id="about-update-download-row" class="row hidden">
           <button id="about-update-download" class="btn small" data-i18n="settings.about.updates.download_btn">Open download page</button>
         </div>
-        <p class="hint" data-i18n="settings.about.updates.check_only_hint">
-          Check-only: Langception never downloads or installs anything — a
-          new version is reported with a link, opened in your browser only
-          when you click it.
-        </p>
         </div>
       </section>
     </main>

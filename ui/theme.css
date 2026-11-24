@@ -158,17 +158,25 @@ kbd {
   min-width: 0;
 }
 
-/* The real brand artwork (ticket 32): ui/logo.png is the bundled 128px icon
-   verbatim — same file the exe/taskbar use — downscaled by the browser to
-   titlebar size. The border just separates the artwork's black ground from
-   the panel behind it; the attribute work (drag region) stays in the HTML.
-   (The redesign mock draws an "LC" gradient square; the real window keeps
-   the actual icon.) */
-.logo {
-  width: 28px; height: 28px;
+/* The mock's brand tile (ticket 61 reopened, reporter's ask): the amber
+   gradient "LC" square — the redesign's logo verbatim — in both windows'
+   titlebars. (The real icon artwork stays where the OS shows it: the
+   exe, the taskbar, the tray.) Settings swaps this for a gear icon per
+   the same feedback round; the tile is the Results window's brand. */
+.logo-tile {
+  width: 26px;
+  height: 26px;
   flex: none;
-  border-radius: 7px;
-  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: linear-gradient(135deg, #fbbf24 0%, #d97706 100%);
+  color: #1c1917;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
 .titlebar-buttons {

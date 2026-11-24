@@ -35,10 +35,15 @@ narrow-width overflow fix.)
 
 ## Results window
 
-- [ ] Titlebar at 800px, stopped: logo, "Langception", Stopped badge, the
-      sky-tinted `EN → TH` dropdown button, then Start (amber, play icon),
-      Adjust, Settings (icons + labels), divider, pin, minimize, close.
-      Nothing overlaps; the row stays 52px.
+- [ ] Titlebar at 800px: the mock's amber "LC" gradient tile (no app name
+      — the reporter removed it), the Stopped badge, the sky-tinted
+      `EN → TH` dropdown, Start (amber, play icon), Adjust, divider, pin,
+      minimize, close. Nothing overlaps; the row stays 52px.
+- [ ] The status bar's right end holds "v… • Tauri" and the ICON-ONLY
+      Settings gear; clicking it opens/focuses the Settings window (the
+      titlebar has no Settings button anymore).
+- [ ] Empty state: the card hugs its content (no full-height sheet) and
+      centers in the workspace.
 - [ ] Language dropdown: clicking opens the "Translation Pair" menu with the
       four native-name pairs and mono codes, the current pair's code in
       amber. Picking a different pair persists it (config) and restarts the
@@ -83,24 +88,44 @@ narrow-width overflow fix.)
 
 ## Settings window
 
-- [ ] The nav is a left sidebar (icons + labels, "Engines & OCR" wording);
-      the active tab is the amber-tinted segment; About sits pinned at the
-      bottom. Clicking through all seven tabs swaps the pages.
+- [ ] Titlebar: the gear mark only — no app name, no ☁ cloud chip (the
+      privacy signal lives in the Results footer and the tray). The
+      config-error chip still appears on a broken config.
+- [ ] Visible hints are gone from the tab pages; the moved details live in
+      tooltips: UI-Language limitation (label), OCR-engine tiers (label),
+      Translation-engine ☁/Profiles note (label), Prompts (advanced) h3,
+      Genderless "applies on restart" (label), screen-reading prompt
+      (label), Glossary matching rule (h2), Profiles full explanation
+      (h2) and the foreground rule (Profile card h3), Hotkeys format (h2),
+      Updates check-only note (h3), Text Style per-row hints (labels).
+      Hover each to confirm the wording (English and Thai).
+- [ ] Engines lede and Glossary/Profiles ledes read as the mock's one
+      lines; the packs card is the mock's shape — "Windows OCR Language
+      Packs" with Re-check on the head row, list rows "English (en-US)" +
+      installed/missing pill right, the how-to-install text as a row
+      tooltip, "Open Windows language settings" as a quiet ghost button
+      under the list.
+- [ ] Glossary: the filter's magnifier icon no longer sits under the
+      typed text; filtering still narrows on term or Thai and the
+      no-match line reads "No terms match the filter.".
+- [ ] Text Style: the LIVE PREVIEW head with Dark / Light / Game Scene
+      switcher repaints only the backdrop (dark default); Font Size is
+      the mock's slider with a live "(Npx)" label in the row label; the
+      corner "unsaved" chip still tracks form edits.
+- [ ] Hotkeys: the boxes are recorders — click ("Press keys…"), press a
+      combination (e.g. Ctrl+Shift+K) and it lands in the box and flips
+      the save bar; Esc cancels; clicking another box abandons the first.
+      Saving still rejects taken bindings with the fields snapping back.
 - [ ] Profiles: "+ New Profile" is the amber primary in the page head; the
       selector strip holds the styled dropdown (white medium text) and the
       rose Delete. A long profile name ellipsizes; at the 620px window
-      minimum nothing overflows the frame (the reported bug).
-- [ ] Glossary: the filter box under the import/export row narrows the
-      list on term or Thai text; an active filter with no matches shows
-      "No terms match the filter." (not "No terms yet.").
+      minimum nothing overflows the frame.
 - [ ] Cards: every section reads as a rounded (12px) bordered card; engine
       cards collapse/expand; the wizard shows the same card look.
 - [ ] Sticky save bar: edit any tracked field — the bar appears with a
       pulsing amber dot and "You have unsaved changes", Discard and "Save
       Changes" on the right, amber-tinted top edge. Discard still restores
       every snapshot in one press.
-- [ ] Hotkey inputs render as centered mono amber boxes with the mock's
-      fixed width; editing and saving them works.
 - [ ] Thai UI (`ui_language = "th"`): the whole window renders Thai —
       sidebar labels ("เอนจินและ OCR"), "คุณมีการแก้ไขที่ยังไม่ได้บันทึก",
       "บันทึกการเปลี่ยนแปลง" — and the Results window carries the mock's
@@ -121,10 +146,24 @@ narrow-width overflow fix.)
 ## Regression sweep
 
 - [ ] `cargo test --workspace` green (the i18n key-parity test covers the
-      new footer/dropdown/toolbar/banner keys and the removed
-      mode_panel/zones_title/empty_hint keys in both dictionaries).
+      new footer/dropdown/toolbar/banner/tooltip keys and the removed
+      hint keys in both dictionaries).
 - [ ] A source-language pick from the Results titlebar while the loop runs
       restarts it exactly once (the General-tab restart rule) — watch the
       badge blink stopped→running.
 - [ ] The wizard path on a fresh config still shows first, and Skip setup
       lands on the tabbed shell.
+
+## Debug Log white window (reporter's bug — diagnosis recorded)
+
+- [ ] With the CURRENT build: open Settings, close it (✕ hides), open the
+      Debug Log from the tray — the window must show its real dark page
+      ("waiting for the first pass…"). Reproduced clean on 2026-11-25
+      (automated open/close/probe); see the ticket for the full
+      diagnosis. The white window reported is WebView2's
+      "can't reach this page" error sheet — it appears when the running
+      exe navigates to a dead page origin (e.g. a `tauri dev` dev server
+      that is no longer running); already-loaded windows keep their
+      rendered content, so only freshly opened windows (the Debug Log)
+      show it. If it reproduces on a fresh `cargo build` exe, capture the
+      window with the PrintWindow probe and record the served origin.

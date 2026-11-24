@@ -42,8 +42,6 @@ header {
   user-select: none;
 }
 
-h1 { font-size: 14px; font-weight: 600; color: #fff; }
-
 /* Active-Profile chip (ticket 19): amber marks the special state
    (PRODUCT.md principle 2). Both state chips shrink under pressure —
    min-width 0 + ellipsis — so a crowded titlebar (running state adds
@@ -589,9 +587,9 @@ main { flex: 1; overflow-y: auto; position: relative; display: flex; flex-direct
   color: #f1f5f9;
 }
 
-/* Empty-state card. */
+/* Empty-state card: hugs its content (the reporter asked for the mock's
+   card, not a full-height sheet) and centers in the leftover space. */
 .empty-state {
-  flex: 1;
   margin: auto;
   max-width: 448px;
   width: calc(100% - 48px);
@@ -712,7 +710,9 @@ main { flex: 1; overflow-y: auto; position: relative; display: flex; flex-direct
 .footer-item #footer-engine-name, .footer-item #footer-overlay-value { color: var(--text); }
 .footer-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--ok); flex: none; }
 .footer-sep { color: var(--border-strong); }
-#footer-version { white-space: nowrap; }
+.footer-right { display: flex; align-items: center; gap: 10px; flex: none; }
+/* The status bar's Settings gear: icon-only, sized to the 28px bar. */
+.footer-right .tb-btn { width: 26px; height: 20px; }
 
 /* Toast (the mock's): bottom-right dark panel with an info glyph. */
 .toast {

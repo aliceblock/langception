@@ -112,6 +112,10 @@ h3 {
 .btn:disabled:not(.primary):not(.danger) { opacity: 0.45; cursor: default; }
 .btn:disabled:not(.primary):not(.danger):hover { border-color: var(--border); background: var(--panel-2); color: var(--text); }
 .btn.small { padding: 4px 10px; font-size: 11px; }
+/* Ghost variant (the packs card's "Open Windows language settings"): the
+   mock's quiet text-button look. */
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.ghost:hover { background: rgba(255, 255, 255, 0.05); border-color: transparent; color: var(--text); }
 
 .hint { font-size: 12px; color: var(--muted); line-height: 1.5; }
 
@@ -152,6 +156,27 @@ h3 {
 /* A trailing note (About's privacy hint) breathes below the actions row. */
 .settings-section > .row + p.hint { margin-top: 10px; }
 
+/* The mock's card head: section title on the left, the section's action
+   button (Re-check) on the right. */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.section-head h3 { margin-bottom: 0; }
+
+/* The Settings window's gear mark (ticket 61 reopened, reporter's ask):
+   the app icon in this window's titlebar is a gear, and there is no app
+   name — the window IS Settings. */
+.header-gear {
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+  flex: none;
+}
+
 /* ---- Wizard ---- */
 
 .wizard {
@@ -180,9 +205,13 @@ h3 {
 .wizard-step .engine-card { background: var(--bg); }
 
 .packs { list-style: none; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+/* Ticket 61 reopened: the mock's pack rows — "English (en-US)" on the
+   left, the installed/missing pill on the right (the how-to-install text
+   lives in the row's tooltip, packRow in settings.js). */
 .pack-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding: 7px 10px;
   background: var(--panel-2);
@@ -190,9 +219,10 @@ h3 {
   border-radius: 8px;
   font-size: 12px;
 }
-.pack-row .pack-name { min-width: 90px; font-weight: 600; }
-.pack-row .pack-tag { font-family: Consolas, monospace; font-size: 10px; color: var(--muted); }
-.pack-row .pack-instructions { font-size: 11px; color: var(--muted); }
+.pack-row .pack-left { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
+.pack-row .pack-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pack-row .pack-tag { font-family: Consolas, monospace; font-size: 10px; color: var(--muted); flex: none; }
+.pack-row .pill { flex: none; }
 .pill {
   font-size: 10px;
   padding: 2px 8px;
@@ -377,15 +407,25 @@ h3 {
   min-width: 120px;
 }
 
-/* Hotkey bindings (ticket 61): the redesign shows these as mono keycap
-   material — the fields stay editable text, but read in the mono face,
-   with the mock's fixed-width centered box. */
+/* Hotkey bindings (ticket 61 reopened): the mock's recorder boxes —
+   click a box, press the combination (settings.js captures the next
+   keydown; Esc cancels). Read-only by nature: the value comes from real
+   key presses, not typing. */
 #tab-hotkeys .form-row input[type="text"] {
   font-family: Consolas, monospace;
   color: var(--accent);
   text-align: center;
   min-width: 140px;
   max-width: 180px;
+  cursor: pointer;
+  user-select: none;
+}
+#tab-hotkeys .form-row input[type="text"]:hover { border-color: var(--accent); }
+#tab-hotkeys .form-row input[type="text"].recording {
+  border-color: var(--accent);
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--text);
+  cursor: progress;
 }
 
 /* Toggles and sliders take the accent, checkboxes keep their own cell
@@ -441,7 +481,10 @@ input[type="color"] {
 .profile-strip .chip { flex: none; }
 
 /* ---- Glossary filter (ticket 61 reopened): the mock's search box ----
-   icon nested left of the input, like the mock's relative wrapper. */
+   icon nested left of the input, like the mock's relative wrapper. The
+   padding-left override needs the SAME specificity as the unified-control
+   base rule (.glossary-search input[type="text"]) or the base 10px wins
+   and the text slides under the icon (the reported overlap). */
 .glossary-search {
   position: relative;
   margin-top: 10px;
@@ -456,15 +499,14 @@ input[type="color"] {
   color: var(--muted);
   pointer-events: none;
 }
-.glossary-search input { width: 100%; padding-left: 30px; }
+.glossary-search input[type="text"] { width: 100%; padding-left: 30px; }
 
 /* Exact Text Style preview (ticket 26): the pill element inside is styled
    by the overlay's shared renderer (pill-style.js) against the in-form
    values, so the preview shows what an In-place Overlay pill would draw
-   once Save lands it. The stage backdrop is only a stand-in scene — real
-   pills float over arbitrary screen content. Ticket 41 keeps the scene
-   gradient (it must read as "game content", not as app chrome) and fits
-   the frame to the card system. */
+   once Save lands it. Ticket 61 reopened adds the mock's LIVE PREVIEW
+   head and its backdrop switcher (Dark / Light / Game Scene,
+   client-side only — the pill rendering never changes). */
 
 /* (The bundled Noto Sans Thai faces are declared in theme.css since
    ticket 63 — both weights, shared by every normal window.) */
@@ -479,10 +521,56 @@ input[type="color"] {
   padding: 16px 18px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: linear-gradient(160deg, #3a4152 0%, #262b38 55%, #1a1d27 100%);
+  /* Dark backdrop default (the mock's canvas); .preview-light and
+     .preview-game swap it (settings.js owns the class + button states). */
+  background: #090a0c;
   width: 100%;
   max-width: 420px;
   overflow: hidden;
+}
+#style-preview.preview-light { background: #e2e8f0; }
+#style-preview.preview-game {
+  background: linear-gradient(160deg, #3a4152 0%, #262b38 55%, #1a1d27 100%);
+}
+
+/* The mock's LIVE PREVIEW head: small-caps label left, backdrop switcher
+   right. */
+.preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+}
+.preview-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.preview-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.preview-switch button {
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.preview-switch button:hover { color: var(--text); }
+.preview-switch button.active {
+  background: var(--panel-2);
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 /* Mirrors .overlay-block's text metrics (overlay.css) — line-height,

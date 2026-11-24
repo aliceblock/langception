@@ -21,7 +21,6 @@ const wizard = document.getElementById("wizard");
 const tabs = document.getElementById("tabs");
 const pages = document.getElementById("tab-pages");
 const toastEl = document.getElementById("toast");
-const privacyChip = document.getElementById("privacy-chip");
 const configErrorChip = document.getElementById("config-error-chip");
 
 // Frameless window controls (min/close) are wired by titlebar.js, loaded
@@ -88,10 +87,18 @@ for (const tab of document.querySelectorAll(".tab")) {
 function packRow(status) {
   const li = document.createElement("li");
   li.className = "pack-row";
+  // Ticket 61 reopened: the mock's row — "English (en-US)" left, the
+  // installed/missing pill right. The how-to-install text becomes the
+  // row's tooltip (the reporter: visible details out, tooltips in), with
+  // the pointer to the open-language-settings button appended when the
+  // pack is missing.
+  const left = document.createElement("span");
+  left.className = "pack-left";
 
   const name = document.createElement("span");
   name.className = "pack-name";
   name.textContent = status.name;
+  left.append(name);
 
   const pill = document.createElement("span");
   if (status.installed) {
@@ -99,16 +106,14 @@ function packRow(status) {
     pill.textContent = t("settings.packs.installed");
     const tag = document.createElement("span");
     tag.className = "pack-tag";
-    tag.textContent = status.packTag;
-    li.append(name, pill, tag);
+    tag.textContent = `(${status.packTag})`;
+    left.append(tag);
   } else {
     pill.className = "pill err";
     pill.textContent = t("settings.packs.missing");
-    const instructions = document.createElement("span");
-    instructions.className = "pack-instructions";
-    instructions.textContent = t("settings.packs.install_hint", { name: status.name });
-    li.append(name, pill, instructions);
+    li.title = t("settings.packs.install_hint", { name: status.name });
   }
+  li.append(left, pill);
   return li;
 }
 
@@ -1536,6 +1541,7 @@ document.getElementById("profile-zone-draw").addEventListener("click", async () 
 
 const styleFont = document.getElementById("style-font");
 const styleSize = document.getElementById("style-size");
+const styleSizeVal = document.getElementById("style-size-val");
 const styleAutoColors = document.getElementById("style-auto-colors");
 const styleColor = document.getElementById("style-color");
 const styleOutlineWidth = document.getElementById("style-outline-width");
@@ -1627,6 +1633,8 @@ const stylePreviewDirty = document.getElementById("style-preview-dirty");
 function updateStylePreview() {
   const style = collectStyle();
   applyPillStyle(stylePreviewPill, style, null);
+  // Ticket 61 reopened: the mock's live px label on the size slider.
+  styleSizeVal.textContent = String(Math.round(Number(styleSize.value) || 0));
   if (style.background && style.coverSource) {
     stylePreviewPill.style.width = "100%";
     stylePreviewPill.style.maxWidth = "none";
@@ -1687,6 +1695,21 @@ styleAutoColors.addEventListener("change", () => {
   styleColor.disabled = styleAutoColors.checked;
 });
 
+// Ticket 61 reopened: the mock's LIVE PREVIEW backdrop switcher (Dark /
+// Light / Game Scene). Client-side only — it dresses the stand-in stage,
+// never the saved style.
+const stylePreview = document.getElementById("style-preview");
+const previewSwitch = document.getElementById("style-preview-switch");
+for (const button of previewSwitch.querySelectorAll("button")) {
+  button.addEventListener("click", () => {
+    stylePreview.classList.toggle("preview-light", button.dataset.bg === "light");
+    stylePreview.classList.toggle("preview-game", button.dataset.bg === "game");
+    for (const b of previewSwitch.querySelectorAll("button")) {
+      b.classList.toggle("active", b === button);
+    }
+  });
+}
+
 // The alignment selector lives in the Cover Source context: it appears
 // only while Cover Source is checked (the preview restyles via the
 // shared listeners above, since the row's visibility does not change the
@@ -1739,6 +1762,61 @@ function loadHotkeys(hotkeys) {
   hotkeyInputs.adjust.value = hotkeys.adjust;
   hotkeyInputs.oneShot.value = hotkeys.oneShot;
 }
+
+// Ticket 61 reopened: the mock's recorder. The boxes are read-only —
+// click starts capture, the next non-modifier keydown (with whatever
+// modifiers are held) becomes the binding, Esc cancels, blur abandons.
+// Dispatching `input` afterwards drives the dirty tracker exactly like
+// typing did, so Save/Discard behave unchanged.
+let recordingHotkey = null;
+
+function stopHotkeyRecording(commit) {
+  if (!recordingHotkey) return;
+  window.removeEventListener("keydown", hotkeyRecordHandler, true);
+  const { input, previous } = recordingHotkey;
+  recordingHotkey = null;
+  input.classList.remove("recording");
+  if (!commit) input.value = previous;
+}
+
+function hotkeyRecordHandler(e) {
+  if (!recordingHotkey) return;
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.key === "Escape") {
+    stopHotkeyRecording(false);
+    return;
+  }
+  // Modifier-only presses wait for the actual key.
+  if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+  const input = recordingHotkey.input;
+  const parts = [];
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  if (e.metaKey) parts.push("Meta");
+  parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  // Tear down first (without the value restore), then commit the combo.
+  window.removeEventListener("keydown", hotkeyRecordHandler, true);
+  recordingHotkey = null;
+  input.classList.remove("recording");
+  input.value = parts.join("+");
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+for (const input of Object.values(hotkeyInputs)) {
+  input.addEventListener("click", () => {
+    if (recordingHotkey?.input === input) return;
+    stopHotkeyRecording(false); // a click on another box abandons the first
+    recordingHotkey = { input, previous: input.value };
+    input.classList.add("recording");
+    input.value = t("settings.hotkeys.recording");
+  });
+  input.addEventListener("blur", () => {
+    if (recordingHotkey?.input === input) stopHotkeyRecording(false);
+  });
+}
+window.addEventListener("keydown", hotkeyRecordHandler, true);
 
 // Ticket 39: the per-tab button's handler, extracted so the sticky footer's
 // Save-all can call it — same validation, same toasts; the boolean just
@@ -2184,13 +2262,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 });
 
 function updateChips(status) {
-  // Privacy badge mirror (ticket 06): same data the Results Window badge
-  // and the tray tooltip use. The wording differs from the Results
-  // Window's on purpose — each window's own, preserved through the seam.
-  const cloud = status.privacyEngine;
-  privacyChip.classList.toggle("hidden", !cloud);
-  if (cloud) {
-    privacyChip.title = t("settings.header.privacy_chip.cloud_title", { engine: cloud });
-  }
+  // The ☁ cloud mirror chip is gone from this window's header (ticket 61
+  // reopened, the reporter's ask) — the Results footer badge and the tray
+  // tooltip still carry the signal. Only the config-error chip remains.
   configErrorChip.classList.toggle("hidden", !status.configError);
 }
