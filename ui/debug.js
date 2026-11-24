@@ -763,4 +763,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     // timings + errors only. The session controls appear with the first
     // rendered event (showSessionControls, called by the two handlers).
   });
+
+  // Ticket 61: a UI-Language saved in Settings reaches this window on the
+  // same engine-state broadcast — re-resolve the dictionaries so the
+  // static labels follow immediately (rows already rendered keep their
+  // original language, frozen artifacts).
+  await listen("engine-state", (event) => {
+    const next = event.payload && event.payload.uiLanguage;
+    if (next && next !== window.I18n.language()) window.I18n.init(next);
+  });
 });

@@ -607,8 +607,19 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  await listen("engine-state", (event) => {
-    renderStatus(event.payload);
+  await listen("engine-state", async (event) => {
+    const payload = event.payload;
+    // A UI-Language saved in Settings comes back on this broadcast:
+    // re-resolve the dictionaries BEFORE renderStatus re-bakes every
+    // status-driven string (pill, buttons, footer, shortcuts, zone rows).
+    // The history toolbar's count label is the one string renderStatus
+    // doesn't own — refreshed here too. Entries already in the log keep
+    // their original language (frozen artifacts).
+    if (payload.uiLanguage && payload.uiLanguage !== window.I18n.language()) {
+      await window.I18n.init(payload.uiLanguage);
+      logCountLabel.textContent = t("results.history.title", { count: translationCount });
+    }
+    renderStatus(payload);
   });
 
   startBtn.addEventListener("click", async () => {

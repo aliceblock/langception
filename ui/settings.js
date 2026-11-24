@@ -788,6 +788,20 @@ function loadGeneral(status) {
   generalCaptureVisible.checked = Boolean(status.captureVisible);
 }
 
+// A live UI-Language switch: re-resolve the dictionaries (applyStatic runs
+// inside init), then re-render the JS-generated strings this window has
+// already baked — glossary rows, profile cards, the OCR packs' pills.
+// Everything else re-renders on its next event anyway. Two callers: the
+// General tab's save below, and the engine-state broadcast when a UI
+// Language was saved while this page needed to follow (ticket 61: the
+// windows follow a language change immediately, no reopen).
+async function applyUiLanguage(lang, status) {
+  appliedUiLanguage = await window.I18n.init(lang);
+  renderGlossary();
+  renderProfiles(status);
+  if (enginesPacksLoaded) loadPacks("engines");
+}
+
 // Ticket 39: the per-tab button's handler, extracted so the sticky footer's
 // Save-all can call it — same validation, same toasts; the boolean just
 // tells the footer whether the save went through.
@@ -812,14 +826,9 @@ async function saveGeneral() {
         captureVisible: generalCaptureVisible.checked,
       },
     });
-    // The UI Language applies live in this window: re-resolve the
-    // dictionaries (applyStatic runs inside), then re-render the
-    // JS-generated strings on screen. Everything else re-renders on its
-    // next event anyway.
+    // The UI Language applies live in this window (see applyUiLanguage).
     if (generalUiLanguage.value !== appliedUiLanguage) {
-      appliedUiLanguage = await window.I18n.init(generalUiLanguage.value);
-      renderGlossary();
-      renderProfiles(await invoke("get_status"));
+      await applyUiLanguage(generalUiLanguage.value, await invoke("get_status"));
     }
     toast(t("settings.general.saved"));
     return true;
@@ -2256,10 +2265,43 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   await listen("engine-state", (event) => {
-    updateChips(event.payload);
+    const payload = event.payload;
+    // A UI-Language change broadcast from anywhere (today only this
+    // window's General save writes one) re-applies live — the pages
+    // follow a language change immediately, no reopen.
+    if (payload.uiLanguage && payload.uiLanguage !== appliedUiLanguage) {
+      applyUiLanguage(payload.uiLanguage, payload);
+    }
+    // The Source-Language select follows the Results titlebar's pair the
+    // same way — but only while the user hasn't hand-edited it (the
+    // snapshot still holds the saved value): an unsaved edit wins, and
+    // the snapshot moves with the follow so the save bar never invents a
+    // phantom edit for a change the config already made.
+    if (
+      generalLanguage.value !== payload.language &&
+      generalLanguage.value === savedSnapshot.get(generalLanguage)
+    ) {
+      generalLanguage.value = payload.language;
+      savedSnapshot.set(generalLanguage, payload.language);
+    }
+    // The UI-Language select mirrors the same rule.
+    if (
+      generalUiLanguage.value !== payload.uiLanguage &&
+      generalUiLanguage.value === savedSnapshot.get(generalUiLanguage)
+    ) {
+      generalUiLanguage.value = payload.uiLanguage;
+      savedSnapshot.set(generalUiLanguage, payload.uiLanguage);
+    }
+    // The pin (Results titlebar) writes both on-top flags outside this
+    // form; saveGeneral echoes these saved values, so they must track the
+    // pushes — otherwise a pin click followed by a General save would
+    // silently revert the pin.
+    savedResultsOnTop = Boolean(payload.resultsOnTop);
+    savedSettingsOnTop = Boolean(payload.settingsOnTop);
+    updateChips(payload);
     // The Profiles list carries the per-profile `active` flags, which move
     // with the foreground app — refresh on every status push.
-    renderProfiles(event.payload);
+    renderProfiles(payload);
   });
 });
 

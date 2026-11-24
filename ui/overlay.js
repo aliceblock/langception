@@ -568,6 +568,14 @@ window.addEventListener("DOMContentLoaded", () => {
     applyStyleToAll();
   });
   listen("overlay-adjust", (event) => applyAdjustPayload(event.payload));
+  // Ticket 61: a UI-Language saved in Settings reaches every window on the
+  // same engine-state broadcast — re-resolve the dictionaries so the next
+  // note/block string renders in the new language (already-shown text
+  // follows its next event).
+  listen("engine-state", (event) => {
+    const next = event.payload && event.payload.uiLanguage;
+    if (next && next !== window.I18n.language()) window.I18n.init(next);
+  });
 
   // Initial style: pulled once so a freshly created overlay is styled
   // before its first block arrives. A live push (settings panel) wins.
