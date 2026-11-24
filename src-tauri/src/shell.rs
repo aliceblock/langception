@@ -2111,12 +2111,22 @@ fn spawn_forwarder(
                 emit_loop_event(&bridge_app, RESULTS_LABEL, &event);
             }
             // The Debug Log window (ticket 47) renders timings with the
-            // errors it shows alongside them. Window closed → dropped right
+            // errors it shows alongside them, and — since ticket 70's
+            // redesign — the Translated events too: the mock's
+            // translated-output quote block needs the words each fired
+            // read produced, which the Timing event's trace does not
+            // carry. The window correlates them onto the next Timing from
+            // the same origin (translated events are emitted mid-pass, so
+            // they always precede their pass's Timing — see debug.js).
+            // Window closed → dropped right
             // here: nothing serializes, nothing emits, and the loop's only
             // timing cost stays the orchestrator's clock reads. Never
             // awaited, never blocking — open/closing the window cannot
             // touch the loop.
-            if matches!(event, LoopEvent::Timing { .. } | LoopEvent::Error { .. }) {
+            if matches!(
+                event,
+                LoopEvent::Timing { .. } | LoopEvent::Error { .. } | LoopEvent::Translated { .. }
+            ) {
                 emit_loop_event(&bridge_app, DEBUG_LABEL, &event);
             }
         }

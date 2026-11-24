@@ -1,15 +1,34 @@
 // Langception Debug Log window (tickets 47/48) — vanilla JS against the
-// Tauri global API. Purely observational: the page only listens to the
-// same "loop-event" stream the Results Window uses, rendering one row per
-// pipeline pass with per-stage durations and the per-block read trace
-// (what OCR read, and why each block did or didn't translate) plus the
-// errors that ride the stream. History starts when the window opens; no
-// replay of the past. Ticket 49: the window also keeps a bounded
-// structured mirror of everything it showed, and an Export… button writes
-// it to a picked file as readable text — nothing is written
-// automatically, the manual export is the only file this window makes.
-// Ticket 52: Clear resets all of that in place — a fresh session without
-// reopening the window; the loop itself is untouched.
+// Tauri global API. Purely observational: the page listens to the
+// "loop-event" stream, rendering one card per pipeline pass with
+// per-stage durations and the per-block read trace (what OCR read, and
+// why each block did or didn't translate) plus the errors that ride the
+// stream. History starts when the window opens; no replay of the past.
+// Ticket 49: the window keeps a bounded structured mirror of everything
+// it showed, and Export… writes it to a picked file — nothing is written
+// automatically. Ticket 52: Clear resets all of that in place.
+//
+// Ticket 70: the window rebuilt to the Debug-Log mock (redesign.html at
+// the repo root is this window's own prototype; the mock IS the spec per
+// ticket 61's standing rule). What the mock brought beyond the restyle:
+// - KPI metric cards (the rolling per-stage summary became the mock's
+//   grid), a live pass-counter pill, filter pills (translated / waiting /
+//   suppressed, computed per pass), a client-side search over rendered
+//   text, an explicit Auto-scroll toggle over the pin-to-bottom follow,
+//   the expandable per-pass pipeline diagnostics behind the card header's
+//   chevron, toasts instead of the inline status flash, and the export
+//   modal (JSON / Plain Text preview, copy to clipboard, download through
+//   the real save dialog).
+// - The mock's translated-output quote block got a real data source: the
+//   forwarder now emits Translated events here too (shell.rs), and they
+//   are correlated onto the pass's read trace below.
+// What stays prototype-only: the mock's "Simulate Pass" button (its data
+// driver, like ticket 61's "Simulate Capture") and its per-pass toast
+// (a real pass every cadence tick must not toast); its sample data
+// (151 passes, speaker/dialogue read types) has no counterpart in the
+// stream — every read renders in the mock's dialogue style. Live
+// appends stay incremental; a full re-render happens only for
+// filter/search/clear (bounded by MAX_ROWS either way).
 
 const { listen } = window.__TAURI__.event;
 const { invoke } = window.__TAURI__.core;
@@ -17,45 +36,63 @@ const { save: saveFileDialog } = window.__TAURI__.dialog;
 const { getVersion } = window.__TAURI__.app;
 const { t } = window.I18n;
 
-const summaryEl = document.getElementById("summary");
 const rowsEl = document.getElementById("rows");
+const waitingStateEl = document.getElementById("waiting-state");
+const emptyStateEl = document.getElementById("empty-state");
+const resetFiltersBtn = document.getElementById("reset-filters-btn");
+const legendShowingEl = document.getElementById("legend-showing");
+const passCountEl = document.getElementById("pass-count");
+const passesLabelEl = document.getElementById("passes-label");
+const kpiGridEl = document.getElementById("kpi-grid");
+const searchInputEl = document.getElementById("search-input");
+const clearSearchBtn = document.getElementById("clear-search-btn");
+const autoscrollBtn = document.getElementById("autoscroll-btn");
 const exportBtn = document.getElementById("export-btn");
 const clearBtn = document.getElementById("clear-btn");
-const exportStatusEl = document.getElementById("export-status");
-
-// The empty state's wording — the HTML ships the same text (data-i18n);
-// Clear puts it back verbatim through the same key.
-const EMPTY_SUMMARY_KEY = "debug.empty_summary";
+const exportModalEl = document.getElementById("export-modal");
+const exportPreviewEl = document.getElementById("export-preview");
+const fmtJsonBtn = document.getElementById("fmt-json-btn");
+const fmtTxtBtn = document.getElementById("fmt-txt-btn");
+const copyExportBtn = document.getElementById("copy-export-btn");
+const downloadExportBtn = document.getElementById("download-export-btn");
+const closeExportModalBtn = document.getElementById("close-export-modal");
+const toastContainer = document.getElementById("toast-container");
 
 // The per-stage durations a timing event can carry (ticket 47). `total`
 // rides along everywhere but never competes for "slowest" — it only sums
 // the others.
 const STAGES = ["capture", "ocr", "translate", "fused"];
 
-// A support tool left open for hours must not grind the DOM down: rows
-// beyond this drop oldest-first. The summary keeps every pass since open
-// (or the last Clear).
+// Icons for JS-built markup (inline-SVG Lucide, vendored verbatim —
+// CSP forbids the CDN; same path data as ui/main.js's table).
+const ICONS = {
+  chevronDown:
+    '<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>',
+  ban: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></svg>',
+};
+
+// A support tool left open for hours must not grind the DOM down: cards
+// beyond this drop oldest-first (both on incremental appends and on
+// filter re-renders). The summary keeps every pass since open (or the
+// last Clear).
 const MAX_ROWS = 500;
 
 // The exportable history (ticket 49): a structured mirror of everything
-// the window showed, kept beside the DOM so Export… can rebuild the
-// session as text without reading it back out of the DOM. Bounded like
-// the rows but much larger — entries are cheap; when the cap trips, the
-// oldest entries drop and the export header's covered range says what
-// actually remains.
+// the window showed, kept beside the DOM. Bounded like the cards but much
+// larger — when the cap trips, the oldest entries drop and the export
+// header's covered range says what actually remains.
 const MAX_HISTORY = 5000;
 const history = [];
 // The export header's "session started at" — the window's opening (or,
-// after a Clear — ticket 52 — the clear): a post-clear export's covered
-// range begins there.
+// after a Clear — ticket 52 — the clear).
 let openedAtMs = Date.now();
 
 // Rolling per-stage stats since the window opened — or the last Clear.
-// Capture counts every pass (it runs even on unchanged ticks — it can be
-// the slow stage on a large zone); ocr/translate/fused count only the
-// passes where they ran — the backend reports null on passes where a
-// stage never ran (ticket 50), and a translate min of 0ms is honest: a
-// Glossary-pinned fire genuinely costs ~nothing.
+// Capture counts every pass; ocr/translate/fused count only the passes
+// where they ran; total sums them all. A reported 0ms reading is honest
+// (a Glossary-pinned fire) but not charted (ticket 50).
 const stats = {
   capture: freshStats(),
   ocr: freshStats(),
@@ -65,28 +102,34 @@ const stats = {
 };
 let passCount = 0;
 
-// The row currently accumulating a run of consecutive unchanged ticks for
-// its origin (a fast-path pass costs capture only, so an idle screen
-// collapses into "unchanged ×N · capture ~10ms" instead of flooding the
-// window). Any other row breaks the run.
+// The card currently accumulating a run of consecutive unchanged ticks
+// for its origin (an idle screen collapses into one compact card). Any
+// other card breaks the run.
 let unchangedRun = null;
-
 // The history entry accumulating the same run (ticket 49) — bumped in
-// lockstep with `unchangedRun`, so the export shows one `unchanged ×N`
-// block per run, like the window. Any other entry breaks it.
+// lockstep with `unchangedRun`.
 let openHistoryRun = null;
+
+// View state (ticket 70): the filter pills, the search box, the
+// auto-scroll toggle, and the export modal's format.
+let currentFilter = "all";
+let searchQuery = "";
+let autoScroll = true;
+let exportFormat = "json";
+
+// Recent translations per origin (ticket 70's quote-block seam): the
+// forwarder emits Translated events here, and they arrive BEFORE their
+// pass's Timing event (emit_translated runs mid-pass; emit_timing at
+// pass end). Buffered keyed by the read's text, consumed by the next
+// timing event from that origin, leftovers dropped — a match is exact
+// within one pass; anything older is stale.
+const pendingShown = new Map();
+const MAX_PENDING_ORIGINS = 12;
 
 function freshStats() {
   return { n: 0, sum: 0, min: Infinity, max: 0 };
 }
 
-// Records one stage measurement into the rolling summary. A 0ms reading
-// is not a datapoint: it is the Glossary short-circuit translating in no
-// measurable time (ticket 50 kept those honest on the per-pass rows —
-// they still show `translate 0ms`). Charting them would pin min to 0 and
-// drag the average down — the same misleading summary removing the
-// no-fire passes fixed. Reported at the user's ask: only readings above
-// 0ms are charted.
 function record(stage, ms) {
   if (ms === 0) return;
   const s = stats[stage];
@@ -100,8 +143,8 @@ function originLabel(origin) {
   return origin.kind === "zone" ? origin.name : t("debug.origin.oneshot");
 }
 
-// The run key both mirrors of the unchanged collapse key on (kind + id —
-// zone names are unique per target, this is belt-and-braces).
+// The run key both mirrors of the collapse key on (kind + id — zone names
+// are unique per target, this is belt-and-braces).
 function originRunKey(event) {
   return `${event.origin.kind}:${event.origin.id ?? ""}`;
 }
@@ -110,10 +153,53 @@ function clockTime(atMs) {
   return new Date(atMs).toLocaleTimeString();
 }
 
-// Simple pin-to-bottom auto-scroll: follow the stream unless the user
-// scrolled up to inspect (then don't yank them back down).
+// Ids for history entries: full passes are numbered by their pass count
+// (the mock's `pass-147` ids); runs and errors only need uniqueness.
+function timingId() {
+  return `pass-${passCount}`;
+}
+
+// ---- Toasts (the mock's bottom-right feedback; replaces the inline
+// ---- export-status flash).
+
+function showToast(message, type = "info", sticky = false) {
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  toastContainer.append(toast);
+  const dismiss = () => {
+    toast.style.opacity = "0";
+    toast.style.transform = "translateY(6px)";
+    setTimeout(() => toast.remove(), 300);
+  };
+  if (!sticky) setTimeout(dismiss, 2600);
+  return dismiss;
+}
+
+// The window's only error surface (a refused dialog, a failed write, a
+// failed copy): sticky until the next attempt dismisses it.
+let activeErrorToast = null;
+function showErrorToast(message) {
+  if (activeErrorToast !== null) activeErrorToast();
+  activeErrorToast = showToast(message, "error", true);
+}
+function dismissErrorToast() {
+  if (activeErrorToast !== null) {
+    activeErrorToast();
+    activeErrorToast = null;
+  }
+}
+
+// ---- Scrolling: the whole page scrolls (the mock's model), the sticky
+// ---- header rides on top. Follow the stream unless auto-scroll is
+// ---- toggled off or the user scrolled up to inspect.
+
 function isPinned() {
-  return rowsEl.scrollTop + rowsEl.clientHeight >= rowsEl.scrollHeight - 32;
+  return window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 32;
+}
+
+function scrollToBottom(smooth = false) {
+  window.scrollTo({ top: document.documentElement.scrollHeight, behavior: smooth ? "smooth" : "auto" });
 }
 
 function trimRows() {
@@ -124,93 +210,20 @@ function trimRows() {
   }
 }
 
-function appendPinned(row) {
-  const pinned = isPinned();
-  rowsEl.append(row);
+function appendPinned(card) {
+  const pinned = autoScroll && isPinned();
+  rowsEl.append(card);
   trimRows();
-  if (pinned) rowsEl.scrollTop = rowsEl.scrollHeight;
+  if (pinned) scrollToBottom();
 }
 
-function appendRow(row) {
-  unchangedRun = null;
-  appendPinned(row);
+// Live events append incrementally; a filter or search active means the
+// visible set is a view over history — full re-render.
+function filterActive() {
+  return currentFilter !== "all" || searchQuery.trim() !== "";
 }
 
-function chip(name, ms) {
-  const span = document.createElement("span");
-  span.className = "ms" + (name === "total" ? " total" : "");
-  span.dataset.stage = name;
-  span.dataset.ms = String(ms);
-  // The stage names are display text (ticket 62) — routed like every
-  // other label; the keys stay stable ("debug.stage.capture", …).
-  const label = document.createElement("span");
-  label.className = "name";
-  label.textContent = `${t(`debug.stage.${name}`)} `;
-  span.append(label, document.createTextNode(`${ms}ms`));
-  return span;
-}
-
-// Marks the largest duration among a row's stage chips (the slow stage of
-// the pass, identifiable at a glance). `total` is excluded — it only sums
-// the others, so it would win every pass.
-function markSlowest(row) {
-  let slowest = null;
-  let slowestMs = -1;
-  for (const el of row.querySelectorAll(".ms")) {
-    if (el.dataset.stage === "total") continue;
-    const ms = Number(el.dataset.ms);
-    if (ms > slowestMs) {
-      slowestMs = ms;
-      slowest = el;
-    }
-  }
-  slowest?.classList.add("slow");
-}
-
-function rowSkeleton(atMs, origin) {
-  const li = document.createElement("li");
-  const time = document.createElement("span");
-  time.className = "time";
-  time.textContent = clockTime(atMs);
-  const badge = document.createElement("span");
-  badge.className = "origin";
-  badge.textContent = originLabel(origin);
-  li.append(time, badge);
-  return li;
-}
-
-function timingRow(event) {
-  const li = rowSkeleton(event.at_ms, event.origin);
-  // A fast-path pass (ticket 48): capture ran, the read never did — its
-  // trace lists only the matured fires off the cached reads.
-  if (event.read_skipped) {
-    const skipped = document.createElement("span");
-    skipped.className = "no-read";
-    skipped.textContent = t("debug.no_read");
-    li.append(skipped);
-  }
-  // capture always ran; the others only appear when they did.
-  for (const name of STAGES) {
-    const ms = event[`${name}_ms`];
-    if (ms !== null) li.append(chip(name, ms));
-  }
-  markSlowest(li);
-  const blocks = document.createElement("span");
-  blocks.className = "blocks";
-  blocks.textContent =
-    event.blocks_translated === 1
-      ? t("debug.blocks_one", { count: event.blocks_translated })
-      : t("debug.blocks_many", { count: event.blocks_translated });
-  li.append(blocks);
-  if (event.reads?.length) li.append(readsDetail(event.reads));
-  // Last in the DOM, pushed to the row's right edge by the stylesheet.
-  li.append(chip("total", event.total_ms));
-  return li;
-}
-
-// ---- Read trace (ticket 48): what OCR read, and why each block did or
-// ---- didn't translate. Compact counts by default; clicking the pill
-// expands the per-block lines.
+// ---- Read dispositions (ticket 48) — unchanged from the first build.
 
 // The compact grouping: every translated-* route reports as "translated".
 const COUNT_ORDER = [
@@ -223,13 +236,8 @@ const COUNT_ORDER = [
   "gone",
 ];
 
-// A read's decision as the loop serializes it (ticket 48): ReadDisposition
-// is an internally tagged enum, so a trace's `disposition` is an OBJECT —
-// its own `disposition` key carries the tag ("translated_engine",
-// "waiting", "gone", …) and a variant's fields sit beside it (waiting:
-// elapsed_ms + total_ms; gone: misses). Reading the tag as the field's
-// whole value threw on every event that carried reads at all — the row
-// never rendered and the export lost the pass (ticket 53).
+// ReadDisposition is an internally tagged enum (ticket 53): a trace's
+// `disposition` is an OBJECT — its own `disposition` key carries the tag.
 function dispositionTag(read) {
   return read.disposition.disposition;
 }
@@ -238,7 +246,22 @@ function countKey(disposition) {
   return disposition.startsWith("translated_") ? "translated" : disposition;
 }
 
-function readsDetail(reads) {
+// A pass's primary status (ticket 70's filter pills): translated wins,
+// then suppressed, then waiting — reads with other dispositions leave the
+// pass under "All" only. blocks_translated > 0 is translated by
+// definition.
+function primaryStatusOf(event) {
+  let status = null;
+  for (const read of event.reads ?? []) {
+    const key = countKey(dispositionTag(read));
+    if (key === "translated") return "translated";
+    if (status === null && (key === "suppressed" || key === "waiting")) status = key;
+  }
+  return event.blocks_translated > 0 ? "translated" : status;
+}
+
+// The mock's sub-status pill text — the compact counts, one string.
+function readsSummaryText(reads) {
   const counts = new Map();
   for (const read of reads) {
     const key = countKey(dispositionTag(read));
@@ -247,37 +270,9 @@ function readsDetail(reads) {
   const parts = COUNT_ORDER.filter((k) => counts.has(k)).map(
     (k) => `${counts.get(k)} ${t(`debug.count.${k}`)}`
   );
-  const wrap = document.createElement("span");
-  wrap.className = "reads";
-  const toggle = document.createElement("button");
-  toggle.type = "button";
-  toggle.className = "reads-toggle";
-  toggle.textContent =
-    reads.length === 1
-      ? t("debug.reads_toggle_one", { count: reads.length, parts: parts.join(" · ") })
-      : t("debug.reads_toggle_many", { count: reads.length, parts: parts.join(" · ") });
-  const list = document.createElement("ul");
-  list.className = "read-lines";
-  list.hidden = true;
-  for (const read of reads) list.append(readLine(read));
-  toggle.addEventListener("click", () => {
-    list.hidden = !list.hidden;
-    toggle.classList.toggle("open");
-  });
-  wrap.append(toggle, list);
-  return wrap;
-}
-
-function readLine(read) {
-  const li = document.createElement("li");
-  const words = document.createElement("span");
-  words.className = "words";
-  words.textContent = read.text === "" ? t("debug.nothing_after_trim") : `“${read.text}”`;
-  const reason = document.createElement("span");
-  reason.className = `reason ${dispositionTag(read)}`;
-  reason.textContent = readReason(read);
-  li.append(words, reason);
-  return li;
+  return reads.length === 1
+    ? t("debug.reads_toggle_one", { count: reads.length, parts: parts.join(" · ") })
+    : t("debug.reads_toggle_many", { count: reads.length, parts: parts.join(" · ") });
 }
 
 // The disposition in plain words — the answer to "why didn't this
@@ -316,56 +311,23 @@ function readReason(read) {
   }
 }
 
-// One compact row per run of consecutive unchanged ticks; later ticks in
-// the run just bump the count and the capture time shown. Runs key on the
-// origin's id (kind + id — zone names are unique per target, this is
-// belt-and-braces).
-function unchangedRunRow(event) {
-  const runKey = originRunKey(event);
-  if (unchangedRun !== null && unchangedRun.dataset.origin === runKey) {
-    unchangedRun.dataset.count = String(Number(unchangedRun.dataset.count) + 1);
-    unchangedRun.querySelector(".count").textContent = unchangedRun.dataset.count;
-    unchangedRun.querySelector(".capture-ms").textContent = `${event.capture_ms}ms`;
-    unchangedRun.querySelector(".time").textContent = clockTime(event.at_ms);
-    return unchangedRun;
+// The pass's slowest stage (the ◀ mark; `total` excluded — it only sums
+// the others). Same rule as the pre-redesign chips and the export.
+function slowestStageOf(stages) {
+  let slowest = null;
+  let slowestMs = -1;
+  for (const name of STAGES) {
+    const ms = stages[name];
+    if (ms !== null && ms > slowestMs) {
+      slowestMs = ms;
+      slowest = name;
+    }
   }
-  const li = rowSkeleton(event.at_ms, event.origin);
-  li.classList.add("unchanged");
-  li.dataset.origin = runKey;
-  const label = document.createElement("span");
-  label.textContent = t("debug.unchanged.label");
-  const count = document.createElement("span");
-  count.className = "count";
-  count.textContent = "1";
-  const capture = document.createElement("span");
-  capture.textContent = t("debug.unchanged.capture");
-  const captureMs = document.createElement("span");
-  captureMs.className = "capture-ms";
-  captureMs.textContent = `${event.capture_ms}ms`;
-  li.append(label, count, capture, captureMs);
-  unchangedRun = li;
-  return li;
-}
-
-function errorRow(event) {
-  const li = document.createElement("li");
-  li.classList.add("error");
-  const time = document.createElement("span");
-  time.className = "time";
-  time.textContent = clockTime(event.at_ms);
-  const stage = document.createElement("span");
-  stage.className = "stage";
-  stage.textContent = event.stage;
-  const message = document.createElement("span");
-  message.className = "message";
-  message.textContent = event.message;
-  li.append(time, stage, message);
-  return li;
+  return slowest;
 }
 
 // The slow stage of the session: the largest average among the stages
-// that actually ran (total excluded — it only sums the others). Shared by
-// the header bar and the export's summary, so both name the same stage.
+// that actually ran — the KPI grid's BOTTLENECK card.
 function slowestStage() {
   let slowest = null;
   let slowestAvg = -1;
@@ -379,49 +341,373 @@ function slowestStage() {
   return slowest;
 }
 
-function renderSummary() {
-  summaryEl.classList.remove("empty");
-  summaryEl.replaceChildren();
-  const passes = document.createElement("span");
-  passes.className = "passes";
-  passes.textContent =
-    passCount === 1
-      ? t("debug.summary.passes_one", { count: passCount })
-      : t("debug.summary.passes_many", { count: passCount });
-  summaryEl.append(passes);
+// ---- Header chrome (pass pill, KPI grid, filter counts, legend).
 
+function renderPasses() {
+  passCountEl.textContent = String(passCount);
+  passesLabelEl.textContent =
+    passCount === 1 ? t("debug.passes_unit_one") : t("debug.passes_unit_many");
+}
+
+function renderKPIs() {
   const slowest = slowestStage();
+  kpiGridEl.replaceChildren();
   for (const name of [...STAGES, "total"]) {
     const s = stats[name];
     if (s.n === 0) continue;
-    const el = document.createElement("span");
-    el.className = "stage-chip" + (name === slowest ? " slow" : "");
-    const label = document.createElement("span");
-    label.className = "name";
-    label.textContent = t(`debug.stage.${name}`);
-    const detail = document.createElement("span");
-    detail.textContent = t("debug.summary.stage_detail", {
-      avg: Math.round(s.sum / s.n),
-      min: s.min,
-      max: s.max,
-      n: s.n,
-    });
-    el.append(label, detail);
-    summaryEl.append(el);
+    const card = document.createElement("div");
+    card.className = `kpi-card kpi-${name}` + (name === slowest ? " slow" : "");
+    const head = document.createElement("div");
+    head.className = "kpi-head";
+    const nameEl = document.createElement("span");
+    nameEl.className = "kpi-name";
+    const dot = document.createElement("span");
+    dot.className = "kpi-dot";
+    nameEl.append(dot, document.createTextNode(t(`debug.stage.${name}`)));
+    if (name === slowest) {
+      const badge = document.createElement("span");
+      badge.className = "kpi-badge";
+      badge.textContent = t("debug.kpi.bottleneck");
+      nameEl.append(badge);
+    }
+    const count = document.createElement("span");
+    count.className = "kpi-count";
+    count.textContent = `×${s.n}`;
+    head.append(nameEl, count);
+    const values = document.createElement("div");
+    values.className = "kpi-values";
+    const avg = document.createElement("span");
+    avg.className = "kpi-avg";
+    avg.textContent = t("debug.kpi.avg", { avg: Math.round(s.sum / s.n) });
+    const range = document.createElement("span");
+    range.className = "kpi-range";
+    range.textContent = t("debug.kpi.range", { min: s.min, max: s.max });
+    values.append(avg, range);
+    card.append(head, values);
+    kpiGridEl.append(card);
   }
+}
+
+function renderFilterCounts() {
+  document.getElementById("count-all").textContent = String(history.length);
+  for (const f of ["translated", "waiting", "suppressed"]) {
+    document.getElementById(`count-${f}`).textContent = String(
+      history.filter((e) => e.kind === "timing" && e.primaryStatus === f).length
+    );
+  }
+}
+
+function renderLegend(visibleCount) {
+  legendShowingEl.textContent =
+    visibleCount === 1
+      ? t("debug.legend.showing_one", { count: visibleCount })
+      : t("debug.legend.showing_many", { count: visibleCount });
+}
+
+function renderLegendFromDom() {
+  renderLegend(rowsEl.children.length);
 }
 
 // The session controls (Export…, Clear) stay hidden while the window is
 // empty — nothing to export, nothing to clear — and appear with the first
-// RENDERED event. Keying them to the two handlers (not "any event on the
-// stream") keeps the invariant airtight — buttons visible ⟺ a row and a
-// history entry exist — no matter what the loop ever forwards here
-// (today only timings and errors reach this window; ticket 52; Export's
-// rule since ticket 49, now shared).
+// RENDERED event (tickets 49/52; the invariant "buttons visible ⟺ a card
+// and a history entry exist"). Translated events only feed the
+// quote-block buffer and never render alone — they don't count here.
+// The same moment ends the waiting state (the mock's empty card).
 function showSessionControls() {
   exportBtn.hidden = false;
   clearBtn.hidden = false;
+  waitingStateEl.hidden = true;
 }
+
+// ---- Card builders (the mock's log cards).
+
+function spanEl(className, text) {
+  const el = document.createElement("span");
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function stagePill(name, ms, isSlow) {
+  const pill = document.createElement("span");
+  pill.className = `stage-pill sc-${name}` + (isSlow ? " slow" : "");
+  const label = document.createElement("span");
+  label.className = "stage-name";
+  label.textContent = t(`debug.stage.${name}`);
+  pill.append(label, document.createTextNode(`${ms}ms`));
+  if (isSlow) pill.append(spanEl("slow-mark", "◀"));
+  return pill;
+}
+
+function readBadge(read) {
+  const key = countKey(dispositionTag(read));
+  if (key === "translated") {
+    const b = document.createElement("span");
+    b.className = "reason-badge reason-translated";
+    b.insertAdjacentHTML("afterbegin", ICONS.check);
+    b.append(document.createTextNode(readReason(read)));
+    return b;
+  }
+  if (key === "waiting") {
+    const b = document.createElement("span");
+    b.className = "reason-badge reason-waiting";
+    const dot = document.createElement("span");
+    dot.className = "waiting-dot";
+    b.append(dot, document.createTextNode(readReason(read)));
+    return b;
+  }
+  if (key === "suppressed") {
+    const b = document.createElement("span");
+    b.className = "reason-badge reason-suppressed";
+    b.insertAdjacentHTML("afterbegin", ICONS.ban);
+    b.append(document.createTextNode(readReason(read)));
+    return b;
+  }
+  // unchanged / excluded / empty: plain dim mono, like the mock's
+  // unchanged detail; gone stays the alarming rose.
+  const b = document.createElement("span");
+  b.className = "reason" + (key === "gone" ? " gone" : "");
+  b.textContent = readReason(read);
+  return b;
+}
+
+function readLine(read) {
+  const line = document.createElement("div");
+  line.className = "read-line";
+  const words = document.createElement("div");
+  words.className = "read-words";
+  words.textContent = read.text === "" ? t("debug.nothing_after_trim") : `“${read.text}”`;
+  line.append(words);
+  const foot = document.createElement("div");
+  foot.className = "read-foot";
+  foot.append(readBadge(read));
+  line.append(foot);
+  // The mock's emerald quote block — the correlated translation text.
+  if (read.shown !== undefined) {
+    const shown = document.createElement("div");
+    shown.className = "read-shown";
+    shown.textContent = read.shown;
+    line.append(shown);
+  }
+  return line;
+}
+
+function diagnosticsFor(entry) {
+  const box = document.createElement("div");
+  box.className = "diagnostics";
+  const headRow = document.createElement("div");
+  headRow.className = "diagnostics-head";
+  headRow.append(
+    spanEl("", t("debug.diagnostics.title")),
+    spanEl("", t("debug.diagnostics.overhead", {
+      ms: Math.max(0, entry.totalMs - STAGES.reduce((acc, n) => acc + (entry.stages[n] ?? 0), 0)),
+    })),
+  );
+  const grid = document.createElement("div");
+  grid.className = "diagnostics-grid";
+  const totalForPct = Math.max(entry.totalMs, 1);
+  for (const name of STAGES) {
+    const ms = entry.stages[name];
+    // The mock's three cells (capture / ocr / translate, skipped ones
+    // labeled); the fused cell appears only when the fused path ran.
+    if (name === "fused" && ms === null) continue;
+    const cell = document.createElement("div");
+    const label = document.createElement("span");
+    label.className = `diag-stage-label sc-${name}`;
+    label.textContent = t(`debug.stage.${name}`);
+    const value = document.createElement("span");
+    value.textContent =
+      ms !== null
+        ? `${ms}ms (${Math.round((ms / totalForPct) * 100)}%)`
+        : t("debug.diagnostics.skipped");
+    cell.append(label, value);
+    grid.append(cell);
+  }
+  box.append(headRow, grid);
+  return box;
+}
+
+function buildTimingCard(entry) {
+  const card = document.createElement("article");
+  card.className =
+    "card" +
+    (entry.primaryStatus ? ` status-${entry.primaryStatus}` : "") +
+    (entry.expanded ? " expanded" : "");
+  card.dataset.id = entry.id;
+
+  const head = document.createElement("div");
+  head.className = "card-head";
+  const left = document.createElement("div");
+  left.className = "card-head-left";
+  left.append(
+    spanEl("card-time", clockTime(entry.atMs)),
+    spanEl("origin-badge", entry.origin),
+  );
+  const pills = document.createElement("div");
+  pills.className = "stage-pills";
+  for (const name of STAGES) {
+    const ms = entry.stages[name];
+    if (ms !== null) pills.append(stagePill(name, ms, name === entry.slowestStage));
+  }
+  if (entry.readSkipped) pills.append(spanEl("no-read-marker", t("debug.no_read")));
+  left.append(
+    pills,
+    spanEl(
+      "blocks-count" + (entry.blocks > 0 ? " fired" : ""),
+      entry.blocks === 1
+        ? t("debug.blocks_one", { count: entry.blocks })
+        : t("debug.blocks_many", { count: entry.blocks }),
+    ),
+  );
+  const right = document.createElement("div");
+  right.className = "card-head-right";
+  const total = document.createElement("span");
+  total.className = "total-badge" + (entry.totalMs >= 500 ? " slow" : "");
+  total.title = t("debug.total.title");
+  total.append(spanEl("total-word", t("debug.stage.total")), document.createTextNode(`${entry.totalMs}ms`));
+  right.append(total);
+  right.insertAdjacentHTML("beforeend", ICONS.chevronDown);
+  head.append(left, right);
+  card.append(head);
+
+  // The proportional latency bar (capture vs ocr vs translate vs fused).
+  const bar = document.createElement("div");
+  bar.className = "latency-bar";
+  const totalForBar = Math.max(entry.totalMs, 1);
+  for (const name of STAGES) {
+    const ms = entry.stages[name];
+    if (ms === null) continue;
+    const seg = document.createElement("div");
+    seg.className = `seg-${name}`;
+    seg.style.width = `${Math.max(4, Math.round((ms / totalForBar) * 100))}%`;
+    bar.append(seg);
+  }
+  card.append(bar);
+
+  const sub = document.createElement("div");
+  sub.className = "substatus";
+  const summary = document.createElement("span");
+  summary.className = "reads-summary";
+  summary.insertAdjacentHTML("afterbegin", ICONS.eye);
+  summary.append(document.createTextNode(entry.readsSummary));
+  sub.append(summary, spanEl("pass-id", entry.id));
+  card.append(sub);
+
+  if (entry.reads.length) {
+    const box = document.createElement("div");
+    box.className = "reads-box";
+    const inner = document.createElement("div");
+    inner.className = "reads-inner";
+    for (const read of entry.reads) inner.append(readLine(read));
+    box.append(inner);
+    card.append(box);
+  }
+
+  if (entry.expanded) card.append(diagnosticsFor(entry));
+  return card;
+}
+
+function buildUnchangedCard(entry) {
+  const card = document.createElement("article");
+  card.className = "card unchanged";
+  card.dataset.id = entry.id;
+  card.dataset.origin = entry.runKey;
+  const line = document.createElement("div");
+  line.className = "unchanged-line";
+  line.append(
+    spanEl("card-time", clockTime(entry.atMs)),
+    spanEl("origin-badge", entry.origin),
+  );
+  const label = spanEl("", t("debug.unchanged.label"));
+  label.append(spanEl("count", String(entry.count)));
+  line.append(label);
+  const capture = spanEl("", t("debug.unchanged.capture").trimStart());
+  capture.append(spanEl("capture-ms", `${entry.captureMs}ms`));
+  line.append(capture);
+  card.append(line);
+  return card;
+}
+
+function buildErrorCard(entry) {
+  const card = document.createElement("article");
+  card.className = "card error";
+  const line = document.createElement("div");
+  line.className = "error-line";
+  line.append(
+    spanEl("card-time", clockTime(entry.atMs)),
+    spanEl("error-stage", entry.stage),
+    spanEl("error-message", entry.message),
+  );
+  card.append(line);
+  return card;
+}
+
+function cardFor(entry) {
+  if (entry.kind === "timing") return buildTimingCard(entry);
+  if (entry.kind === "unchanged") return buildUnchangedCard(entry);
+  return buildErrorCard(entry);
+}
+
+// ---- The filter/search view (ticket 70): a pure function over history;
+// ---- full re-render on every view change and on live events while a
+// ---- view is active.
+
+function entryMatches(entry) {
+  if (currentFilter !== "all") {
+    if (entry.kind !== "timing" || entry.primaryStatus !== currentFilter) return false;
+  }
+  const q = searchQuery.trim().toLowerCase();
+  if (q === "") return true;
+  if (entry.kind === "error") {
+    return entry.stage.toLowerCase().includes(q) || entry.message.toLowerCase().includes(q);
+  }
+  if (
+    entry.origin.toLowerCase().includes(q) ||
+    entry.id.toLowerCase().includes(q) ||
+    clockTime(entry.atMs).toLowerCase().includes(q)
+  ) {
+    return true;
+  }
+  if (entry.kind === "unchanged") return entry.kind.includes(q);
+  if (entry.readsSummary.toLowerCase().includes(q)) return true;
+  return entry.reads.some(
+    (read) =>
+      read.text.toLowerCase().includes(q) ||
+      readReason(read).toLowerCase().includes(q) ||
+      (read.shown !== undefined && read.shown.toLowerCase().includes(q))
+  );
+}
+
+function renderStream() {
+  const filtered = history.filter(entryMatches);
+  renderLegend(filtered.length);
+  renderFilterCounts();
+  waitingStateEl.hidden = history.length !== 0;
+  emptyStateEl.hidden = history.length === 0 || filtered.length !== 0;
+  rowsEl.replaceChildren();
+  unchangedRun = null;
+  for (const entry of filtered.slice(-MAX_ROWS)) {
+    const card = cardFor(entry);
+    rowsEl.append(card);
+    if (entry === openHistoryRun) unchangedRun = card;
+  }
+  if (autoScroll) scrollToBottom();
+}
+
+function appendLive(entry) {
+  renderFilterCounts();
+  if (filterActive()) {
+    renderStream();
+    return;
+  }
+  const card = cardFor(entry);
+  card.classList.add("log-enter");
+  appendPinned(card);
+  renderLegendFromDom();
+}
+
+// ---- Event handlers (the stream's three shapes).
 
 function handleTiming(event) {
   showSessionControls();
@@ -432,119 +718,150 @@ function handleTiming(event) {
     if (ms !== null) record(name, ms);
   }
   record("total", event.total_ms);
-  renderSummary();
+  renderPasses();
+  renderKPIs();
 
   if (event.read_skipped && event.blocks_translated === 0) {
-    // A tick that only captured and checked (the fast path: frame
-    // unchanged, no read ran, no translation was produced): collapse
-    // consecutive runs so an idle screen costs one compact row, not one
-    // row per pass. A pass that DIED before reading (failed capture) is
-    // not a skip — it keeps its full row, the Error event beside it
-    // naming the cause (ticket 48's explicit read_skipped flag).
-    const row = unchangedRunRow(event);
-    if (row.parentElement === null) {
-      appendPinned(row);
-    } else if (isPinned()) {
-      rowsEl.scrollTop = rowsEl.scrollHeight;
+    // A tick that only captured and checked (the fast path): collapse
+    // consecutive runs so an idle screen costs one compact card. A pass
+    // that DIED before reading is not a skip — it keeps its full card
+    // (ticket 48's explicit read_skipped flag).
+    const runKey = originRunKey(event);
+    if (unchangedRun !== null && unchangedRun.dataset.origin === runKey) {
+      const entry = openHistoryRun;
+      entry.count += 1;
+      entry.captureMs = event.capture_ms;
+      entry.atMs = event.at_ms;
+      unchangedRun.querySelector(".count").textContent = String(entry.count);
+      unchangedRun.querySelector(".capture-ms").textContent = `${event.capture_ms}ms`;
+      unchangedRun.querySelector(".card-time").textContent = clockTime(event.at_ms);
+      if (autoScroll && isPinned()) scrollToBottom();
+      return;
     }
-    recordUnchangedHistory(event);
+    const entry = {
+      kind: "unchanged",
+      id: `run-${passCount}`,
+      runKey,
+      origin: originLabel(event.origin),
+      count: 1,
+      captureMs: event.capture_ms,
+      atMs: event.at_ms,
+    };
+    openHistoryRun = entry;
+    pushHistory(entry);
+    if (filterActive()) {
+      renderStream();
+      return;
+    }
+    const card = buildUnchangedCard(entry);
+    card.classList.add("log-enter");
+    appendPinned(card);
+    unchangedRun = card;
+    renderLegendFromDom();
     return;
   }
-  appendRow(timingRow(event));
-  recordTimingHistory(event);
+
+  attachShownTranslations(event);
+  const stages = {
+    capture: event.capture_ms,
+    ocr: event.ocr_ms,
+    translate: event.translate_ms,
+    fused: event.fused_ms,
+  };
+  const reads = event.reads ?? [];
+  const entry = {
+    kind: "timing",
+    id: timingId(),
+    atMs: event.at_ms,
+    origin: originLabel(event.origin),
+    isZone: event.origin.kind === "zone",
+    readSkipped: event.read_skipped,
+    stages,
+    slowestStage: slowestStageOf(stages),
+    totalMs: event.total_ms,
+    blocks: event.blocks_translated,
+    primaryStatus: primaryStatusOf(event),
+    reads,
+    readsSummary: readsSummaryText(reads),
+    expanded: false,
+  };
+  openHistoryRun = null;
+  pushHistory(entry);
+  appendLive(entry);
 }
 
 function handleError(event) {
   showSessionControls();
-  appendRow(errorRow(event));
-  recordErrorHistory(event);
+  const entry = {
+    kind: "error",
+    id: `err-${passCount}`,
+    atMs: event.at_ms,
+    stage: event.stage,
+    message: event.message,
+  };
+  openHistoryRun = null;
+  pushHistory(entry);
+  appendLive(entry);
 }
 
-// ---- Ticket 49: the exportable history -------------------------------
-// One entry per thing the window showed, pushed in stream order — full
-// passes, collapsed unchanged runs (bumped in place), errors. The export
-// is a pure function of this array: no DOM reads, so exporting twice
-// without new events produces the same text.
+// Ticket 70's quote-block seam: buffer this Translated event's text for
+// the origin's next Timing event.
+function handleTranslated(event) {
+  const text = event.block && event.block.text;
+  if (typeof text !== "string" || typeof event.translation !== "string") return;
+  const key = originRunKey(event);
+  let buf = pendingShown.get(key);
+  if (buf === undefined) {
+    buf = new Map();
+    pendingShown.set(key, buf);
+  }
+  buf.set(text, event.translation);
+  // Bound the buffer: drop the oldest origin beyond the cap.
+  while (pendingShown.size > MAX_PENDING_ORIGINS) {
+    const oldest = pendingShown.keys().next().value;
+    if (oldest === key) break;
+    pendingShown.delete(oldest);
+  }
+}
+
+// Consume the buffer into this pass's translated reads (exact text match,
+// same pass), then clear whatever is left — those belong to a pass whose
+// timing already passed, so they can never match later.
+function attachShownTranslations(event) {
+  const key = originRunKey(event);
+  const buf = pendingShown.get(key);
+  if (buf === undefined) return;
+  for (const read of event.reads ?? []) {
+    if (countKey(dispositionTag(read)) !== "translated") continue;
+    const shown = buf.get(read.text);
+    if (shown !== undefined) {
+      read.shown = shown;
+      buf.delete(read.text);
+    }
+  }
+  pendingShown.delete(key);
+}
+
+// ---- The exportable history (ticket 49) — one entry per thing the
+// ---- window showed, pushed in stream order. The exports are pure
+// ---- functions of this array.
 
 function pushHistory(entry) {
   history.push(entry);
   while (history.length > MAX_HISTORY) {
     const dropped = history.shift();
-    // Defensive: if the cap drops the open run's entry, the run ends —
-    // the next tick must start a fresh entry, not bump a detached one.
-    // (The push sites reset openHistoryRun before pushing, so this
-    // guards the invariant locally instead of trusting their order.)
     if (dropped === openHistoryRun) openHistoryRun = null;
   }
 }
 
-function recordTimingHistory(event) {
-  openHistoryRun = null;
-  pushHistory({
-    kind: "timing",
-    atMs: event.at_ms,
-    origin: originLabel(event.origin),
-    isZone: event.origin.kind === "zone",
-    readSkipped: event.read_skipped,
-    // `capture` is always set; the others are null when the stage
-    // didn't run — the export omits them like the window's chips.
-    stages: {
-      capture: event.capture_ms,
-      ocr: event.ocr_ms,
-      translate: event.translate_ms,
-      fused: event.fused_ms,
-    },
-    totalMs: event.total_ms,
-    blocks: event.blocks_translated,
-    reads: event.reads ?? [],
-  });
-}
-
-// A tick continuing the open run BUMPS the run's entry (count, latest
-// capture ms, latest time) instead of pushing a new one — the export
-// shows `unchanged ×N · capture ~Xms` as one block, like the window.
-function recordUnchangedHistory(event) {
-  const runKey = originRunKey(event);
-  if (openHistoryRun !== null && openHistoryRun.runKey === runKey) {
-    openHistoryRun.count += 1;
-    openHistoryRun.captureMs = event.capture_ms;
-    openHistoryRun.atMs = event.at_ms;
-    return;
-  }
-  openHistoryRun = {
-    kind: "unchanged",
-    runKey,
-    origin: originLabel(event.origin),
-    isZone: event.origin.kind === "zone",
-    count: 1,
-    captureMs: event.capture_ms,
-    atMs: event.at_ms,
-  };
-  pushHistory(openHistoryRun);
-}
-
-function recordErrorHistory(event) {
-  openHistoryRun = null;
-  pushHistory({
-    kind: "error",
-    atMs: event.at_ms,
-    stage: event.stage,
-    message: event.message,
-  });
-}
-
-// ---- Ticket 49: the export text ---------------------------------------
-// Plain string building (never HTML), reusing the window's own wording —
-// readReason verbatim, the summary's same numbers, the same slowest
-// marks — so a paste reads like the window does.
+// ---- Export (ticket 49): the text format unchanged; the mock's modal
+// ---- adds a JSON format, a copy button, and the same save-dialog
+// ---- download behind the format's extension.
 
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
-// Date-and-time stamps for the header (row times stay clockTime, matching
-// the window); fixed-order fields so a paste into a chat parses the same
-// everywhere.
 function stamp(ms) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
@@ -558,27 +875,16 @@ function exportOrigin(entry) {
 }
 
 // One block head per full pass: the stages that ran in STAGES order with
-// the pass's slowest marked (like the row's chips), then total, blocks,
+// the pass's slowest marked (like the card's pills), then total, blocks,
 // and the fast-path marker.
 function passLine(entry) {
-  let slowestName = null;
-  let slowestMs = -1;
-  for (const name of STAGES) {
-    const ms = entry.stages[name];
-    if (ms !== null && ms > slowestMs) {
-      slowestMs = ms;
-      slowestName = name;
-    }
-  }
   const parts = [exportOrigin(entry)];
   for (const name of STAGES) {
     const ms = entry.stages[name];
     if (ms === null) continue;
-    // " ◂" marks the pass's slow stage — punctuation formatting, kept
-    // beside the label like the "---"/" · " line joins.
     parts.push(
       t("debug.export.stage_part", { name: t(`debug.stage.${name}`), ms }) +
-        (name === slowestName ? " ◂" : ""),
+        (name === entry.slowestStage ? " ◂" : ""),
     );
   }
   parts.push(t("debug.export.pass_total", { ms: entry.totalMs }));
@@ -592,15 +898,20 @@ function passLine(entry) {
 }
 
 // The per-block read trace: the same words and plain-words reasons the
-// window's expanded lines show, continuation lines aligned under the
-// first read.
+// card shows; a correlated translation gets its own continuation line, so
+// a paste reads like the window (quote block included).
 function readsLines(reads) {
   const prefix = t("debug.export.reads_prefix", { count: reads.length });
-  return reads.map((read, i) => {
+  const lines = [];
+  for (const [i, read] of reads.entries()) {
     const words = read.text === "" ? t("debug.nothing_after_trim") : `“${read.text}”`;
     const indent = i === 0 ? prefix : " ".repeat(prefix.length);
-    return `${indent}${words} → ${readReason(read)}`;
-  });
+    lines.push(`${indent}${words} → ${readReason(read)}`);
+    if (read.shown !== undefined) {
+      lines.push(`${" ".repeat(prefix.length)}  ↳ “${read.shown}”`);
+    }
+  }
+  return lines;
 }
 
 function summaryLines() {
@@ -666,91 +977,246 @@ function buildExportText(version) {
   return lines.join("\n") + "\n";
 }
 
-// ---- Ticket 49: the Export… button ------------------------------------
-
-let exportStatusTimer = null;
-
-// The window's only error surface: success confirms briefly; a failure
-// (dialog refused, write failed) stays until the next attempt.
-function flashExportStatus(message, isError) {
-  exportStatusEl.textContent = message;
-  exportStatusEl.classList.toggle("error", isError);
-  exportStatusEl.hidden = false;
-  if (exportStatusTimer !== null) clearTimeout(exportStatusTimer);
-  if (!isError) {
-    exportStatusTimer = setTimeout(() => {
-      exportStatusEl.hidden = true;
-      exportStatusTimer = null;
-    }, 4000);
-  }
+function statsJson(s) {
+  return s.n === 0 ? { count: 0 } : { count: s.n, avg: Math.round(s.sum / s.n), min: s.min, max: s.max };
 }
 
-function defaultExportName() {
+function historyJson() {
+  return history.map((entry) => {
+    if (entry.kind === "timing") {
+      return {
+        kind: entry.kind,
+        id: entry.id,
+        at: stamp(entry.atMs),
+        origin: exportOrigin(entry),
+        readSkipped: entry.readSkipped,
+        stages: entry.stages,
+        totalMs: entry.totalMs,
+        blocks: entry.blocks,
+        status: entry.primaryStatus,
+        reads: entry.reads.map((read) => {
+          const out = { text: read.text, disposition: read.disposition, reason: readReason(read) };
+          if (read.shown !== undefined) out.shown = read.shown;
+          return out;
+        }),
+      };
+    }
+    if (entry.kind === "unchanged") {
+      return {
+        kind: entry.kind,
+        at: stamp(entry.atMs),
+        origin: exportOrigin(entry),
+        count: entry.count,
+        captureMs: entry.captureMs,
+      };
+    }
+    return { kind: entry.kind, at: stamp(entry.atMs), stage: entry.stage, message: entry.message };
+  });
+}
+
+function buildExportJson() {
+  return JSON.stringify(
+    {
+      exportedAt: new Date().toISOString(),
+      summary: {
+        passes: passCount,
+        capture: statsJson(stats.capture),
+        ocr: statsJson(stats.ocr),
+        translate: statsJson(stats.translate),
+        fused: statsJson(stats.fused),
+        total: statsJson(stats.total),
+      },
+      entries: historyJson(),
+    },
+    null,
+    2,
+  );
+}
+
+// ---- The export modal (ticket 70).
+
+let cachedVersion = null;
+async function ensureVersion() {
+  if (cachedVersion === null) {
+    try {
+      cachedVersion = await getVersion();
+    } catch {
+      cachedVersion = "?";
+    }
+  }
+  return cachedVersion;
+}
+
+function generateExportContent() {
+  return exportFormat === "json" ? buildExportJson() : buildExportText(cachedVersion ?? "?");
+}
+
+async function openExportModal() {
+  dismissErrorToast();
+  await ensureVersion();
+  exportPreviewEl.value = generateExportContent();
+  exportModalEl.hidden = false;
+}
+
+function closeExportModal() {
+  exportModalEl.hidden = true;
+}
+
+function setExportFormat(format) {
+  exportFormat = format;
+  fmtJsonBtn.classList.toggle("active", format === "json");
+  fmtTxtBtn.classList.toggle("active", format === "txt");
+  exportPreviewEl.value = generateExportContent();
+}
+
+function copyExport() {
+  exportPreviewEl.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {
+    copied = false;
+  }
+  if (copied) showToast(t("debug.export.copied"), "success");
+  else showErrorToast(t("debug.export.copy_failed"));
+}
+
+function defaultExportName(ext) {
   const d = new Date();
   return `langception-debug-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}` +
-    `-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}.txt`;
+    `-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}.${ext}`;
 }
 
-async function exportLog() {
+// Download = the real file write (ticket 49's save dialog +
+// export_debug_log command), now in the picked format.
+async function downloadExport() {
+  dismissErrorToast();
   try {
+    const isJson = exportFormat === "json";
     const path = await saveFileDialog({
       title: t("debug.export.dialog_title"),
-      defaultPath: defaultExportName(),
-      filters: [{ name: "Text", extensions: ["txt"] }],
+      defaultPath: defaultExportName(isJson ? "json" : "txt"),
+      filters: [
+        isJson
+          ? { name: t("debug.export.filter_json"), extensions: ["json"] }
+          : { name: t("debug.export.filter_text"), extensions: ["txt"] },
+      ],
     });
     if (!path) return;
-    const version = await getVersion();
-    // Snapshot taken here — a pure function of the history array, so two
-    // exports without new events in between differ only in `exported at`.
-    const text = buildExportText(version);
-    await invoke("export_debug_log", { path, contents: text });
-    flashExportStatus(t("debug.export.saved"), false);
+    await invoke("export_debug_log", { path, contents: exportPreviewEl.value });
+    showToast(t("debug.export.saved"), "success");
   } catch (e) {
-    flashExportStatus(String(e), true);
+    showErrorToast(String(e));
   }
 }
 
-exportBtn.addEventListener("click", exportLog);
+exportBtn.addEventListener("click", openExportModal);
+closeExportModalBtn.addEventListener("click", closeExportModal);
+exportModalEl.addEventListener("click", (e) => {
+  if (e.target === exportModalEl) closeExportModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !exportModalEl.hidden) closeExportModal();
+});
+fmtJsonBtn.addEventListener("click", () => setExportFormat("json"));
+fmtTxtBtn.addEventListener("click", () => setExportFormat("txt"));
+copyExportBtn.addEventListener("click", copyExport);
+downloadExportBtn.addEventListener("click", downloadExport);
 
-// ---- Ticket 52: the Clear button --------------------------------------
-// One click resets every piece of window state the way reopening the
-// window would — rows, rolling stats, structured history, both
-// unchanged-run accumulators, the pass count, and the opened-at timestamp
-// the export header reports — so a new debugging session starts clean
-// without the reopen dance. Confirm-free by design: this is a view, not
-// config, and Export… exists for keeping a copy first. The loop is not
-// touched; events arriving during/after the clear render normally into
-// the fresh window.
+// ---- Ticket 52: the Clear button — one click resets every piece of
+// ---- window state the way reopening the window would.
+
 function clearAll() {
-  // Emptying the list also resets the pin-to-bottom state: the next
-  // append computes it from an empty scroll box.
   rowsEl.replaceChildren();
   unchangedRun = null; // a run must not continue across a clear
   openHistoryRun = null;
   history.length = 0;
+  pendingShown.clear();
   openedAtMs = Date.now();
   passCount = 0;
   for (const name of [...STAGES, "total"]) stats[name] = freshStats();
-  summaryEl.classList.add("empty");
-  summaryEl.textContent = t(EMPTY_SUMMARY_KEY);
-  // Back to the empty state: nothing to export or clear until the next
-  // event renders (showSessionControls unhides them).
+  renderPasses();
+  renderKPIs();
+  renderFilterCounts();
+  renderLegendFromDom();
+  waitingStateEl.hidden = false;
+  emptyStateEl.hidden = true;
   exportBtn.hidden = true;
   clearBtn.hidden = true;
-  // The transient status doubles as the click's feedback — the minimal
-  // nicety the brief floated, reusing the export status's flash.
-  flashExportStatus(t("debug.clear.cleared"), false);
+  showToast(t("debug.clear.cleared"), "warning");
 }
 clearBtn.addEventListener("click", clearAll);
 
+// ---- View controls: filter pills, search, reset, auto-scroll.
+
+for (const btn of document.querySelectorAll(".filter-pill")) {
+  btn.addEventListener("click", () => {
+    for (const b of document.querySelectorAll(".filter-pill")) b.classList.remove("active");
+    btn.classList.add("active");
+    currentFilter = btn.dataset.filter;
+    renderStream();
+  });
+}
+
+searchInputEl.addEventListener("input", () => {
+  searchQuery = searchInputEl.value;
+  clearSearchBtn.hidden = searchQuery === "";
+  renderStream();
+});
+
+clearSearchBtn.addEventListener("click", () => {
+  searchQuery = "";
+  searchInputEl.value = "";
+  clearSearchBtn.hidden = true;
+  renderStream();
+});
+
+resetFiltersBtn.addEventListener("click", () => {
+  searchQuery = "";
+  searchInputEl.value = "";
+  clearSearchBtn.hidden = true;
+  currentFilter = "all";
+  for (const b of document.querySelectorAll(".filter-pill")) {
+    b.classList.toggle("active", b.dataset.filter === "all");
+  }
+  renderStream();
+});
+
+autoscrollBtn.addEventListener("click", () => {
+  autoScroll = !autoScroll;
+  autoscrollBtn.setAttribute("aria-pressed", String(autoScroll));
+  if (autoScroll) {
+    scrollToBottom(true);
+    showToast(t("debug.autoscroll.enabled"), "success");
+  } else {
+    showToast(t("debug.autoscroll.paused"), "info");
+  }
+});
+
+// Expand a card's pipeline diagnostics (the header row's chevron). The
+// expanded flag lives on the history entry, so filters re-render keep it.
+rowsEl.addEventListener("click", (e) => {
+  const head = e.target.closest(".card-head");
+  if (head === null) return;
+  const card = head.closest(".card");
+  const entry = history.find((en) => en.kind === "timing" && en.id === card.dataset.id);
+  if (entry === undefined) return;
+  entry.expanded = !entry.expanded;
+  card.replaceWith(buildTimingCard(entry));
+});
+
+// ---- Boot (ticket 62's seam; ticket 61's language follow).
+
 window.addEventListener("DOMContentLoaded", async () => {
-  // Ticket 62: the window has no status payload to ride — the one-invoke
-  // bootstrap seam resolves the language before the first row renders.
   try {
     await window.I18n.init(await invoke("get_ui_language"));
   } catch {
     await window.I18n.init("en"); // offline of the backend: English
   }
+  renderPasses();
+  renderKPIs();
+  renderFilterCounts();
+  renderLegendFromDom();
 
   await listen("loop-event", (event) => {
     const payload = event.payload;
@@ -758,18 +1224,26 @@ window.addEventListener("DOMContentLoaded", async () => {
       handleTiming(payload);
     } else if (payload.type === "error") {
       handleError(payload);
+    } else if (payload.type === "translated") {
+      handleTranslated(payload);
     }
-    // "translated" events stay with the Results Window; the debug view is
-    // timings + errors only. The session controls appear with the first
-    // rendered event (showSessionControls, called by the two handlers).
+    // BlocksRemoved stays with the overlays; the debug view is timings,
+    // errors, and the translated texts feeding the quote blocks.
   });
 
   // Ticket 61: a UI-Language saved in Settings reaches this window on the
   // same engine-state broadcast — re-resolve the dictionaries so the
-  // static labels follow immediately (rows already rendered keep their
-  // original language, frozen artifacts).
-  await listen("engine-state", (event) => {
+  // static labels and the dynamic chrome (pass pill, KPI cards, counts,
+  // legend) follow immediately. Cards already rendered keep their
+  // original language, frozen artifacts.
+  await listen("engine-state", async (event) => {
     const next = event.payload && event.payload.uiLanguage;
-    if (next && next !== window.I18n.language()) window.I18n.init(next);
+    if (next && next !== window.I18n.language()) {
+      await window.I18n.init(next);
+      renderPasses();
+      renderKPIs();
+      renderFilterCounts();
+      renderLegendFromDom();
+    }
   });
 });

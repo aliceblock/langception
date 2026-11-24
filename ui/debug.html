@@ -8,18 +8,155 @@
     <link rel="stylesheet" href="debug.css" />
   </head>
   <body>
-    <!-- The "which stage is slow" answer at the top: rolling per-stage
-         averages/min/max since the window opened, or the last Clear
-         (ticket 47). Export… (ticket 49) writes the whole session to a
-         picked file, Clear (ticket 52) resets it in place; both hidden
-         until a rendered event arrives. -->
+    <!-- Ticket 70: the window rebuilt to the Debug-Log mock (redesign.html
+         at the repo root is now this window's own prototype) — the mock IS
+         the spec per ticket 61's standing reporter rule. Everything below
+         is the mock translated into the app's architecture: plain CSS on
+         page-local color vars (the mock's darker surface ramp lives here,
+         not in theme.css — the other windows keep the ticket-61 ramp),
+         inline-SVG Lucide icons (CSP forbids the CDN), bundled Inter, and
+         every string through i18n (tickets 62/63).
+
+         What the mock depicts that the app cannot have verbatim: its
+         sample data (151 passes, speaker/dialogue read types) is
+         prototype data — the window renders the live loop-event stream
+         (tickets 47/48) with the same visual language; the "Simulate
+         Pass" button is the prototype's data driver, not a real control
+         (the same call ticket 61 made on the Results mock); and the
+         per-pass toast is simulation feedback — a real pass every cadence
+         tick must not toast. The translated-output quote block DID get a
+         real data source: the forwarder now emits Translated events here
+         too, and debug.js correlates them onto the pass's read trace. -->
+    <div id="toast-container" aria-live="polite"></div>
+
+    <!-- Export… (ticket 49) became the mock's modal: a live preview with
+         a JSON / Plain Text toggle, Copy to Clipboard, and Download File
+         (the native save dialog + export_debug_log command — a real file
+         write, not a browser blob). -->
+    <div id="export-modal" hidden role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div class="modal-head-title">
+            <span class="modal-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg></span>
+            <h3 id="export-modal-title" data-i18n="debug.export.modal_title">Export Debug Logs</h3>
+          </div>
+          <button id="close-export-modal" type="button" class="icon-btn" data-i18n-title="debug.export.close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="format-row">
+            <span class="format-label" data-i18n="debug.export.format_label">Format:</span>
+            <div class="format-toggle">
+              <button id="fmt-json-btn" type="button" class="fmt active" data-i18n="debug.export.format_json">JSON</button>
+              <button id="fmt-txt-btn" type="button" class="fmt" data-i18n="debug.export.format_txt">Plain Text</button>
+            </div>
+          </div>
+          <textarea id="export-preview" readonly spellcheck="false"></textarea>
+        </div>
+        <div class="modal-foot">
+          <button id="copy-export-btn" type="button" class="btn-quiet">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            <span data-i18n="debug.export.copy">Copy to Clipboard</span>
+          </button>
+          <button id="download-export-btn" type="button" class="btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+            <span data-i18n="debug.export.download">Download File</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- The mock's sticky header: brand + live pass counter, the session
+         controls (Auto-scroll is the mock's explicit toggle over the
+         pin-to-bottom follow the window always had; Export…/Clear stay
+         hidden until the first rendered event — tickets 49/52), the KPI
+         metric cards (one per stage that ran + total, the slowest average
+         carrying the mock's BOTTLENECK treatment), and the filter pills
+         with search. -->
     <header id="topbar">
-      <div id="summary" class="empty" data-i18n="debug.empty_summary">waiting for the first pass…</div>
-      <span id="export-status" hidden></span>
-      <button id="export-btn" type="button" hidden data-i18n="debug.export_btn">Export…</button>
-      <button id="clear-btn" type="button" hidden data-i18n="debug.clear_btn">Clear</button>
+      <div class="top-row">
+        <div class="brand-crumb">
+          <div class="logo-tile" aria-hidden="true">LC</div>
+          <div class="crumb-line">
+            <h1 class="app-name">Langception</h1>
+            <span class="crumb-sep" aria-hidden="true">/</span>
+            <span class="crumb-page" data-i18n="debug.title">Debug Log</span>
+          </div>
+          <div class="passes-pill">
+            <span class="live-dot" aria-hidden="true"></span>
+            <span id="pass-count">0</span>
+            <span id="passes-label">0 passes</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="autoscroll-btn" type="button" aria-pressed="true" data-i18n-title="debug.autoscroll.title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+            <span data-i18n="debug.autoscroll.label">Auto-scroll</span>
+          </button>
+          <button id="export-btn" type="button" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+            <span data-i18n="debug.export_btn">Export…</span>
+          </button>
+          <button id="clear-btn" type="button" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span data-i18n="debug.clear_btn">Clear</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="kpi-grid" class="kpi-grid"></div>
+
+      <div class="filter-row">
+        <div id="filter-pills" class="filter-pills">
+          <button type="button" class="filter-pill active" data-filter="all">
+            <span class="pill-label" data-i18n="debug.filter.all">All</span><span class="pill-count" id="count-all">0</span>
+          </button>
+          <button type="button" class="filter-pill" data-filter="translated">
+            <span class="pill-dot dot-translated" aria-hidden="true"></span><span class="pill-label" data-i18n="debug.filter.translated">Translated</span><span class="pill-count" id="count-translated">0</span>
+          </button>
+          <button type="button" class="filter-pill" data-filter="waiting">
+            <span class="pill-dot dot-waiting" aria-hidden="true"></span><span class="pill-label" data-i18n="debug.filter.waiting">Waiting</span><span class="pill-count" id="count-waiting">0</span>
+          </button>
+          <button type="button" class="filter-pill" data-filter="suppressed">
+            <span class="pill-dot dot-suppressed" aria-hidden="true"></span><span class="pill-label" data-i18n="debug.filter.suppressed">Suppressed</span><span class="pill-count" id="count-suppressed">0</span>
+          </button>
+        </div>
+        <div class="search-wrap">
+          <svg class="search-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="search-input" type="text" spellcheck="false" data-i18n-placeholder="debug.search.placeholder" />
+          <button id="clear-search-btn" type="button" class="icon-btn" hidden data-i18n-title="debug.search.clear_title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+      </div>
     </header>
-    <main id="rows"></main>
+
+    <main id="stream-wrap">
+      <div class="legend">
+        <div class="legend-left">
+          <span id="legend-showing">Showing 0 entries</span>
+          <span class="legend-sep" aria-hidden="true">|</span>
+          <span class="legend-hint" data-i18n="debug.legend.hint">Click any card header to inspect raw pipeline timings</span>
+        </div>
+        <span class="legend-slow" data-i18n="debug.legend.slow_mark">◀ Slow stage</span>
+      </div>
+
+      <div id="rows"></div>
+
+      <div id="waiting-state" class="empty-card">
+        <div class="empty-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></div>
+        <p class="empty-title" data-i18n="debug.empty_summary">waiting for the first pass…</p>
+      </div>
+
+      <div id="empty-state" class="empty-card" hidden>
+        <div class="empty-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></div>
+        <p class="empty-title" data-i18n="debug.empty.filtered_title">No log passes match your current filter</p>
+        <p class="empty-hint" data-i18n="debug.empty.filtered_hint">Try clearing your search query or switching filter tabs.</p>
+        <button id="reset-filters-btn" type="button" class="btn-quiet" data-i18n="debug.empty.reset_filters">Reset Filters</button>
+      </div>
+    </main>
+
     <script src="i18n.js"></script>
     <script src="debug.js"></script>
   </body>
