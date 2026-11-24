@@ -491,7 +491,6 @@ pub fn run() {
             crate::settings::rename_prompt_preset,
             crate::settings::delete_prompt_preset,
             crate::settings::set_general,
-            crate::settings::set_start_with_windows,
             crate::settings::check_for_updates,
             crate::settings::set_update_check_on_launch,
             crate::settings::open_update_page,

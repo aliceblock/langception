@@ -734,6 +734,7 @@ async function saveGeneral() {
         stabilityMs: stability,
         contextTranslations: context,
         genderless: generalGenderless.checked,
+        startWithWindows: generalAutostart.checked,
         resultsOnTop: generalResultsOnTop.checked,
         settingsOnTop: generalSettingsOnTop.checked,
         captureVisible: generalCaptureVisible.checked,
@@ -749,21 +750,6 @@ async function saveGeneral() {
     return false;
   }
 }
-
-generalAutostart.addEventListener("change", async () => {
-  const wanted = generalAutostart.checked;
-  generalAutostart.disabled = true;
-  try {
-    const now = await invoke("set_start_with_windows", { enabled: wanted });
-    generalAutostart.checked = now;
-    toast(now ? "Langception starts with Windows" : "Start-with-Windows disabled");
-  } catch (e) {
-    generalAutostart.checked = !wanted; // revert
-    toast(String(e), "error");
-  } finally {
-    generalAutostart.disabled = false;
-  }
-});
 
 // Glossary -------------------------------------------------------------------
 
@@ -1676,7 +1662,7 @@ async function saveHotkeys() {
 // snapshot. Tracked: exactly the fields the four area saves read — Text Style
 // is tracked too but re-baselines after every debounced auto-save, so it
 // practically never trips the footer. Not tracked: the immediate-persistence
-// flows (glossary rows, zone lists, profile create/delete, Start-with-Windows),
+// flows (glossary rows, zone lists, profile create/delete),
 // the wizard's own fields, and the About tab (nothing savable).
 
 const saveFooter = document.getElementById("save-footer");
@@ -1686,6 +1672,7 @@ const TRACKED_GENERAL = [
   generalStability,
   generalContext,
   generalGenderless,
+  generalAutostart,
   generalResultsOnTop,
   generalSettingsOnTop,
   generalCaptureVisible,

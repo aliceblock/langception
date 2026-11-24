@@ -691,6 +691,10 @@ pub struct GeneralSettingsDto {
     /// Capture Visibility (ticket 46, "Show Langception in screen
     /// captures") — applied to the live windows the moment this saves.
     pub capture_visible: bool,
+    /// Start-with-Windows — OS-managed (the Run registry key on Windows,
+    /// not config.toml), but saved through this command like every other
+    /// General field so the tab has one save path.
+    pub start_with_windows: bool,
 }
 
 #[tauri::command]
@@ -722,6 +726,24 @@ pub(crate) async fn set_general(
     let restart_stability = settings.stability_ms;
     let restart_genderless = settings.genderless;
     run_off_main(app, move |app| {
+        // Start-with-Windows is OS-managed (the Run registry key), not
+        // config.toml — applied here so it saves with the rest of the tab.
+        // It runs BEFORE the config write: a failed registration must not
+        // leave the config saved while the form reverts (ticket 51's
+        // "fields never lie"). A no-op value skips the registry write.
+        let manager = app.autolaunch();
+        let current = manager.is_enabled().unwrap_or(false);
+        if current != settings.start_with_windows {
+            if settings.start_with_windows {
+                manager
+                    .enable()
+                    .map_err(|e| format!("cannot enable start-with-Windows: {e}"))?;
+            } else {
+                manager
+                    .disable()
+                    .map_err(|e| format!("cannot disable start-with-Windows: {e}"))?;
+            }
+        }
         let before = current_config(app)?;
         with_config_mut(app, |config| {
             config.source.language = language;
@@ -761,29 +783,6 @@ pub(crate) async fn set_general(
         }
         apply_state(app);
         Ok(())
-    })
-    .await
-}
-
-/// Optional start-with-Windows (managed by the OS — the Run registry key on
-/// Windows — not by config.toml). Returns the resulting state so the toggle
-/// always reflects reality.
-#[tauri::command]
-pub(crate) async fn set_start_with_windows(app: AppHandle, enabled: bool) -> Result<bool, String> {
-    run_off_main(app, move |app| {
-        let manager = app.autolaunch();
-        if enabled {
-            manager
-                .enable()
-                .map_err(|e| format!("cannot enable start-with-Windows: {e}"))?;
-        } else {
-            manager
-                .disable()
-                .map_err(|e| format!("cannot disable start-with-Windows: {e}"))?;
-        }
-        manager
-            .is_enabled()
-            .map_err(|e| format!("cannot query start-with-Windows: {e}"))
     })
     .await
 }
