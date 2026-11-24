@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/langception-core", "src-tauri"]
+members = ["crates/langception-core", "crates/pp-ocrv6-sidecar", "src-tauri"]
 resolver = "2"
 
 # The app version lives in src-tauri/tauri.conf.json (what the installer,

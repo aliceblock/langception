@@ -1,0 +1,21 @@
+[package]
+name = "pp-ocrv6-sidecar"
+version.workspace = true
+edition = "2021"
+description = "Langception's OCR sidecar: PP-OCRv6 det+rec over a JSON-lines pipe (ticket 02, pp-ocrv6-sidecar feature)"
+license = "Apache-2.0"
+
+[dependencies]
+# The adopted det+rec pipeline (ADR-0005). No `auto-download`: the sidecar
+# is fully offline — every model comes from the models dir given at launch.
+oar-ocr = { version = "0.11.0", default-features = false, features = [
+    "download-binaries",
+    "simd",
+] }
+# The exact ONNX Runtime RC the pipeline crate pins, pinned here too: an
+# upstream ORT bump must fail this build, not silently change inference
+# under a shipped engine. Never used directly.
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std"] }
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
