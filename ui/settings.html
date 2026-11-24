@@ -577,10 +577,26 @@
 
       <section id="tab-text-style" class="page">
         <h2>Text Style</h2>
-        <p class="hint">How Thai text is drawn on the In-place Overlay — applies live.</p>
+        <p class="hint">How Thai text is drawn on the In-place Overlay — the preview updates live; Save applies it.</p>
         <!-- Ticket 41: one live-style concern — one section card; per-control
-             hints sit under their control (the one hint pattern app-wide). -->
+             hints sit under their control (the one hint pattern app-wide).
+             Ticket 56: the preview leads the tab, above every row. -->
         <div class="settings-section">
+        <!-- Exact live preview (ticket 26), the tab's first block since
+             ticket 56: the pill inside is styled by the overlay's shared
+             renderer (pill-style.js) against the CURRENT form values —
+             unsaved edits included — so it shows what an In-place Overlay
+             pill would draw once Save lands it. The corner marker says
+             when the form differs from the saved style. -->
+        <div class="row">
+          <div id="style-preview" title="Exact preview — rendered with the same pill code as the In-place Overlay, from the form's current values">
+            <span id="style-preview-pill"><span id="style-preview-text">เรือลำนี้ไม่อาจรอดชีวิตในปี 1999</span></span>
+            <span id="style-preview-note" class="hint hidden">
+              Auto Colors is on — showing the manual colors (the fallback)
+            </span>
+            <span id="style-preview-dirty" class="chip hidden">unsaved</span>
+          </div>
+        </div>
         <div class="form-grid">
           <label class="form-row">
             <span>Font</span>
@@ -589,18 +605,6 @@
               <datalist id="font-list"></datalist>
             </span>
           </label>
-          <div class="row">
-            <!-- Exact live preview (ticket 26): the pill inside is styled
-                 by the overlay's shared renderer (pill-style.js) against
-                 the in-form values, so it shows what an In-place Overlay
-                 pill would draw — before anything is saved. -->
-            <div id="style-preview" title="Exact preview — rendered with the same pill code as the In-place Overlay">
-              <span id="style-preview-pill"><span id="style-preview-text">เรือลำนี้ไม่อาจรอดชีวิตในปี 1999</span></span>
-              <span id="style-preview-note" class="hint hidden">
-                Auto Colors is on — showing the manual colors (the fallback)
-              </span>
-            </div>
-          </div>
           <label class="form-row">
             <span>Size (6–96)</span>
             <input id="style-size" type="number" min="6" max="96" step="1" />
@@ -616,10 +620,13 @@
             <span>Color</span>
             <input id="style-color" type="color" />
           </label>
+          <!-- Ticket 56: the width is a small number input (px, 0–8 — the
+               same bound the config validates), sitting directly after the
+               color rows; the old range slider is gone. -->
           <label class="form-row">
-            <span>Outline (0 = off)</span>
+            <span>Outline (px, 0 = off)</span>
             <span class="style-pair">
-              <input id="style-outline-width" type="range" min="0" max="8" step="0.5" />
+              <input id="style-outline-width" type="number" min="0" max="8" step="0.5" title="Outline width in px; 0 disables the outline" />
               <input id="style-outline-color" type="color" title="Outline color" />
             </span>
           </label>
@@ -631,16 +638,16 @@
             </span>
           </label>
           <label class="form-row">
-            <span>Cover source</span>
+            <span>Background cover source</span>
             <span class="style-pair">
               <input id="style-cover-source" type="checkbox" title="Stretch the pill over the whole original text block" />
             </span>
             <span class="hint">stretch the pill over the whole original block instead of hugging the translation (needs Background pill)</span>
           </label>
           <!-- Text Alignment (tickets 36/38) only means anything inside a
-               Cover Source pill — horizontal and vertical — so the row
-               appears only while Cover Source is checked (settings.js
-               toggles it). -->
+               Background Cover Source pill — horizontal and vertical — so
+               the row appears only while Background Cover Source is checked
+               (settings.js toggles it). -->
           <label id="style-alignment-row" class="form-row hidden">
             <span>Text alignment</span>
             <span class="style-pair">
@@ -667,7 +674,7 @@
                 <option value="beside">Beside the original</option>
               </select>
             </span>
-            <span class="hint">where the translation sits relative to each block; Cover Source wins when it is on</span>
+            <span class="hint">where the translation sits relative to each block; Background Cover Source wins when it is on</span>
           </label>
         </div>
         </div>

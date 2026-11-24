@@ -1477,7 +1477,6 @@ const styleTextAlignment = document.getElementById("style-text-alignment");
 const styleTextVAlignment = document.getElementById("style-text-v-alignment");
 const stylePlacement = document.getElementById("style-placement");
 let styleLoaded = false;
-let styleSaveTimer = null;
 
 // `type=color` inputs need #rrggbb; config allows the short form.
 function normalizeHex(value, fallback) {
@@ -1519,7 +1518,7 @@ function updateAlignmentRowVisibility() {
 function collectStyle() {
   return {
     fontFamily: styleFont.value.trim() || "Noto Sans Thai",
-    fontSize: Number(styleSize.value) || 16,
+    fontSize: Number(styleSize.value) || 30,
     autoColors: styleAutoColors.checked,
     color: normalizeHex(styleColor.value, "#ffffff"),
     outlineWidth: Number(styleOutlineWidth.value) || 0,
@@ -1552,6 +1551,7 @@ function collectStyle() {
 const stylePreviewPill = document.getElementById("style-preview-pill");
 const stylePreviewText = document.getElementById("style-preview-text");
 const stylePreviewNote = document.getElementById("style-preview-note");
+const stylePreviewDirty = document.getElementById("style-preview-dirty");
 
 function updateStylePreview() {
   const style = collectStyle();
@@ -1578,40 +1578,36 @@ function updateStylePreview() {
   stylePreviewNote.classList.toggle("hidden", !style.autoColors);
 }
 
-// Sliders fire a burst of input events; a short trailing debounce keeps the
-// live feel without hammering config.toml per pixel.
-function scheduleStyleSave() {
-  clearTimeout(styleSaveTimer);
-  styleSaveTimer = setTimeout(async () => {
-    try {
-      await invoke("set_text_style", { style: collectStyle() });
-      // Ticket 39: Text Style persists immediately (no Save button), so the
-      // tracker mirrors that — its baseline moves after every debounced save
-      // and these fields practically never show the footer.
-      snapshotFields(TRACKED_STYLE);
-      updateSaveFooter();
-    } catch (e) {
-      // Ticket 51: the debounced save was refused — the controls go back to
-      // the stored style, and the derived UI follows them (the color
-      // field's disabled state, the alignment row, the preview that reads
-      // these very fields).
-      restoreFields(TRACKED_STYLE);
-      styleColor.disabled = styleAutoColors.checked;
-      updateAlignmentRowVisibility();
-      updateStylePreview();
-      updateSaveFooter();
-      toast(String(e), "error");
-    }
-  }, 250);
+// Ticket 56: Text Style joined the explicit-save tabs (ticket 39's sticky
+// footer). Editing only repaints the preview — nothing writes config.toml
+// (or restarts the loop for an Auto Colors flip) until Save runs this.
+// Extracted like the other per-tab handlers so Save-all can call it; the
+// boolean tells the footer whether the save went through.
+async function saveStyle() {
+  try {
+    await invoke("set_text_style", { style: collectStyle() });
+    toast("Text style saved");
+    return true;
+  } catch (e) {
+    // Ticket 51: the save was refused — the controls go back to the stored
+    // style, and the derived UI follows them (the color field's disabled
+    // state, the alignment row, the preview that reads these very fields).
+    restoreFields(TRACKED_STYLE);
+    styleColor.disabled = styleAutoColors.checked;
+    updateAlignmentRowVisibility();
+    updateStylePreview();
+    updateSaveFooter();
+    toast(String(e), "error");
+    return false;
+  }
 }
 
 for (const control of [styleFont, styleSize, styleAutoColors, styleColor, styleOutlineWidth, styleOutlineColor, styleBackground, styleOpacity, styleCoverSource, styleTextAlignment, styleTextVAlignment, stylePlacement]) {
-  // The preview repaints instantly from the in-form values; the save to
-  // config.toml stays debounced behind it.
+  // The preview repaints live from the in-form values — unsaved edits
+  // included (ticket 56 keeps this; only the write-on-every-change is
+  // gone).
   control.addEventListener("input", updateStylePreview);
   control.addEventListener("change", updateStylePreview);
-  control.addEventListener("input", scheduleStyleSave);
-  control.addEventListener("change", scheduleStyleSave);
 }
 
 // Auto Colors overrides the manual text color per block; grey the picker
@@ -1702,9 +1698,9 @@ async function saveHotkeys() {
 // Sticky Save footer + dirty tracking (ticket 39) -----------------------------
 // One Save for every explicit-save area, pinned bottom-right and visible only
 // while some tracked field on ANY tab differs from its last loaded/saved
-// snapshot. Tracked: exactly the fields the four area saves read — Text Style
-// is tracked too but re-baselines after every debounced auto-save, so it
-// practically never trips the footer. Not tracked: the immediate-persistence
+// snapshot. Tracked: exactly the fields the five area saves read — Text
+// Style joined them in ticket 56 (its write-on-change debounce is gone).
+// Not tracked: the immediate-persistence
 // flows (glossary rows, zone lists, profile create/delete),
 // the wizard's own fields, and the About tab (nothing savable).
 
@@ -1839,6 +1835,11 @@ function anyDirty() {
 
 function updateSaveFooter() {
   saveFooter.classList.toggle("hidden", !anyDirty());
+  // Ticket 56: the style preview's "unsaved" marker reads the same dirty
+  // state the footer does — style edits show it, a save or revert clears
+  // it. updateSaveFooter runs at every point that state can move (field
+  // edits, the boot snapshot, saves, reverts), so the two never drift.
+  stylePreviewDirty.classList.toggle("hidden", !fieldsDirty(TRACKED_STYLE));
 }
 
 // Ticket 39: any edit anywhere flips the footer — the dirty state is
@@ -1865,6 +1866,7 @@ async function saveAll() {
     [TRACKED_ENGINES, saveEngines],
     [TRACKED_GENERAL, saveGeneral],
     [TRACKED_PROFILE, saveProfile],
+    [TRACKED_STYLE, saveStyle],
     [TRACKED_HOTKEYS, saveHotkeys],
   ]) {
     if (!fieldsDirty(fields)) continue;

@@ -125,9 +125,29 @@ the Windows autostart registry behavior. Run once on a real machine.
 
 ### Text Style tab
 
-- [ ] **Live apply**: change size/color/outline/background with translation
-      running → overlay pills restyle immediately (no restart). Short-form
-      hex colors from config render correctly in the color pickers.
+- [ ] **Preview leads the tab** (ticket 56): the exact pill preview is the
+      first block, above every row, and repaints live from the FORM's
+      current values — unsaved edits included; the amber "unsaved" chip in
+      its corner shows while the form differs from the saved style and
+      clears on Save.
+- [ ] **Explicit Save** (ticket 56): editing rows writes nothing — with
+      translation RUNNING, change size/color/outline/background → the
+      preview restyles live but the overlays do NOT move until Save; Save
+      applies once, toasts, and the overlays restyle immediately (no
+      restart; nothing writes config.toml before it). Short-form hex
+      colors from config render correctly in the color pickers.
+- [ ] **Failed save reverts** (ticket 51's rule): force a rejection (e.g.
+      type 200 into Size, press Save) → the toast names the problem and
+      every style field snaps back to the saved values; the preview and
+      the "unsaved" chip follow them.
+- [ ] **Rows** (ticket 56): Outline is a small px number input (default 2,
+      0–8, step 0.5) directly after the color rows — the range slider is
+      gone; the toggle reads "Background cover source"; the alignment
+      selectors appear only while it is checked.
+- [ ] **Fresh-config defaults** (ticket 56): with a fresh config, the tab
+      opens at 30px, 80% pill opacity, Auto Colors and Background Cover
+      Source checked; a config saved by an older build keeps its own
+      values.
 - [ ] **Persists**: values survive restart; overlays pick them up on load.
 
 ### Hotkeys tab

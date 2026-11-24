@@ -30,16 +30,19 @@ const HEIGHT_BUDGET_FACTOR = 2;
 // picker's minimum.
 const MIN_ZONE_PX = 8;
 
+// Mirrors config's TextStyle::default() (ticket 56's baseline) — this only
+// covers the moment before the first style pull/broadcast lands, and a
+// fresh install must not flash the old defaults.
 const DEFAULT_STYLE = {
   fontFamily: "Noto Sans Thai",
-  fontSize: 16,
+  fontSize: 30,
   color: "#ffffff",
   outlineWidth: 2,
   outlineColor: "#000000",
   background: true,
-  backgroundOpacity: 0.6,
-  autoColors: false,
-  coverSource: false,
+  backgroundOpacity: 0.8,
+  autoColors: true,
+  coverSource: true,
   placement: "over",
   textAlignment: "left",
   // Vertical half of Text Alignment (ticket 38): center is what the

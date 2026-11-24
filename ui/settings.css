@@ -235,8 +235,6 @@ h3 {
    at the window minimum. */
 
 .form-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
-/* Rows inside the grid rely on the grid's gap (the Text Style preview row). */
-.form-grid > .row { margin-top: 0; }
 .form-row {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
@@ -323,6 +321,8 @@ input[type="color"] {
 }
 
 #style-preview {
+  /* relative anchors the "unsaved" marker (ticket 56) in the corner. */
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -353,6 +353,26 @@ input[type="color"] {
 #style-preview-note {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.65);
+}
+
+/* Ticket 56: the outline width is a small px number input (0–8, the bound
+   the config validates), not the old full-width slider. */
+#style-outline-width {
+  width: 84px;
+}
+
+/* Ticket 56: the preview renders the FORM — unsaved edits included — so
+   while it differs from the saved style (the same dirty state the footer
+   reads) a corner marker says so: the pill you see is not what the
+   overlays currently draw until Save applies it. Amber like the app's
+   other pending/caution chips. */
+#style-preview-dirty {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(242, 182, 60, 0.18);
+  color: var(--glossary);
+  border-color: rgba(242, 182, 60, 0.45);
 }
 
 /* The vision-reading warning (ticket 12) as a callout: amber tint like the

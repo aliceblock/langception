@@ -112,14 +112,18 @@ impl Default for TextStyle {
     fn default() -> Self {
         Self {
             font_family: DEFAULT_FONT_FAMILY.to_string(),
-            font_size: 16.0,
+            // Ticket 56's fresh-config baseline: 30px font, 80% pill
+            // opacity, Auto Colors and Background Cover Source on — first-
+            // config values only, so a config that saved any of them
+            // keeps what it saved.
+            font_size: 30.0,
             color: "#ffffff".to_string(),
             outline_width: 2.0,
             outline_color: "#000000".to_string(),
             background: true,
-            background_opacity: 0.6,
-            auto_colors: false,
-            cover_source: false,
+            background_opacity: 0.8,
+            auto_colors: true,
+            cover_source: true,
             placement: Placement::Over,
             text_alignment: TextAlignment::Left,
             // Center preserves today's rendering: the stretched pill has
@@ -1148,22 +1152,25 @@ fullscreen_monitor = ""
 # bundled with the app and always tried as a fallback, so Thai glyphs
 # render even when the chosen font lacks them.
 font_family = "Noto Sans Thai"
-font_size = 16.0
+# Ticket 56's baseline for fresh configs; a saved value is never
+# overwritten on upgrade.
+font_size = 30.0
 color = "#ffffff"
-# Outline around each glyph; 0 disables it.
+# Outline around each glyph, in px; 0 disables it.
 outline_width = 2.0
 outline_color = "#000000"
 # Background pill behind each translation, with its opacity (0-1).
 background = true
-background_opacity = 0.6
-# Cover Source (CONTEXT.md): stretch the pill over the WHOLE original text
-# block instead of hugging only the translated text, so the original is
-# dressed over. Needs `background` above; pill opacity applies as usual.
-cover_source = false
+background_opacity = 0.8
+# Background Cover Source (CONTEXT.md): stretch the pill over the WHOLE
+# original text block instead of hugging only the translated text, so the
+# original is dressed over. Needs `background` above; pill opacity applies
+# as usual. On by default (ticket 56).
+cover_source = true
 # Auto Colors: sample each block's text and pill colors from the captured
 # pixels, so translations dress like the scene they cover. `color` above is
-# the fallback for blocks whose sampling fails.
-auto_colors = false
+# the fallback for blocks whose sampling fails. On by default (ticket 56).
+auto_colors = true
 # Placement (CONTEXT.md): where each translated pill sits relative to its
 # Text Block — "over" the original (in place, the default), "above" it,
 # "below" it, or "beside" it (right of the block; near the screen edge it
@@ -1439,20 +1446,38 @@ language = "en"
     }
 
     #[test]
+    fn fresh_configs_get_the_ticket_56_style_baseline() {
+        // Ticket 56's tuned baseline for fresh configs: 30px font, 80%
+        // pill opacity, Auto Colors and Background Cover Source on — the
+        // reporter's defaults, first-config values only (a config that
+        // saved any of them keeps what it saved). The outline stays at
+        // its 2px default; a config with no [text_style] section at all
+        // lands on the same baseline.
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.text_style.font_size, 30.0);
+        assert_eq!(config.text_style.background_opacity, 0.8);
+        assert!(config.text_style.auto_colors);
+        assert!(config.text_style.cover_source);
+        assert_eq!(config.text_style.outline_width, 2.0);
+        let bare = AppConfig::from_toml_str("[source]\nlanguage = \"en\"\n").unwrap();
+        assert_eq!(bare.text_style, config.text_style);
+    }
+
+    #[test]
     fn text_style_roundtrips_through_toml() {
         let text = AppConfig::DEFAULT_TEMPLATE
             .replace(
                 "font_family = \"Noto Sans Thai\"",
                 "font_family = \"Leelawadee UI\"",
             )
-            .replace("font_size = 16.0", "font_size = 24.0")
+            .replace("font_size = 30.0", "font_size = 24.0")
             .replace("color = \"#ffffff\"", "color = \"#0af\"")
             .replace("outline_width = 2.0", "outline_width = 0.0")
             .replace("outline_color = \"#000000\"", "outline_color = \"#123456\"")
             .replace("background = true", "background = false")
-            .replace("background_opacity = 0.6", "background_opacity = 0.25")
-            .replace("cover_source = false", "cover_source = true")
-            .replace("auto_colors = false", "auto_colors = true")
+            .replace("background_opacity = 0.8", "background_opacity = 0.25")
+            .replace("cover_source = true", "cover_source = false")
+            .replace("auto_colors = true", "auto_colors = false")
             .replace("placement = \"over\"", "placement = \"beside\"")
             .replace("text_alignment = \"left\"", "text_alignment = \"right\"")
             .replace("text_v_alignment = \"center\"", "text_v_alignment = \"bottom\"");
@@ -1467,8 +1492,8 @@ language = "en"
                 outline_color: "#123456".into(),
                 background: false,
                 background_opacity: 0.25,
-                auto_colors: true,
-                cover_source: true,
+                auto_colors: false,
+                cover_source: false,
                 placement: Placement::Beside,
                 text_alignment: TextAlignment::Right,
                 text_v_alignment: TextVAlignment::Bottom,
@@ -1480,30 +1505,34 @@ language = "en"
     }
 
     #[test]
-    fn auto_colors_defaults_off_for_configs_written_before_it() {
+    fn auto_colors_container_default_fills_configs_written_before_it() {
         // A pre-ticket-14 config has no `auto_colors` key; serde's
-        // container default must fill it in rather than reject the file.
+        // container default fills it in rather than reject the file —
+        // since ticket 56 that default is ON (the reporter's baseline).
+        // A config that SAVED auto_colors = false keeps it: the key's
+        // presence is what pins the value.
         let text = AppConfig::DEFAULT_TEMPLATE
             .lines()
             .filter(|line| !line.trim().starts_with("auto_colors"))
             .collect::<Vec<_>>()
             .join("\n");
         let config = AppConfig::from_toml_str(&text).unwrap();
-        assert!(!config.text_style.auto_colors);
+        assert!(config.text_style.auto_colors);
         assert_eq!(config.text_style, TextStyle::default());
     }
 
     #[test]
-    fn cover_source_defaults_off_for_configs_written_before_it() {
+    fn cover_source_container_default_fills_configs_written_before_it() {
         // Same shape as auto_colors above: a pre-ticket-24 config has no
-        // `cover_source` key; the container default (off) must fill it in.
+        // `cover_source` key; the container default fills it in — since
+        // ticket 56, ON. A saved `cover_source = false` keeps saving off.
         let text = AppConfig::DEFAULT_TEMPLATE
             .lines()
             .filter(|line| !line.trim().starts_with("cover_source"))
             .collect::<Vec<_>>()
             .join("\n");
         let config = AppConfig::from_toml_str(&text).unwrap();
-        assert!(!config.text_style.cover_source);
+        assert!(config.text_style.cover_source);
         assert_eq!(config.text_style, TextStyle::default());
     }
 
@@ -1700,7 +1729,7 @@ language = "en"
 
     #[test]
     fn integer_font_size_is_accepted() {
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("font_size = 16.0", "font_size = 18");
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("font_size = 30.0", "font_size = 18");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.text_style.font_size, 18.0);
     }
@@ -1713,8 +1742,8 @@ language = "en"
                 "font_family = \"   \"",
                 "font_family",
             ),
-            ("font_size = 16.0", "font_size = 4.0", "font_size"),
-            ("font_size = 16.0", "font_size = 200.0", "font_size"),
+            ("font_size = 30.0", "font_size = 4.0", "font_size"),
+            ("font_size = 30.0", "font_size = 200.0", "font_size"),
             (
                 "outline_width = 2.0",
                 "outline_width = 9.0",
@@ -1726,7 +1755,7 @@ language = "en"
                 "outline_width",
             ),
             (
-                "background_opacity = 0.6",
+                "background_opacity = 0.8",
                 "background_opacity = 1.5",
                 "background_opacity",
             ),
