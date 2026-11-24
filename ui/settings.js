@@ -2220,6 +2220,19 @@ document.getElementById("about-open-logs").addEventListener("click", () => {
 
 document.getElementById("about-wizard").addEventListener("click", showWizard);
 
+// Developer identity links (the About grid's Email / Website / Support):
+// the same whitelisted opener as the engine signup pages — the page never
+// navigates the webview itself.
+for (const [buttonId, url] of [
+  ["about-mail", "mailto:arm@intception.app"],
+  ["about-site", "https://intception.app"],
+  ["about-donate", "https://intception.app/donate"],
+]) {
+  document.getElementById(buttonId).addEventListener("click", () => {
+    invoke("open_engine_link", { url }).catch((e) => toast(String(e), "error"));
+  });
+}
+
 // Boot -----------------------------------------------------------------------
 
 window.addEventListener("DOMContentLoaded", async () => {

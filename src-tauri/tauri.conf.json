@@ -28,8 +28,8 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "The Langception Authors",
-    "copyright": "Copyright 2026 The Langception Authors. Apache-2.0 licensed.",
+    "publisher": "Intception",
+    "copyright": "Copyright 2026 Intception. Apache-2.0 licensed.",
     "license": "Apache-2.0",
     "category": "Utility",
     "shortDescription": "Screen-capture OCR + Thai translation overlay",

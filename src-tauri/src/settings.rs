@@ -509,17 +509,31 @@ pub(crate) async fn test_engine(app: AppHandle, engine: String) -> Result<String
         .map_err(|e| e.message)
 }
 
-/// The Engines tab's and wizard's key-creation links. Whitelisted — a
+/// The Engines tab's and wizard's key-creation links, plus the About tab's
+/// developer identity links (site / support / email). Whitelisted — a
 /// webview window must never become a general URL opener.
 #[tauri::command]
 pub(crate) fn open_engine_link(url: String) -> Result<(), String> {
-    const ALLOWED: [&str; 3] = [
+    const ALLOWED: [&str; 6] = [
         "https://portal.azure.com",
         "https://www.deepl.com/en/pro-api",
         "https://aistudio.google.com/apikey",
+        // The developer's own pages (About tab).
+        "https://intception.app",
+        "https://intception.app/donate",
+        "mailto:arm@intception.app",
     ];
     if !ALLOWED.contains(&url.as_str()) {
-        return Err(format!("link \"{url}\" is not one of the engine signup pages"));
+        return Err(format!("link \"{url}\" is not one of the whitelisted pages"));
+    }
+    if url.to_ascii_lowercase().starts_with("mailto:") {
+        // Protocol dispatch to the default mail client: `start` hits the
+        // registered handler; explorer only resolves URLs itself.
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("cannot open the link: {e}"))?;
+        return Ok(());
     }
     std::process::Command::new("explorer")
         .arg(url)
