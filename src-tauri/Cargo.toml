@@ -17,6 +17,10 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+# Remembers the three user-resizable windows' size + position across
+# restarts (ticket 58); registered with a label filter so the overlays and
+# the picker never take part.
+tauri-plugin-window-state = "2"
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

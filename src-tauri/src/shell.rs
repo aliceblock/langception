@@ -54,6 +54,18 @@ const DEBUG_LABEL: &str = "debug";
 /// Drags smaller than this (CSS px) count as a click: the session cancels.
 const MIN_DRAG_CSS_PX: i32 = 8;
 
+/// Ticket 58: the labels whose size + position persist across restarts —
+/// exactly the three user-resizable windows. Everything else owns its
+/// placement programmatically (the per-monitor overlays follow their
+/// monitor, the picker blankets one for a single session), so a stale
+/// saved rect must never move them. Passed to
+/// `tauri-plugin-window-state` as its label filter.
+fn should_persist_window_state(label: &str) -> bool {
+    label == RESULTS_LABEL
+        || label == crate::settings::SETTINGS_LABEL
+        || label == DEBUG_LABEL
+}
+
 /// Engine errors (quota exhaustion, invalid key, network) re-notify from
 /// the tray at most once per this interval: a dead engine plus changing
 /// pixels can emit an error every tick, and toasts must not stack (ADR-0002:
@@ -424,6 +436,33 @@ pub fn run() {
                 Ok(())
             });
         }))
+        // Ticket 58: the three user-resizable windows (Results, Settings,
+        // Debug Log) remember their size + position across restarts. The
+        // plugin restores a window's saved geometry as the window becomes
+        // ready — for the two windows created hidden (settings, debug)
+        // that lands before any paint; the results window restores before
+        // setup's show. The state file is written when RunEvent::Exit
+        // fires: the
+        // tray-first lifecycle hides instead of closing, so exit is the
+        // only point where a session's geometry is final. SIZE | POSITION
+        // only — maximized/fullscreen/visibility stay owned by the conf,
+        // the builders, and the config-driven helpers. The filter below is
+        // the per-label scope, and it gates BOTH directions: restore skips
+        // filtered labels outright, and the save path only ever persists
+        // labels the filter registered (overlays and the picker never
+        // enter the plugin's cache, so their programmatic placement can
+        // never be captured or replayed). Off-screen safety comes from the
+        // plugin's restore: a saved position no monitor intersects is
+        // skipped, so an unplugged monitor cannot strand a window.
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::SIZE
+                        | tauri_plugin_window_state::StateFlags::POSITION,
+                )
+                .with_filter(should_persist_window_state)
+                .build(),
+        )
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         // Engine errors (ticket 09) surface as tray notifications.
@@ -2617,6 +2656,11 @@ fn open_debug_window(app: &AppHandle) -> Result<(), String> {
             .title("Langception — Debug Log")
             .inner_size(780.0, 540.0)
             .min_inner_size(520.0, 300.0)
+            // Created hidden like the settings window (ticket 58): the
+            // window-state restore lands while hidden, so the first paint
+            // is already at the remembered size+position — never a flash
+            // of the default rect.
+            .visible(false)
             .build()
             .map_err(|e| format!("cannot open the debug log window: {e}"))?;
     // Same rule as every other Langception window (ADR-0003): never a
@@ -2630,6 +2674,11 @@ fn open_debug_window(app: &AppHandle) -> Result<(), String> {
                 "could not exclude the debug log window from capture: {message}"
             ));
     }
+    // Shown explicitly because creation is hidden (ticket 58): the
+    // exclusion above is already in force before the first paint.
+    window
+        .show()
+        .map_err(|e| format!("cannot show the debug log window: {e}"))?;
     let _ = window.set_focus();
     Ok(())
 }
@@ -3592,4 +3641,33 @@ fn run_one_shot(
     // One-shot events never reach the overlay (Results Window only), so the
     // forwarder needs no overlay list.
     spawn_forwarder(app, events_rx, Vec::new());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The filter is the whole per-label scope of ticket 58: exactly the
+    /// three user-resizable windows are remembered; overlays (any monitor
+    /// index) and the picker never enter the plugin's cache, so nothing
+    /// can capture or replay their programmatic placement.
+    #[test]
+    fn window_state_tracks_exactly_the_three_resizable_windows() {
+        assert!(should_persist_window_state(RESULTS_LABEL));
+        assert!(should_persist_window_state(crate::settings::SETTINGS_LABEL));
+        assert!(should_persist_window_state(DEBUG_LABEL));
+        assert!(!should_persist_window_state(PICKER_LABEL));
+        // Overlay labels come from the shared prefix constant, so the test
+        // cannot silently drift from the real naming.
+        assert!(!should_persist_window_state(&format!(
+            "{}0",
+            crate::overlay::OVERLAY_LABEL_PREFIX
+        )));
+        assert!(!should_persist_window_state(&format!(
+            "{}3",
+            crate::overlay::OVERLAY_LABEL_PREFIX
+        )));
+        assert!(!should_persist_window_state(""));
+        assert!(!should_persist_window_state("some-future-window"));
+    }
 }
