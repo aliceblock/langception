@@ -48,12 +48,12 @@ _Avoid_: auto style, adaptive colors, color picking
 A Text Style setting that positions translated text Over its Text Block (default), Below it, or Beside it.
 _Avoid_: offset, position mode, anchor
 
-**Cover Source**:
+**Background Cover Source**:
 A Text Style setting that stretches the pill over the whole Text Block instead of hugging the translated text. Takes precedence over Placement when both are on.
-_Avoid_: full background, block background
+_Avoid_: full background, block background, cover source
 
 **Text Alignment**:
-A Text Style setting that aligns translated text inside a Cover Source pill along both axes: horizontally — Left (default), Center, or Right — and vertically — Top, Center (default), or Bottom.
+A Text Style setting that aligns translated text inside a Background Cover Source pill along both axes: horizontally — Left (default), Center, or Right — and vertically — Top, Center (default), or Bottom.
 _Avoid_: justify, text position, vertical justify
 
 **Adjust Mode**:
@@ -101,7 +101,7 @@ _Avoid_: history, memory, cache
 ### App
 
 **Capture Visibility**:
-The setting controlling whether Langception's own windows (Settings, Results Window, zone picker) appear in captures made by other tools — screenshots, recordings, remote sessions. Off by default; the In-place Overlay is never visible to capture.
+The setting controlling whether Langception's own windows (Settings, Results Window, zone picker, Debug Log window) appear in captures made by other tools — screenshots, recordings, remote sessions. Off by default; the In-place Overlay is never visible to capture.
 _Avoid_: privacy mode, screenshot mode, capture exclusion
 
 **Update Check**:
