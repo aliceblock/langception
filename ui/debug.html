@@ -14,12 +14,13 @@
          picked file, Clear (ticket 52) resets it in place; both hidden
          until a rendered event arrives. -->
     <header id="topbar">
-      <div id="summary" class="empty">waiting for the first pass…</div>
+      <div id="summary" class="empty" data-i18n="debug.empty_summary">waiting for the first pass…</div>
       <span id="export-status" hidden></span>
-      <button id="export-btn" type="button" hidden>Export…</button>
-      <button id="clear-btn" type="button" hidden>Clear</button>
+      <button id="export-btn" type="button" hidden data-i18n="debug.export_btn">Export…</button>
+      <button id="clear-btn" type="button" hidden data-i18n="debug.clear_btn">Clear</button>
     </header>
     <main id="rows"></main>
+    <script src="i18n.js"></script>
     <script src="debug.js"></script>
   </body>
 </html>

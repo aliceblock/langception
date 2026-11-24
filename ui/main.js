@@ -4,10 +4,14 @@
 // Excluded Blocks + hotkeys). Zone/exclusion management (rename/delete/
 // clear) and mode switching invoke the shell directly; config editing lives
 // in the Settings window (ticket 06). No build step.
+// Ticket 62: the window's UI language rides the get_status payload (the
+// bootstrap seam) into I18n.init; every user-visible string resolves
+// through t().
 
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const { writeText } = window.__TAURI__.clipboardManager;
+const { t } = window.I18n;
 
 const statusPill = document.getElementById("status-pill");
 const privacyChip = document.getElementById("privacy-chip");
@@ -69,33 +73,33 @@ function renderStatus(status) {
   if (status.hotkeys) hotkeys = status.hotkeys;
 
   if (status.configError) {
-    statusPill.textContent = "Config error";
+    statusPill.textContent = t("results.status.config_error");
     statusPill.className = "pill error";
   } else if (running && paused) {
-    statusPill.textContent = "Paused";
+    statusPill.textContent = t("results.status.paused");
     statusPill.className = "pill paused";
   } else if (running) {
-    statusPill.textContent = "Running";
+    statusPill.textContent = t("results.status.running");
     statusPill.className = "pill running";
   } else {
-    statusPill.textContent = "Stopped";
+    statusPill.textContent = t("results.status.stopped");
     statusPill.className = "pill stopped";
   }
   adjustChip.classList.toggle("hidden", !status.adjustMode);
-  adjustBtn.textContent = status.adjustMode ? "Exit Adjust" : "Adjust";
+  adjustBtn.textContent = status.adjustMode ? t("results.adjust.exit") : t("results.adjust.enter");
 
   // Privacy badge (ticket 06): shown whenever the active Translate Engine
   // sends screen text off-machine (same data as the tray tooltip).
   const privacyEngine = status.privacyEngine;
   privacyChip.classList.toggle("hidden", !privacyEngine);
   if (privacyEngine) {
-    privacyChip.title = `${privacyEngine} sends screen text to the cloud while translation runs`;
+    privacyChip.title = t("results.privacy_chip.cloud_title", { engine: privacyEngine });
   }
 
-  toggleBtn.textContent = running ? "Stop" : "Start";
+  toggleBtn.textContent = running ? t("results.toggle.stop") : t("results.toggle.start");
   toggleBtn.classList.toggle("primary", !running);
   pauseBtn.disabled = !running;
-  pauseBtn.textContent = paused ? "Resume" : "Pause";
+  pauseBtn.textContent = paused ? t("results.pause.resume") : t("results.pause.pause");
 
   // Ticket 19: the title bar tells you at a glance what the loop is
   // running with — the language pair, and the Profile while one is matched
@@ -120,7 +124,7 @@ function renderStatus(status) {
   // only-when-present.
   const warnings = [...(status.warnings || [])];
   if (status.configError) {
-    warnings.unshift(`config.toml is broken — ${status.configPath}`);
+    warnings.unshift(t("results.config_broken", { path: status.configPath }));
   }
   if (warnings.length > 0) {
     warningsLine.textContent = warnings.join("\n");
@@ -133,11 +137,11 @@ function renderStatus(status) {
   // hotkeys stay dynamic (live-rebindable from Settings), same as everywhere
   // else in this file.
   emptyHint.textContent = [
-    `Draw a Capture Zone with ${hotkeys.newZone}`,
-    `Run a One-shot Capture with ${hotkeys.oneShot}`,
-    `Toggle translation with ${hotkeys.toggle}`,
-    `Pause with ${hotkeys.pause}`,
-    `Toggle Adjust Mode with ${hotkeys.adjust}`,
+    t("results.empty_hint.zone", { hotkey: hotkeys.newZone }),
+    t("results.empty_hint.oneshot", { hotkey: hotkeys.oneShot }),
+    t("results.empty_hint.toggle", { hotkey: hotkeys.toggle }),
+    t("results.empty_hint.pause", { hotkey: hotkeys.pause }),
+    t("results.empty_hint.adjust", { hotkey: hotkeys.adjust }),
   ].join("\n");
 
   renderModeControls();
@@ -154,8 +158,8 @@ function renderModeControls() {
   monitorRow.classList.toggle("hidden", mode !== "fullscreen");
   modeHint.textContent =
     mode === "fullscreen"
-      ? "watching every block on the selected monitor"
-      : "watching the Capture Zones below";
+      ? t("results.mode_hint.fullscreen")
+      : t("results.mode_hint.zones");
   fillMonitorSelect();
 }
 
@@ -171,7 +175,7 @@ function fillMonitorSelect() {
   monitorSelect.replaceChildren();
   if (monitors.length === 0) {
     const option = document.createElement("option");
-    option.textContent = "no monitors detected";
+    option.textContent = t("results.monitor.none");
     option.disabled = true;
     monitorSelect.append(option);
     return;
@@ -179,7 +183,7 @@ function fillMonitorSelect() {
   for (const m of monitors) {
     const option = document.createElement("option");
     option.value = m.name;
-    option.textContent = m.primary ? `${m.name} (primary)` : m.name;
+    option.textContent = m.primary ? t("results.monitor.primary", { name: m.name }) : m.name;
     monitorSelect.append(option);
   }
   monitorSelect.value = fullscreenMonitor || primaryName() || "";
@@ -202,7 +206,9 @@ async function applyCaptureMode(target, monitor) {
 // ---- Excluded Blocks ----
 
 function renderExcluded() {
-  excludedTitle.textContent = `Excluded Blocks (${excludedBlocks.length})`;
+  excludedTitle.textContent = t("results.excluded_title.count", {
+    count: excludedBlocks.length,
+  });
 
   excludedList.replaceChildren();
   for (const exclusion of excludedBlocks) {
@@ -210,8 +216,9 @@ function renderExcluded() {
   }
 
   if (excludedBlocks.length === 0) {
-    excludedEmpty.textContent =
-      `Nothing excluded yet — switch to full-screen mode, press Adjust (${hotkeys.adjust}), and click a translation to hide that position permanently.`;
+    excludedEmpty.textContent = t("results.excluded.empty_hint", {
+      hotkey: hotkeys.adjust,
+    });
     excludedEmpty.classList.remove("hidden");
   } else {
     excludedEmpty.classList.add("hidden");
@@ -224,8 +231,10 @@ function excludedRow(exclusion) {
 
   const label = document.createElement("span");
   label.className = "excluded-label";
-  label.textContent = exclusion.label || "(unlabeled block)";
-  label.title = `Position ${exclusion.region}${exclusion.monitor ? ` on ${exclusion.monitor}` : ""}`;
+  label.textContent = exclusion.label || t("results.excluded.unlabeled");
+  label.title = exclusion.monitor
+    ? t("results.excluded.position_title_monitor", { region: exclusion.region, monitor: exclusion.monitor })
+    : t("results.excluded.position_title", { region: exclusion.region });
 
   const meta = document.createElement("span");
   meta.className = "zone-region";
@@ -233,7 +242,7 @@ function excludedRow(exclusion) {
 
   const del = document.createElement("button");
   del.className = "zone-delete";
-  del.title = "Clear this exclusion (the block translates again)";
+  del.title = t("results.excluded.clear_title");
   del.textContent = "✕";
   del.addEventListener("click", async () => {
     del.disabled = true;
@@ -252,14 +261,17 @@ function excludedRow(exclusion) {
 // Engine errors surface visibly: sticky banner + pill, never silent.
 function showError(stage, message) {
   lastError = { stage, message };
-  statusPill.textContent = "Error";
+  statusPill.textContent = t("results.status.error");
   statusPill.className = "pill error";
   renderErrorBanner();
 }
 
 function renderErrorBanner() {
   if (lastError) {
-    errorBanner.textContent = `[${lastError.stage}] ${lastError.message}`;
+    errorBanner.textContent = t("results.error_banner", {
+      stage: lastError.stage,
+      message: lastError.message,
+    });
     errorBanner.classList.remove("hidden");
   } else {
     errorBanner.classList.add("hidden");
@@ -272,8 +284,10 @@ function renderZones() {
   const enabledCount = zones.filter((z) => z.enabled).length;
   zonesTitle.textContent =
     mode === "fullscreen"
-      ? `Capture Zones (${zones.length} — not watched in full-screen mode)`
-      : `Capture Zones (${enabledCount}${zones.length !== enabledCount ? ` of ${zones.length}` : ""})`;
+      ? t("results.zones_title.fullscreen", { count: zones.length })
+      : zones.length !== enabledCount
+        ? t("results.zones_title.count_of", { enabled: enabledCount, total: zones.length })
+        : t("results.zones_title.count", { count: enabledCount });
 
   zonesList.replaceChildren();
   for (const zone of zones) {
@@ -281,7 +295,7 @@ function renderZones() {
   }
 
   if (zones.length === 0) {
-    zonesEmpty.textContent = `Draw a Capture Zone with ${hotkeys.newZone} (or press "+ New Zone") and drag a rectangle over some text.`;
+    zonesEmpty.textContent = t("results.zones.empty_hint", { hotkey: hotkeys.newZone });
     zonesEmpty.classList.remove("hidden");
   } else {
     zonesEmpty.classList.add("hidden");
@@ -295,8 +309,8 @@ function zoneRow(zone) {
 
   const name = document.createElement("button");
   name.className = "zone-name";
-  name.title = "Click to rename";
-  name.textContent = zone.enabled ? zone.name : `${zone.name} (monitor unplugged)`;
+  name.title = t("results.zone.rename_title");
+  name.textContent = zone.enabled ? zone.name : t("results.zone.unplugged", { name: zone.name });
   name.addEventListener("click", () => beginRename(li, zone, name));
 
   const region = document.createElement("span");
@@ -305,7 +319,7 @@ function zoneRow(zone) {
 
   const del = document.createElement("button");
   del.className = "zone-delete";
-  del.title = `Delete “${zone.name}”`;
+  del.title = t("results.zone.delete_title", { name: zone.name });
   del.textContent = "✕";
   del.addEventListener("click", async () => {
     del.disabled = true;
@@ -364,17 +378,17 @@ function addEntry(block, translation, origin, atMs) {
 
   const li = document.createElement("li");
   li.className = "entry";
-  li.title = "Click to copy the Thai translation";
+  li.title = t("results.entry.copy_title");
 
   const meta = document.createElement("div");
   meta.className = "meta";
   const badge = document.createElement("span");
   if (origin && origin.kind === "one_shot") {
     badge.className = "badge oneshot";
-    badge.textContent = "one-shot";
+    badge.textContent = t("results.entry.oneshot_badge");
   } else {
     badge.className = "badge zone";
-    badge.textContent = (origin && origin.name) || "zone";
+    badge.textContent = (origin && origin.name) || t("results.entry.zone_badge");
   }
   const time = document.createElement("span");
   time.textContent = new Date(atMs).toLocaleTimeString();
@@ -408,7 +422,12 @@ function addEntry(block, translation, origin, atMs) {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
-  renderStatus(await invoke("get_status"));
+  // Ticket 62: the status the window fetches anyway carries the UI
+  // Language — the bootstrap seam resolves the dictionaries before the
+  // first render writes any t() string.
+  const status = await invoke("get_status");
+  await window.I18n.init(status.uiLanguage);
+  renderStatus(status);
 
   await listen("loop-event", (event) => {
     const payload = event.payload;

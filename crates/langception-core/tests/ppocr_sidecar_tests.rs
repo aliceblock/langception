@@ -313,7 +313,12 @@ fn substitution_engine(
 ) -> PpOcrv6Engine {
     let notices = notices.clone();
     fast_engine(program, models_dir, ModelTier::Tiny).with_substitution_notice(
-        std::sync::Arc::new(move |message| notices.lock().unwrap().push(message)),
+        // The seam (ticket 62) hands the callback the SELECTED tier — the
+        // wording is composed on the app side, so the test pins the data,
+        // and the app-side wording is pinned by its own seam test.
+        std::sync::Arc::new(move |tier| {
+            notices.lock().unwrap().push(tier.display_name().to_string())
+        }),
     )
 }
 
@@ -355,9 +360,12 @@ async fn japanese_with_tiny_launches_the_small_model_and_notices_once() {
         1,
         "one notice per incident, not per pass: {notices:?}"
     );
-    assert!(
-        notices[0].contains("tiny") && notices[0].contains("small"),
-        "the notice names both the selection and what actually runs: {notices:?}"
+    // The seam hands over the tier the user SELECTED — the substituted
+    // small set is implied by the rule (effective_selection) and named by
+    // the app's composed message.
+    assert_eq!(
+        notices[0], "PP-OCRv6-tiny",
+        "the callback carries the selected tier: {notices:?}"
     );
 }
 

@@ -683,6 +683,12 @@ pub(crate) async fn delete_prompt_preset(app: AppHandle, name: String) -> Result
 #[serde(rename_all = "camelCase")]
 pub struct GeneralSettingsDto {
     pub language: String,
+    /// The UI Language (ticket 62): "en" | "th" — which language the
+    /// app's own windows and tray render in. Saved with the tab like every
+    /// General field; the Settings window applies it live on save, the
+    /// other windows at their next load, the tray at the next state
+    /// refresh (the menu is rebuilt per apply_state).
+    pub ui_language: String,
     pub cadence_ms: u32,
     pub stability_ms: u32,
     /// Translation Context (ticket 44): how many of each Capture Zone's
@@ -715,6 +721,11 @@ pub(crate) async fn set_general(
         "ko" => SourceLanguage::Ko,
         other => return Err(format!("unknown source language \"{other}\"")),
     };
+    // The UI Language (ticket 62): the same code()/from_code() pair the
+    // sibling enums use, so the accepted spellings are the config enum's.
+    let ui_language =
+        langception_core::config::UiLanguage::from_code(settings.ui_language.as_str())
+            .ok_or_else(|| format!("unknown UI language \"{}\"", settings.ui_language))?;
     // Translation Context (ticket 44): same cap the config validation
     // enforces, checked here so the user is looking at the field.
     let context_translations = settings.context_translations;
@@ -753,6 +764,7 @@ pub(crate) async fn set_general(
         let before = current_config(app)?;
         with_config_mut(app, |config| {
             config.source.language = language;
+            config.ui.ui_language = ui_language;
             config.capture.cadence_ms = settings.cadence_ms;
             config.capture.stability_ms = settings.stability_ms;
             config.context_translations = settings.context_translations;

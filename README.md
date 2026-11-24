@@ -220,6 +220,11 @@ Results Window.
   first-person pronouns from Thai output (ครับ/ค่ะ/ผม/ฉัน → neutral forms).
 - **Text Style** (Settings → Text Style): font, size, color, outline,
   background pill, all applied to the overlay live.
+- **UI Language** (Settings → General): the language of Langception's own
+  windows and tray — English or ไทย (Thai). Applies to the Settings window
+  on save; other windows pick it up when next shown and the tray on the
+  next state change. (Source/target language names in the selects are
+  native names, not localized.)
 
 ## Privacy
 

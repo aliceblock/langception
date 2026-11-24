@@ -13,14 +13,18 @@
          non-interactive child carries the attribute too (Tauri starts a
          drag only on the exact target), so the bar drags from anywhere.
          titlebar.js fills .titlebar-buttons; close hides to tray (the Rust
-         side turns close requests into hides). -->
+         side turns close requests into hides). Ticket 62: user-visible
+         text carries i18n keys — data-i18n (text), data-i18n-html (rich
+         hints whose English carries inline markup), data-i18n-placeholder
+         and data-i18n-title — applied by i18n.js once settings.js resolves
+         the language from get_status. -->
     <header>
       <div class="titlebar-row" data-tauri-drag-region>
         <div class="brand" data-tauri-drag-region>
           <img class="logo" src="logo.png" alt="" data-tauri-drag-region>
           <h1 data-tauri-drag-region>Langception — Settings</h1>
-          <span id="privacy-chip" class="chip privacy hidden" data-tauri-drag-region title="The active Translate Engine sends screen text off-machine">☁ cloud</span>
-          <span id="config-error-chip" class="chip error hidden" data-tauri-drag-region title="config.toml is broken — see the Results Window">config error</span>
+          <span id="privacy-chip" class="chip privacy hidden" data-tauri-drag-region data-i18n-title="settings.header.privacy_chip.title" title="The active Translate Engine sends screen text off-machine" data-i18n="results.privacy_chip.text">☁ cloud</span>
+          <span id="config-error-chip" class="chip error hidden" data-tauri-drag-region data-i18n-title="settings.header.config_error_chip.title" title="config.toml is broken — see the Results Window" data-i18n="settings.header.config_error_chip">config error</span>
         </div>
         <div class="titlebar-buttons"></div>
       </div>
@@ -30,16 +34,16 @@
          (status.firstRun) or via "Run setup wizard" in About. Skippable —
          zero-config always works. -->
     <div id="wizard" class="wizard hidden">
-      <h2>Welcome to Langception</h2>
-      <p class="wizard-lede">
+      <h2 data-i18n="wizard.title">Welcome to Langception</h2>
+      <p class="wizard-lede" data-i18n="wizard.lede">
         Langception reads text on your screen and shows its Thai translation.
         It works immediately with no setup — the default engine is free and
         keyless. This wizard just checks the two things worth knowing about:
       </p>
 
       <section class="wizard-step">
-        <h3>1 · OCR language packs</h3>
-        <p class="hint">
+        <h3 data-i18n="wizard.step_ocr.title">1 · OCR language packs</h3>
+        <p class="hint" data-i18n-html="wizard.step_ocr.hint_html">
           Langception reads your screen with <strong>Windows OCR</strong> by
           default, which needs a language pack for the language you will
           read — without it nothing is read. English is usually
@@ -50,8 +54,8 @@
         </p>
         <ul id="wizard-packs" class="packs"></ul>
         <div class="row">
-          <button id="wizard-recheck" class="btn small">Re-check</button>
-          <button id="wizard-open-language-settings" class="btn small">
+          <button id="wizard-recheck" class="btn small" data-i18n="wizard.recheck_btn">Re-check</button>
+          <button id="wizard-open-language-settings" class="btn small" data-i18n="wizard.open_language_settings">
             Open Windows language settings
           </button>
           <span id="wizard-packs-note" class="hint"></span>
@@ -59,14 +63,14 @@
       </section>
 
       <section class="wizard-step">
-        <h3>2 · Translation engine</h3>
+        <h3 data-i18n="wizard.step_engine.title">2 · Translation engine</h3>
         <div class="engine-card">
           <div class="engine-title">
-            <strong>Google Translate (unofficial)</strong>
-            <span class="chip privacy">☁ cloud</span>
-            <span class="chip ok">active by default</span>
+            <strong data-i18n="wizard.google.title">Google Translate (unofficial)</strong>
+            <span class="chip privacy" data-i18n="common.cloud_chip">☁ cloud</span>
+            <span class="chip ok" data-i18n="wizard.google.active_chip">active by default</span>
           </div>
-          <p class="hint">
+          <p class="hint" data-i18n="wizard.google.hint">
             Free, no key, no setup. Cloud engine: screen text is sent to
             Google while translating — the ☁ badge shows when. Unofficial,
             so it can rate-limit or break.
@@ -74,90 +78,100 @@
         </div>
         <div class="engine-card">
           <div class="engine-title">
-            <strong>Recommended upgrade: Azure AI Translator</strong>
-            <span class="chip privacy">☁ cloud</span>
+            <strong data-i18n="wizard.azure.title">Recommended upgrade: Azure AI Translator</strong>
+            <span class="chip privacy" data-i18n="common.cloud_chip">☁ cloud</span>
           </div>
-          <p class="hint">
+          <p class="hint" data-i18n="wizard.azure.hint">
             Keyed and reliable, with a permanent free tier (F0, 2M
             chars/month). Create a free key with the link (tier "Free F0",
             region "Global") and paste it here — or skip: Google works
             with no setup.
           </p>
           <div class="row glossary-add">
-            <input id="wizard-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
-            <input id="wizard-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
+            <input id="wizard-azure-key" type="password" data-i18n-placeholder="wizard.azure.key_placeholder" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
+            <input id="wizard-azure-region" type="text" data-i18n-placeholder="wizard.azure.region_placeholder" placeholder="Region (empty = global)" spellcheck="false" />
           </div>
           <div class="row">
-            <button id="wizard-azure-link" class="btn small">Create a free key…</button>
-            <button id="wizard-azure-use" class="btn primary small">Use Azure F0</button>
+            <button id="wizard-azure-link" class="btn small" data-i18n="wizard.azure.create_key">Create a free key…</button>
+            <button id="wizard-azure-use" class="btn primary small" data-i18n="wizard.azure.use_btn">Use Azure F0</button>
             <span id="wizard-azure-note" class="hint"></span>
           </div>
         </div>
       </section>
 
       <div class="wizard-actions">
-        <button id="wizard-skip" class="btn">Skip setup</button>
-        <button id="wizard-finish" class="btn primary">Get started</button>
+        <button id="wizard-skip" class="btn" data-i18n="wizard.skip_btn">Skip setup</button>
+        <button id="wizard-finish" class="btn primary" data-i18n="wizard.finish_btn">Get started</button>
       </div>
     </div>
 
     <nav id="tabs" class="tabs hidden">
-      <button class="tab active" data-tab="general">General</button>
-      <button class="tab" data-tab="engines">Engines</button>
-      <button class="tab" data-tab="glossary">Glossary</button>
-      <button class="tab" data-tab="profiles">Profiles</button>
-      <button class="tab" data-tab="text-style">Text Style</button>
-      <button class="tab" data-tab="hotkeys">Hotkeys</button>
-      <button class="tab" data-tab="about">About</button>
+      <button class="tab active" data-tab="general" data-i18n="settings.tab.general">General</button>
+      <button class="tab" data-tab="engines" data-i18n="settings.tab.engines">Engines</button>
+      <button class="tab" data-tab="glossary" data-i18n="settings.tab.glossary">Glossary</button>
+      <button class="tab" data-tab="profiles" data-i18n="settings.tab.profiles">Profiles</button>
+      <button class="tab" data-tab="text-style" data-i18n="settings.tab.text_style">Text Style</button>
+      <button class="tab" data-tab="hotkeys" data-i18n="settings.tab.hotkeys">Hotkeys</button>
+      <button class="tab" data-tab="about" data-i18n="settings.tab.about">About</button>
     </nav>
 
     <main id="tab-pages" class="pages hidden">
       <section id="tab-general" class="page active">
-        <h2>General</h2>
+        <h2 data-i18n="settings.general.title">General</h2>
         <!-- Ticket 41: one concern (the global settings) — the whole body
              lives in a single section card. -->
         <div class="settings-section">
         <div class="form-grid">
           <label class="form-row">
-            <span>Source language</span>
+            <span data-i18n="settings.general.source_language">Source language</span>
             <select id="general-language">
-              <option value="en">English</option>
-              <option value="ja">Japanese</option>
-              <option value="zh">Chinese</option>
-              <option value="ko">Korean</option>
+              <option value="en" data-i18n="common.lang_name.en">English</option>
+              <option value="ja" data-i18n="common.lang_name.ja">Japanese</option>
+              <option value="zh" data-i18n="common.lang_name.zh">Chinese</option>
+              <option value="ko" data-i18n="common.lang_name.ko">Korean</option>
             </select>
           </label>
           <label class="form-row">
-            <span>Cadence (ms)</span>
+            <span data-i18n="settings.general.ui_language">UI Language</span>
+            <select id="general-ui-language">
+              <!-- Native names on purpose (each option shows its own
+                   language); the values are the config's UiLanguage codes. -->
+              <option value="en" data-i18n="settings.general.ui_language.en">English</option>
+              <option value="th" data-i18n="settings.general.ui_language.th">ไทย</option>
+            </select>
+            <span class="hint" data-i18n="settings.general.ui_language.hint"></span>
+          </label>
+          <label class="form-row">
+            <span data-i18n="settings.general.cadence">Cadence (ms)</span>
             <input id="general-cadence" type="number" min="50" max="10000" step="50" />
           </label>
           <label class="form-row">
-            <span>Stability (ms)</span>
+            <span data-i18n="settings.general.stability">Stability (ms)</span>
             <input id="general-stability" type="number" min="0" max="10000" step="50" />
           </label>
-          <label class="form-row" title="Feeds the last translations back into each LLM prompt so consecutive dialogue keeps a consistent tone. LLM engines only (Gemini, OpenAI-compatible, LM Studio); 0 = off.">
-            <span>Translation Context</span>
+          <label class="form-row" data-i18n-title="settings.general.context.title" title="Feeds the last translations back into each LLM prompt so consecutive dialogue keeps a consistent tone. LLM engines only (Gemini, OpenAI-compatible, LM Studio); 0 = off.">
+            <span data-i18n="settings.general.context">Translation Context</span>
             <input id="general-context" type="number" min="0" max="20" step="1" />
           </label>
           <label class="form-row">
-            <span>Start with Windows</span>
+            <span data-i18n="settings.general.autostart">Start with Windows</span>
             <input id="general-autostart" type="checkbox" />
           </label>
-          <label class="form-row" title="Keep the Results Window above other apps — translations stay readable while a game fills the screen">
-            <span>Keep Results window on top</span>
+          <label class="form-row" data-i18n-title="settings.general.results_on_top.title" title="Keep the Results Window above other apps — translations stay readable while a game fills the screen">
+            <span data-i18n="settings.general.results_on_top">Keep Results window on top</span>
             <input id="general-results-on-top" type="checkbox" />
           </label>
-          <label class="form-row" title="Keep the Settings window above other apps — useful for tweaking while the game keeps focus">
-            <span>Keep Settings window on top</span>
+          <label class="form-row" data-i18n-title="settings.general.settings_on_top.title" title="Keep the Settings window above other apps — useful for tweaking while the game keeps focus">
+            <span data-i18n="settings.general.settings_on_top">Keep Settings window on top</span>
             <input id="general-settings-on-top" type="checkbox" />
           </label>
-          <label class="form-row" title="Capture Visibility: when checked, Langception's windows appear in screenshots, recordings, and remote-desktop sessions — handy for sharing your setup. Applies with Save.">
-            <span>Show Langception in screen captures</span>
+          <label class="form-row" data-i18n-title="settings.general.capture_visible.title" title="Capture Visibility: when checked, Langception's windows appear in screenshots, recordings, and remote-desktop sessions — handy for sharing your setup. Applies with Save.">
+            <span data-i18n="settings.general.capture_visible">Show Langception in screen captures</span>
             <input id="general-capture-visible" type="checkbox" />
           </label>
         </div>
         <div class="row">
-          <span class="hint">
+          <span class="hint" data-i18n="settings.general.profiles_hint">
             Per-app Profiles can override some of these (Settings →
             Profiles).
           </span>
@@ -166,46 +180,46 @@
       </section>
 
       <section id="tab-engines" class="page">
-        <h2>Engines</h2>
+        <h2 data-i18n="settings.engines.title">Engines</h2>
         <!-- Ticket 41: three concern groups — the engine choice, the
              per-engine cards (their own cards), and prompts + OCR packs. -->
         <div class="settings-section">
-        <h3>Translation</h3>
-        <p class="hint">
+        <h3 data-i18n="settings.engines.translation_h3">Translation</h3>
+        <p class="hint" data-i18n="settings.engines.translation_hint">
           The engine that translates every Text Block; per-app Profiles can
           override it (Settings → Profiles). Cloud engines send screen text
           to their service — the ☁ badge shows when one is active.
         </p>
         <div class="form-grid">
           <label class="form-row">
-            <span>Processing</span>
+            <span data-i18n="settings.engines.processing">Processing</span>
             <select id="engines-reading">
-              <option value="ocr">Classic — OCR engine reads, then the engine translates (default)</option>
-              <option value="fused">Vision model — reads and translates in one call</option>
+              <option value="ocr" data-i18n="settings.engines.reading.ocr">Classic — OCR engine reads, then the engine translates (default)</option>
+              <option value="fused" data-i18n="settings.engines.reading.fused">Vision model — reads and translates in one call</option>
             </select>
           </label>
           <label class="form-row">
-            <span>OCR engine</span>
+            <span data-i18n="settings.engines.ocr_engine">OCR engine</span>
             <select id="engines-ocr">
-              <option value="windows">Windows OCR — default, needs an installed language pack</option>
-              <option value="pp-ocrv6-tiny">PP-OCRv6 tiny — bundled, offline, fastest tier (best for English &amp; Chinese)</option>
-              <option value="pp-ocrv6-small">PP-OCRv6 small — bundled, offline, balanced tier, full language coverage</option>
-              <option value="pp-ocrv6-medium">PP-OCRv6 medium — bundled, offline, most accurate tier, heavier per pass</option>
+              <option value="windows" data-i18n="settings.engines.ocr.windows">Windows OCR — default, needs an installed language pack</option>
+              <option value="pp-ocrv6-tiny" data-i18n="settings.engines.ocr.tiny">PP-OCRv6 tiny — bundled, offline, fastest tier (best for English &amp; Chinese)</option>
+              <option value="pp-ocrv6-small" data-i18n="settings.engines.ocr.small">PP-OCRv6 small — bundled, offline, balanced tier, full language coverage</option>
+              <option value="pp-ocrv6-medium" data-i18n="settings.engines.ocr.medium">PP-OCRv6 medium — bundled, offline, most accurate tier, heavier per pass</option>
             </select>
           </label>
           <label class="form-row">
-            <span>Translation engine</span>
+            <span data-i18n="settings.engines.translate_engine">Translation engine</span>
             <select id="engines-default">
-              <option value="google">Google Translate (unofficial) — free, no key</option>
-              <option value="lmstudio">LM Studio — local & offline, no key</option>
-              <option value="gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
-              <option value="azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
-              <option value="openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
-              <option value="deepl">DeepL — free tier, 1M chars total</option>
+              <option value="google" data-i18n="settings.engines.engine.google">Google Translate (unofficial) — free, no key</option>
+              <option value="lmstudio" data-i18n="settings.engines.engine.lmstudio">LM Studio — local & offline, no key</option>
+              <option value="gemini" data-i18n="settings.engines.engine.gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
+              <option value="azure" data-i18n="settings.engines.engine.azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
+              <option value="openai" data-i18n="settings.engines.engine.openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
+              <option value="deepl" data-i18n="settings.engines.engine.deepl">DeepL — free tier, 1M chars total</option>
             </select>
           </label>
         </div>
-        <p class="hint">
+        <p class="hint" data-i18n-html="settings.engines.ocr_hint_html">
           The OCR engine reads the screen before translation.
           <strong>Windows OCR</strong> (the default) is lighter but needs
           the matching language pack installed (checked below).
@@ -217,7 +231,7 @@
           cannot run, the pass falls back to Windows OCR automatically and
           a notice says so.
         </p>
-        <p id="engines-reading-warning" class="hint hidden">
+        <p id="engines-reading-warning" class="hint hidden" data-i18n-html="settings.engines.fused_warning_html">
           Sends every captured frame to the engine as an image — read and
           translate in one call. Slower per pass and billed per image on
           cloud engines; needs a vision-capable model (pick one in the
@@ -227,11 +241,11 @@
         </div>
         <div class="engine-card" data-engine="google">
           <div class="engine-title">
-            <strong>Google Translate (unofficial)</strong>
-            <span class="chip privacy" title="Screen text is sent to Google's translation endpoint">☁ cloud</span>
+            <strong data-i18n="settings.card.google.title">Google Translate (unofficial)</strong>
+            <span class="chip privacy" data-i18n-title="settings.card.google.cloud_title" title="Screen text is sent to Google's translation endpoint" data-i18n="common.cloud_chip">☁ cloud</span>
           </div>
           <div class="engine-body">
-            <p class="hint">
+            <p class="hint" data-i18n="settings.card.google.hint">
               Free, no key, no setup — the keyless default. Unofficial
               endpoint, so it can rate-limit or break without notice.
             </p>
@@ -239,11 +253,11 @@
         </div>
         <div class="engine-card" data-engine="lmstudio">
           <div class="engine-title">
-            <strong>LM Studio</strong>
-            <span class="chip ok" title="Runs on this machine — screen text never leaves it">Local · offline</span>
+            <strong data-i18n="settings.card.lmstudio.title">LM Studio</strong>
+            <span class="chip ok" data-i18n-title="settings.card.lmstudio.ok_chip_title" title="Runs on this machine — screen text never leaves it" data-i18n="settings.card.lmstudio.ok_chip">Local · offline</span>
           </div>
           <div class="engine-body">
-            <p class="hint">
+            <p class="hint" data-i18n-html="settings.card.lmstudio.hint_html">
               Local and offline — screen text never leaves this machine.
               Start LM Studio's server (Developer → Start server, default
               port 1234), load a model, then Check server here to pick it.
@@ -251,103 +265,103 @@
               <code>qwen3-4b-instruct</code>.
             </p>
             <div class="row glossary-add">
-              <input id="engines-lmstudio-base-url" type="text" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
-              <button id="engines-lmstudio-check" class="btn small">Check server</button>
+              <input id="engines-lmstudio-base-url" type="text" data-i18n-placeholder="settings.card.lmstudio.base_url_placeholder" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
+              <button id="engines-lmstudio-check" class="btn small" data-i18n="settings.card.lmstudio.check_btn">Check server</button>
             </div>
             <div class="row glossary-add">
-              <select id="engines-lmstudio-model" title="Models served by the LM Studio server">
-                <option value="">— check the server to list models —</option>
+              <select id="engines-lmstudio-model" data-i18n-title="settings.card.lmstudio.model_title" title="Models served by the LM Studio server">
+                <option value="" data-i18n="settings.card.lmstudio.model_placeholder">— check the server to list models —</option>
               </select>
-              <input id="engines-lmstudio-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+              <input id="engines-lmstudio-temperature" type="number" min="0" max="2" step="0.1" data-i18n-title="common.temperature_title" title="Sampling temperature (0–2); low values keep translations stable" />
             </div>
             <span id="engines-lmstudio-note" class="hint"></span>
           </div>
         </div>
         <div class="engine-card" data-engine="gemini">
           <div class="engine-title">
-            <strong>Gemini</strong>
-            <span class="chip privacy" title="Screen text is sent to Google's Generative Language API">☁ cloud</span>
+            <strong data-i18n="settings.card.gemini.title">Gemini</strong>
+            <span class="chip privacy" data-i18n-title="settings.card.gemini.cloud_title" title="Screen text is sent to Google's Generative Language API" data-i18n="common.cloud_chip">☁ cloud</span>
           </div>
           <div class="engine-body">
-            <p class="hint">
+            <p class="hint" data-i18n-html="settings.card.gemini.hint_html">
               Google's LLM API: create a free API key at AI Studio with the
               link, paste it, and type a model id. Recommended:
               <code>gemini-4-hydrogen</code> or <code>gemini-3.8-flash</code>.
             </p>
             <div class="row glossary-add">
-              <input id="engines-gemini-key" type="password" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
-              <button id="engines-gemini-link" class="btn small">Create a free key…</button>
+              <input id="engines-gemini-key" type="password" data-i18n-placeholder="settings.card.gemini.key_placeholder" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
+              <button id="engines-gemini-link" class="btn small" data-i18n="settings.card.gemini.create_key">Create a free key…</button>
             </div>
             <div class="row glossary-add">
-              <input id="engines-gemini-model" type="text" placeholder="Model name (e.g. gemini-4-hydrogen)" spellcheck="false" />
-              <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+              <input id="engines-gemini-model" type="text" data-i18n-placeholder="settings.card.gemini.model_placeholder" placeholder="Model name (e.g. gemini-4-hydrogen)" spellcheck="false" />
+              <input id="engines-gemini-temperature" type="number" min="0" max="2" step="0.1" data-i18n-title="common.temperature_title" title="Sampling temperature (0–2); low values keep translations stable" />
             </div>
           </div>
         </div>
         <div class="engine-card" data-engine="azure">
           <div class="engine-title">
-            <strong>Azure AI Translator</strong>
-            <span class="chip privacy" title="Screen text is sent to Azure's translation service">☁ cloud</span>
+            <strong data-i18n="settings.card.azure.title">Azure AI Translator</strong>
+            <span class="chip privacy" data-i18n-title="settings.card.azure.cloud_title" title="Screen text is sent to Azure's translation service" data-i18n="common.cloud_chip">☁ cloud</span>
           </div>
           <div class="engine-body">
-            <p class="hint">
+            <p class="hint" data-i18n="settings.card.azure.hint">
               Permanently free on the F0 tier (2M chars/month). Create a
               Translator resource with the link (tier "Free F0", region
               "Global") and paste its key — the region must match the
               resource; empty means global.
             </p>
             <div class="row glossary-add">
-              <input id="engines-azure-key" type="password" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
-              <input id="engines-azure-region" type="text" placeholder="Region (empty = global)" spellcheck="false" />
+              <input id="engines-azure-key" type="password" data-i18n-placeholder="settings.card.azure.key_placeholder" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
+              <input id="engines-azure-region" type="text" data-i18n-placeholder="settings.card.azure.region_placeholder" placeholder="Region (empty = global)" spellcheck="false" />
             </div>
             <div class="row">
-              <button id="engines-azure-link" class="btn small">Create a free key…</button>
+              <button id="engines-azure-link" class="btn small" data-i18n="settings.card.azure.create_key">Create a free key…</button>
             </div>
           </div>
         </div>
         <div class="engine-card" data-engine="openai">
           <div class="engine-title">
-            <strong>OpenAI-compatible</strong>
-            <span class="chip privacy" title="Screen text is sent to whatever server the base URL points at">☁ cloud (unless your URL is local)</span>
+            <strong data-i18n="settings.card.openai.title">OpenAI-compatible</strong>
+            <span class="chip privacy" data-i18n-title="settings.card.openai.cloud_title" title="Screen text is sent to whatever server the base URL points at" data-i18n="settings.card.openai.cloud_chip">☁ cloud (unless your URL is local)</span>
           </div>
           <div class="engine-body">
-            <p class="hint">
+            <p class="hint" data-i18n-html="settings.card.openai.hint_html">
               Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
               set the base URL (must include <code>/v1</code>), paste its key,
               and type the model name (e.g. <code>gpt-4o-mini</code>).
             </p>
             <div class="row glossary-add">
-              <input id="engines-openai-base-url" type="text" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
-              <input id="engines-openai-key" type="password" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
+              <input id="engines-openai-base-url" type="text" data-i18n-placeholder="settings.card.openai.base_url_placeholder" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
+              <input id="engines-openai-key" type="password" data-i18n-placeholder="settings.card.openai.key_placeholder" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
             </div>
             <div class="row glossary-add">
-              <input id="engines-openai-model" type="text" placeholder="Model name (e.g. gpt-4o-mini)" spellcheck="false" />
-              <input id="engines-openai-temperature" type="number" min="0" max="2" step="0.1" title="Sampling temperature (0–2); low values keep translations stable" />
+              <input id="engines-openai-model" type="text" data-i18n-placeholder="settings.card.openai.model_placeholder" placeholder="Model name (e.g. gpt-4o-mini)" spellcheck="false" />
+              <input id="engines-openai-temperature" type="number" min="0" max="2" step="0.1" data-i18n-title="common.temperature_title" title="Sampling temperature (0–2); low values keep translations stable" />
             </div>
           </div>
         </div>
         <div class="engine-card" data-engine="deepl">
           <div class="engine-title">
-            <strong>DeepL</strong>
-            <span class="chip privacy" title="Screen text is sent to DeepL's translation service">☁ cloud</span>
+            <strong data-i18n="settings.card.deepl.title">DeepL</strong>
+            <span class="chip privacy" data-i18n-title="settings.card.deepl.cloud_title" title="Screen text is sent to DeepL's translation service" data-i18n="common.cloud_chip">☁ cloud</span>
           </div>
           <div class="engine-body">
-            <p class="hint">
+            <p class="hint" data-i18n="settings.card.deepl.hint">
               The DeepL API free plan (1M chars total, Thai supported). Sign
               up with the link and paste the key — free keys end with ":fx",
               which picks the right API host.
             </p>
             <div class="row glossary-add">
-              <input id="engines-deepl-key" type="password" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
+              <input id="engines-deepl-key" type="password" data-i18n-placeholder="settings.card.deepl.key_placeholder" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
             </div>
             <div class="row">
-              <button id="engines-deepl-link" class="btn small">Sign up for a free key…</button>
+              <button id="engines-deepl-link" class="btn small" data-i18n="settings.card.deepl.signup_btn">Sign up for a free key…</button>
             </div>
           </div>
         </div>
         <div class="settings-section">
-        <h3>Prompts (advanced)</h3>
-        <p class="hint">
+        <h3 data-i18n="settings.prompts.title">Prompts (advanced)</h3>
+        <p class="hint" data-i18n-html="settings.prompts.hint_html">
           The system prompts sent to the LLM engines (Gemini,
           OpenAI-compatible, LM Studio) with every translation; Google, Azure
           and DeepL never see prompts. <code>{source}</code> and
@@ -358,75 +372,75 @@
              the same translation output these prompts produce. Same id and
              save command as before (set_general); only the row's home moved. -->
         <div class="form-grid">
-          <label class="form-row" title="Translates without speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns are removed from the output">
-            <span>Genderless Mode</span>
+          <label class="form-row" data-i18n-title="settings.prompts.genderless.title" title="Translates without speaker gender: gendered Thai politeness particles (ครับ/ค่ะ/จ้า…) and first-person pronouns are removed from the output">
+            <span data-i18n="settings.prompts.genderless">Genderless Mode</span>
             <input id="general-genderless" type="checkbox" />
-            <span class="hint">Applies when translation (re)starts.</span>
+            <span class="hint" data-i18n="settings.prompts.genderless.hint">Applies when translation (re)starts.</span>
           </label>
         </div>
         <div class="form-grid">
           <label class="form-row">
-            <span>System Prompt Preset</span>
+            <span data-i18n="settings.presets.label">System Prompt Preset</span>
             <!-- Filled from the config: the built-ins, the saved presets, then Custom. -->
             <select id="engines-preset"></select>
           </label>
         </div>
-        <p class="hint">
+        <p class="hint" data-i18n-html="settings.presets.pick_hint_html">
           Picking a preset loads its two prompts below — <strong>General</strong>
           clears both (the built-in default). Editing a loaded prompt turns the
           selection into <strong>Custom</strong>.
         </p>
         <div class="row glossary-add">
-          <input id="engines-preset-name" type="text" maxlength="80" placeholder="Preset name" spellcheck="false" />
-          <button id="engines-preset-save" class="btn small" title="Store the two prompts below under this name and select the new preset">
+          <input id="engines-preset-name" type="text" maxlength="80" data-i18n-placeholder="settings.presets.name_placeholder" placeholder="Preset name" spellcheck="false" />
+          <button id="engines-preset-save" class="btn small" data-i18n-title="settings.presets.save_btn_title" title="Store the two prompts below under this name and select the new preset" data-i18n="settings.presets.save_btn">
             Save as preset…
           </button>
-          <button id="engines-preset-rename" class="btn small" title="Rename the selected saved preset to the name typed here">
+          <button id="engines-preset-rename" class="btn small" data-i18n-title="settings.presets.rename_btn_title" title="Rename the selected saved preset to the name typed here" data-i18n="settings.presets.rename_btn">
             Rename
           </button>
-          <button id="engines-preset-delete" class="btn small" title="Delete the selected saved preset">
+          <button id="engines-preset-delete" class="btn small" data-i18n-title="settings.presets.delete_btn_title" title="Delete the selected saved preset" data-i18n="settings.presets.delete_btn">
             Delete
           </button>
         </div>
-        <p class="hint">
+        <p class="hint" data-i18n-html="settings.presets.manage_hint_html">
           <em>Save as preset</em> stores the two prompts as they read right now.
           Saved presets can be renamed and deleted; built-ins cannot.
         </p>
         <div class="prompt-field">
           <div class="row prompt-head">
-            <span class="prompt-label">Translation prompt</span>
-            <button id="engines-prompt-translation-reset" class="btn small" title="Clear the field — the built-in translation instruction applies again">
+            <span class="prompt-label" data-i18n="settings.prompt.translation_label">Translation prompt</span>
+            <button id="engines-prompt-translation-reset" class="btn small" data-i18n-title="settings.prompt.translation_reset_title" title="Clear the field — the built-in translation instruction applies again" data-i18n="settings.prompt.reset_btn">
               Reset to default
             </button>
           </div>
-          <textarea id="engines-prompt-translation" rows="5" spellcheck="false" placeholder="Leave empty to use the built-in translation instruction (translate only, keep formatting)."></textarea>
+          <textarea id="engines-prompt-translation" rows="5" spellcheck="false" data-i18n-placeholder="settings.prompt.translation_placeholder" placeholder="Leave empty to use the built-in translation instruction (translate only, keep formatting)."></textarea>
         </div>
         <div class="prompt-field">
           <div class="row prompt-head">
-            <span class="prompt-label">Screen-reading prompt</span>
-            <button id="engines-prompt-screen-reading-reset" class="btn small" title="Clear the field — the built-in screen-reading instruction applies again">
+            <span class="prompt-label" data-i18n="settings.prompt.screen_label">Screen-reading prompt</span>
+            <button id="engines-prompt-screen-reading-reset" class="btn small" data-i18n-title="settings.prompt.screen_reset_title" title="Clear the field — the built-in screen-reading instruction applies again" data-i18n="settings.prompt.reset_btn">
               Reset to default
             </button>
           </div>
-          <textarea id="engines-prompt-screen-reading" rows="5" spellcheck="false" placeholder="Leave empty to use the built-in screen-reading instruction."></textarea>
-          <span class="hint">Used only when Processing above is “Vision model” (one fused call reads and translates every block).</span>
+          <textarea id="engines-prompt-screen-reading" rows="5" spellcheck="false" data-i18n-placeholder="settings.prompt.screen_placeholder" placeholder="Leave empty to use the built-in screen-reading instruction."></textarea>
+          <span class="hint" data-i18n="settings.prompt.screen_hint">Used only when Processing above is “Vision model” (one fused call reads and translates every block).</span>
         </div>
         <div class="row">
-          <button id="engines-test" class="btn small">Test translation engine</button>
+          <button id="engines-test" class="btn small" data-i18n="settings.engines.test_btn">Test translation engine</button>
           <span id="engines-note" class="hint"></span>
         </div>
         </div>
         <div class="settings-section">
-        <h3>OCR Engine — Windows OCR language packs</h3>
-        <p class="hint">
+        <h3 data-i18n="settings.packs_section.title">OCR Engine — Windows OCR language packs</h3>
+        <p class="hint" data-i18n="settings.packs_section.hint">
           Windows OCR needs a language pack for the Source Language you read —
           a missing pack silently reads nothing, so the packs are checked
           here.
         </p>
         <ul id="engines-packs" class="packs"></ul>
         <div class="row">
-          <button id="engines-recheck" class="btn small">Re-check</button>
-          <button id="engines-open-language-settings" class="btn small">
+          <button id="engines-recheck" class="btn small" data-i18n="settings.packs_section.recheck_btn">Re-check</button>
+          <button id="engines-open-language-settings" class="btn small" data-i18n="settings.packs_section.open_language_settings">
             Open Windows language settings
           </button>
           <span id="engines-packs-note" class="hint"></span>
@@ -435,8 +449,8 @@
       </section>
 
       <section id="tab-glossary" class="page">
-        <h2>Glossary</h2>
-        <p class="hint">
+        <h2 data-i18n="settings.glossary.title">Glossary</h2>
+        <p class="hint" data-i18n="settings.glossary.hint">
           When a block's entire text matches a term (trimmed,
           case-insensitive), its pinned Thai is shown without calling the
           engine.
@@ -446,39 +460,39 @@
              footer's Save is the page's only primary. -->
         <div class="settings-section">
         <div class="row glossary-add">
-          <input id="glossary-new-term" type="text" placeholder="Term (e.g. Vertin)" spellcheck="false" />
-          <input id="glossary-new-thai" type="text" placeholder="Thai (e.g. เวอร์ติน)" spellcheck="false" />
-          <button id="glossary-add-btn" class="btn">Add</button>
+          <input id="glossary-new-term" type="text" data-i18n-placeholder="settings.glossary.term_placeholder" placeholder="Term (e.g. Vertin)" spellcheck="false" />
+          <input id="glossary-new-thai" type="text" data-i18n-placeholder="settings.glossary.thai_placeholder" placeholder="Thai (e.g. เวอร์ติน)" spellcheck="false" />
+          <button id="glossary-add-btn" class="btn" data-i18n="settings.glossary.add_btn">Add</button>
         </div>
         <div class="row glossary-io">
-          <button id="glossary-export" class="btn small">Export JSON…</button>
-          <button id="glossary-import" class="btn small">Import JSON…</button>
-          <select id="glossary-import-mode" title="Import mode">
-            <option value="merge">merge (keep existing)</option>
-            <option value="replace">replace all</option>
+          <button id="glossary-export" class="btn small" data-i18n="settings.glossary.export_btn">Export JSON…</button>
+          <button id="glossary-import" class="btn small" data-i18n="settings.glossary.import_btn">Import JSON…</button>
+          <select id="glossary-import-mode" data-i18n-title="settings.glossary.import_mode_title" title="Import mode">
+            <option value="merge" data-i18n="settings.glossary.import_mode.merge">merge (keep existing)</option>
+            <option value="replace" data-i18n="settings.glossary.import_mode.replace">replace all</option>
           </select>
           <span id="glossary-note" class="hint"></span>
         </div>
         <ul id="glossary-list" class="glossary-list"></ul>
-        <div id="glossary-empty" class="empty hidden">No terms yet.</div>
+        <div id="glossary-empty" class="empty hidden" data-i18n="settings.glossary.empty">No terms yet.</div>
         </div>
       </section>
 
       <section id="tab-profiles" class="page">
-        <h2>Profiles</h2>
-        <p class="hint">
+        <h2 data-i18n="settings.profiles.title">Profiles</h2>
+        <p class="hint" data-i18n="settings.profiles.hint">
           A Profile gives one app its own Source Language, engine, Capture
           Zones inside its window, Glossary layer, Genderless Mode and
           System Prompt Preset. It applies while that app is the foreground
           window; with no match, the global settings apply.
         </p>
         <div class="row">
-          <select id="profile-select" title="Choose a profile"></select>
-          <button id="profile-new" class="btn small">New profile…</button>
-          <button id="profile-delete" class="btn small">Delete</button>
-          <span id="profile-active-chip" class="chip ok hidden" title="This profile's app owns the foreground window right now">active</span>
+          <select id="profile-select" data-i18n-title="settings.profiles.select_title" title="Choose a profile"></select>
+          <button id="profile-new" class="btn small" data-i18n="settings.profiles.new_btn">New profile…</button>
+          <button id="profile-delete" class="btn small" data-i18n="settings.profiles.delete_btn">Delete</button>
+          <span id="profile-active-chip" class="chip ok hidden" data-i18n-title="settings.profiles.active_chip_title" title="This profile's app owns the foreground window right now" data-i18n="settings.profiles.active_chip">active</span>
         </div>
-        <div id="profile-empty" class="empty">
+        <div id="profile-empty" class="empty" data-i18n="settings.profiles.empty">
           No profiles yet. Create one to give a specific app its own source
           language, glossary and capture zones.
         </div>
@@ -487,57 +501,57 @@
           <!-- Ticket 41: the editor's three concerns (identity, glossary
                layer, capture zones) each get a section card. -->
           <div class="settings-section">
-          <h3>Profile</h3>
+          <h3 data-i18n="settings.profiles.editor.title">Profile</h3>
           <div class="form-grid">
             <label class="form-row">
-              <span>Name</span>
-              <input id="profile-name" type="text" spellcheck="false" placeholder="e.g. Reverse: 1999" />
+              <span data-i18n="settings.profiles.name_label">Name</span>
+              <input id="profile-name" type="text" spellcheck="false" data-i18n-placeholder="settings.profiles.name_placeholder" placeholder="e.g. Reverse: 1999" />
             </label>
             <label class="form-row">
-              <span>App (executable)</span>
+              <span data-i18n="settings.profiles.exe_label">App (executable)</span>
               <span class="style-pair">
-                <select id="profile-exe" title="Running apps — from their visible windows"></select>
-                <button id="profile-exe-refresh" class="btn small" title="Re-scan running apps">↻</button>
+                <select id="profile-exe" data-i18n-title="settings.profiles.exe_title" title="Running apps — from their visible windows"></select>
+                <button id="profile-exe-refresh" class="btn small" data-i18n-title="settings.profiles.exe_refresh_title" title="Re-scan running apps">↻</button>
               </span>
             </label>
             <label class="form-row">
-              <span>Source language</span>
+              <span data-i18n="settings.profiles.language_label">Source language</span>
               <select id="profile-language">
-                <option value="en">English</option>
-                <option value="ja">Japanese</option>
-                <option value="zh">Chinese</option>
-                <option value="ko">Korean</option>
+                <option value="en" data-i18n="common.lang_name.en">English</option>
+                <option value="ja" data-i18n="common.lang_name.ja">Japanese</option>
+                <option value="zh" data-i18n="common.lang_name.zh">Chinese</option>
+                <option value="ko" data-i18n="common.lang_name.ko">Korean</option>
               </select>
             </label>
             <label class="form-row">
-              <span>Translate engine</span>
+              <span data-i18n="settings.profiles.engine_label">Translate engine</span>
               <select id="profile-engine">
-                <option value="">Inherit global engine</option>
-                <option value="google">Google Translate (unofficial)</option>
-                <option value="lmstudio">LM Studio (local)</option>
-                <option value="gemini">Gemini</option>
-                <option value="azure">Azure AI Translator</option>
-                <option value="openai">OpenAI-compatible</option>
-                <option value="deepl">DeepL</option>
+                <option value="" data-i18n="settings.profiles.engine.inherit">Inherit global engine</option>
+                <option value="google" data-i18n="settings.profiles.engine.google">Google Translate (unofficial)</option>
+                <option value="lmstudio" data-i18n="settings.profiles.engine.lmstudio">LM Studio (local)</option>
+                <option value="gemini" data-i18n="settings.profiles.engine.gemini">Gemini</option>
+                <option value="azure" data-i18n="settings.profiles.engine.azure">Azure AI Translator</option>
+                <option value="openai" data-i18n="settings.profiles.engine.openai">OpenAI-compatible</option>
+                <option value="deepl" data-i18n="settings.profiles.engine.deepl">DeepL</option>
               </select>
             </label>
             <label class="form-row">
-              <span>Genderless Mode</span>
+              <span data-i18n="settings.profiles.genderless_label">Genderless Mode</span>
               <select id="profile-genderless">
-                <option value="inherit">Inherit global (Settings → Engines)</option>
-                <option value="on">Force on</option>
-                <option value="off">Force off</option>
+                <option value="inherit" data-i18n="settings.profiles.genderless.inherit">Inherit global (Settings → Engines)</option>
+                <option value="on" data-i18n="settings.profiles.genderless.on">Force on</option>
+                <option value="off" data-i18n="settings.profiles.genderless.off">Force off</option>
               </select>
             </label>
             <label class="form-row">
-              <span>System prompt preset</span>
-              <select id="profile-preset" title="The System Prompt Preset the LLM prompts are built from while this profile's app is foreground (LLM engines only)">
-                <option value="">Inherit global (Settings → Engines)</option>
+              <span data-i18n="settings.profiles.preset_label">System prompt preset</span>
+              <select id="profile-preset" data-i18n-title="settings.profiles.preset_title" title="The System Prompt Preset the LLM prompts are built from while this profile's app is foreground (LLM engines only)">
+                <option value="" data-i18n="settings.profiles.preset.inherit">Inherit global (Settings → Engines)</option>
               </select>
             </label>
           </div>
           <div class="row">
-            <span class="hint">
+            <span class="hint" data-i18n="settings.profiles.foreground_hint">
               While the app owns the foreground window, only its window (or
               the zones below) is watched.
             </span>
@@ -545,48 +559,48 @@
           </div>
 
           <div class="settings-section">
-          <h3>Glossary layer</h3>
-          <p class="hint">
+          <h3 data-i18n="settings.profiles.glossary.title">Glossary layer</h3>
+          <p class="hint" data-i18n="settings.profiles.glossary.hint">
             Merged over the global Glossary while this profile is active —
             the profile's value wins on conflict. Game-specific names
             (Vertin → เวอร์ติน) belong here.
           </p>
           <div class="row glossary-add">
-            <input id="profile-glossary-new-term" type="text" placeholder="Term" spellcheck="false" />
-            <input id="profile-glossary-new-thai" type="text" placeholder="Thai" spellcheck="false" />
-            <button id="profile-glossary-add-btn" class="btn">Add</button>
+            <input id="profile-glossary-new-term" type="text" data-i18n-placeholder="settings.profiles.glossary.term_placeholder" placeholder="Term" spellcheck="false" />
+            <input id="profile-glossary-new-thai" type="text" data-i18n-placeholder="settings.profiles.glossary.thai_placeholder" placeholder="Thai" spellcheck="false" />
+            <button id="profile-glossary-add-btn" class="btn" data-i18n="settings.profiles.glossary.add_btn">Add</button>
           </div>
           <div class="row glossary-io">
-            <button id="profile-glossary-export" class="btn small">Export JSON…</button>
-            <button id="profile-glossary-import" class="btn small">Import JSON…</button>
-            <select id="profile-glossary-import-mode" title="Import mode">
-              <option value="merge">merge (keep existing)</option>
-              <option value="replace">replace all</option>
+            <button id="profile-glossary-export" class="btn small" data-i18n="settings.profiles.glossary.export_btn">Export JSON…</button>
+            <button id="profile-glossary-import" class="btn small" data-i18n="settings.profiles.glossary.import_btn">Import JSON…</button>
+            <select id="profile-glossary-import-mode" data-i18n-title="settings.glossary.import_mode_title" title="Import mode">
+              <option value="merge" data-i18n="settings.glossary.import_mode.merge">merge (keep existing)</option>
+              <option value="replace" data-i18n="settings.glossary.import_mode.replace">replace all</option>
             </select>
           </div>
           <ul id="profile-glossary-list" class="glossary-list"></ul>
-          <div id="profile-glossary-empty" class="empty hidden">No terms in this profile's layer yet.</div>
+          <div id="profile-glossary-empty" class="empty hidden" data-i18n="settings.profiles.glossary.empty">No terms in this profile's layer yet.</div>
           </div>
 
           <div class="settings-section">
-          <h3>Capture Zones (inside the app's window)</h3>
-          <p class="hint">
+          <h3 data-i18n="settings.profiles.zones.title">Capture Zones (inside the app's window)</h3>
+          <p class="hint" data-i18n="settings.profiles.zones.hint">
             Stored relative to the app window's top-left, so they follow it
             around the screen. With no zones, the whole window is watched.
           </p>
           <ul id="profile-zones-list" class="glossary-list"></ul>
-          <div id="profile-zones-empty" class="empty hidden">No zones — the whole app window is watched.</div>
+          <div id="profile-zones-empty" class="empty hidden" data-i18n="settings.profiles.zones.empty">No zones — the whole app window is watched.</div>
           <div class="row">
-            <button id="profile-zone-draw" class="btn small">Draw zone on screen…</button>
-            <span class="hint">Drag a rectangle over the app's visible window.</span>
+            <button id="profile-zone-draw" class="btn small" data-i18n="settings.profiles.zones.draw_btn">Draw zone on screen…</button>
+            <span class="hint" data-i18n="settings.profiles.zones.draw_hint">Drag a rectangle over the app's visible window.</span>
           </div>
           </div>
         </div>
       </section>
 
       <section id="tab-text-style" class="page">
-        <h2>Text Style</h2>
-        <p class="hint">How Thai text is drawn on the In-place Overlay — the preview updates live; Save applies it.</p>
+        <h2 data-i18n="settings.style.title">Text Style</h2>
+        <p class="hint" data-i18n="settings.style.lede">How Thai text is drawn on the In-place Overlay — the preview updates live; Save applies it.</p>
         <!-- Ticket 41: one live-style concern — one section card; per-control
              hints sit under their control (the one hint pattern app-wide).
              Ticket 56: the preview leads the tab, above every row. -->
@@ -598,100 +612,100 @@
              pill would draw once Save lands it. The corner marker says
              when the form differs from the saved style. -->
         <div class="row">
-          <div id="style-preview" title="Exact preview — rendered with the same pill code as the In-place Overlay, from the form's current values">
+          <div id="style-preview" data-i18n-title="settings.style.preview_title" title="Exact preview — rendered with the same pill code as the In-place Overlay, from the form's current values">
             <span id="style-preview-pill"><span id="style-preview-text">เรือลำนี้ไม่อาจรอดชีวิตในปี 1999</span></span>
-            <span id="style-preview-note" class="hint hidden">
+            <span id="style-preview-note" class="hint hidden" data-i18n="settings.style.autocolors_note">
               Auto Colors is on — showing the manual colors (the fallback)
             </span>
-            <span id="style-preview-dirty" class="chip hidden">unsaved</span>
+            <span id="style-preview-dirty" class="chip hidden" data-i18n="settings.style.unsaved_chip">unsaved</span>
           </div>
         </div>
         <div class="form-grid">
           <label class="form-row">
-            <span>Font</span>
+            <span data-i18n="settings.style.font">Font</span>
             <span class="style-pair stack">
-              <input id="style-font" type="text" spellcheck="false" list="font-list" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" placeholder="Noto Sans Thai" />
+              <input id="style-font" type="text" spellcheck="false" list="font-list" data-i18n-title="settings.style.font_title" title="Any installed font; Noto Sans Thai (bundled) is always the Thai fallback" placeholder="Noto Sans Thai" />
               <datalist id="font-list"></datalist>
             </span>
           </label>
           <label class="form-row">
-            <span>Size (6–96)</span>
+            <span data-i18n="settings.style.size">Size (6–96)</span>
             <input id="style-size" type="number" min="6" max="96" step="1" />
           </label>
           <label class="form-row">
-            <span>Auto colors</span>
+            <span data-i18n="settings.style.auto_colors">Auto colors</span>
             <span class="style-pair">
-              <input id="style-auto-colors" type="checkbox" title="Sample each block's text and pill colors from the captured pixels" />
+              <input id="style-auto-colors" type="checkbox" data-i18n-title="settings.style.auto_colors_input_title" title="Sample each block's text and pill colors from the captured pixels" />
             </span>
-            <span class="hint">colors follow the game — sampled text/pill adapt per block; the manual Color is the fallback</span>
+            <span class="hint" data-i18n="settings.style.auto_colors_hint">colors follow the game — sampled text/pill adapt per block; the manual Color is the fallback</span>
           </label>
           <label class="form-row">
-            <span>Color</span>
+            <span data-i18n="settings.style.color">Color</span>
             <input id="style-color" type="color" />
           </label>
           <!-- Ticket 56: the width is a small number input (px, 0–8 — the
                same bound the config validates), sitting directly after the
                color rows; the old range slider is gone. -->
           <label class="form-row">
-            <span>Outline (px, 0 = off)</span>
+            <span data-i18n="settings.style.outline">Outline (px, 0 = off)</span>
             <span class="style-pair">
-              <input id="style-outline-width" type="number" min="0" max="8" step="0.5" title="Outline width in px; 0 disables the outline" />
-              <input id="style-outline-color" type="color" title="Outline color" />
+              <input id="style-outline-width" type="number" min="0" max="8" step="0.5" data-i18n-title="settings.style.outline_width_title" title="Outline width in px; 0 disables the outline" />
+              <input id="style-outline-color" type="color" data-i18n-title="settings.style.outline_color_title" title="Outline color" />
             </span>
           </label>
           <label class="form-row">
-            <span>Background pill</span>
+            <span data-i18n="settings.style.background">Background pill</span>
             <span class="style-pair">
-              <input id="style-background" type="checkbox" title="Background pill behind each translation" />
-              <input id="style-opacity" type="range" min="0" max="1" step="0.05" title="Pill opacity" />
+              <input id="style-background" type="checkbox" data-i18n-title="settings.style.background_title" title="Background pill behind each translation" />
+              <input id="style-opacity" type="range" min="0" max="1" step="0.05" data-i18n-title="settings.style.opacity_title" title="Pill opacity" />
             </span>
           </label>
           <label class="form-row">
-            <span>Background cover source</span>
+            <span data-i18n="settings.style.cover_source">Background cover source</span>
             <span class="style-pair">
-              <input id="style-cover-source" type="checkbox" title="Stretch the pill over the whole original text block" />
+              <input id="style-cover-source" type="checkbox" data-i18n-title="settings.style.cover_source_title" title="Stretch the pill over the whole original text block" />
             </span>
-            <span class="hint">stretch the pill over the whole original block instead of hugging the translation (needs Background pill)</span>
+            <span class="hint" data-i18n="settings.style.cover_source_hint">stretch the pill over the whole original block instead of hugging the translation (needs Background pill)</span>
           </label>
           <!-- Text Alignment (tickets 36/38) only means anything inside a
                Background Cover Source pill — horizontal and vertical — so
                the row appears only while Background Cover Source is checked
                (settings.js toggles it). -->
           <label id="style-alignment-row" class="form-row hidden">
-            <span>Text alignment</span>
+            <span data-i18n="settings.style.alignment">Text alignment</span>
             <span class="style-pair">
-              <select id="style-text-alignment" title="Where the translated text sits horizontally inside the stretched pill">
-                <option value="left">Left</option>
-                <option value="center">Center</option>
-                <option value="right">Right</option>
+              <select id="style-text-alignment" data-i18n-title="settings.style.alignment_h_title" title="Where the translated text sits horizontally inside the stretched pill">
+                <option value="left" data-i18n="settings.style.align.left">Left</option>
+                <option value="center" data-i18n="settings.style.align.center">Center</option>
+                <option value="right" data-i18n="settings.style.align.right">Right</option>
               </select>
-              <select id="style-text-v-alignment" title="Where the translated text sits vertically inside the stretched pill">
-                <option value="top">Top</option>
-                <option value="center">Center</option>
-                <option value="bottom">Bottom</option>
+              <select id="style-text-v-alignment" data-i18n-title="settings.style.alignment_v_title" title="Where the translated text sits vertically inside the stretched pill">
+                <option value="top" data-i18n="settings.style.align.top">Top</option>
+                <option value="center" data-i18n="settings.style.align.center">Center</option>
+                <option value="bottom" data-i18n="settings.style.align.bottom">Bottom</option>
               </select>
             </span>
-            <span class="hint">where the translated text sits inside the stretched pill (horizontal, vertical)</span>
+            <span class="hint" data-i18n="settings.style.alignment_hint">where the translated text sits inside the stretched pill (horizontal, vertical)</span>
           </label>
           <label class="form-row">
-            <span>Placement</span>
+            <span data-i18n="settings.style.placement">Placement</span>
             <span class="style-pair">
-              <select id="style-placement" title="Where translated text sits relative to each original text block">
-                <option value="over">Over the original (in place)</option>
-                <option value="above">Above the original</option>
-                <option value="below">Below the original</option>
-                <option value="beside">Beside the original</option>
+              <select id="style-placement" data-i18n-title="settings.style.placement_title" title="Where translated text sits relative to each original text block">
+                <option value="over" data-i18n="settings.style.placement.over">Over the original (in place)</option>
+                <option value="above" data-i18n="settings.style.placement.above">Above the original</option>
+                <option value="below" data-i18n="settings.style.placement.below">Below the original</option>
+                <option value="beside" data-i18n="settings.style.placement.beside">Beside the original</option>
               </select>
             </span>
-            <span class="hint">where the translation sits relative to each block; Background Cover Source wins when it is on</span>
+            <span class="hint" data-i18n="settings.style.placement_hint">where the translation sits relative to each block; Background Cover Source wins when it is on</span>
           </label>
         </div>
         </div>
       </section>
 
       <section id="tab-hotkeys" class="page">
-        <h2>Hotkeys</h2>
-        <p class="hint">
+        <h2 data-i18n="settings.hotkeys.title">Hotkeys</h2>
+        <p class="hint" data-i18n="settings.hotkeys.hint">
           Global hotkeys, system-wide. Format: modifiers + key, e.g.
           "Alt+Shift+T", "Ctrl+Shift+Z", "F9". If a key is already taken by
           another app, a
@@ -700,23 +714,23 @@
         <div class="settings-section">
         <div class="form-grid">
           <label class="form-row">
-            <span>Toggle translation</span>
+            <span data-i18n="settings.hotkeys.toggle">Toggle translation</span>
             <input id="hotkey-toggle" type="text" spellcheck="false" />
           </label>
           <label class="form-row">
-            <span>New Capture Zone</span>
+            <span data-i18n="settings.hotkeys.new_zone">New Capture Zone</span>
             <input id="hotkey-new-zone" type="text" spellcheck="false" />
           </label>
           <label class="form-row">
-            <span>Pause / resume</span>
+            <span data-i18n="settings.hotkeys.pause">Pause / resume</span>
             <input id="hotkey-pause" type="text" spellcheck="false" />
           </label>
           <label class="form-row">
-            <span>Adjust Mode</span>
+            <span data-i18n="settings.hotkeys.adjust">Adjust Mode</span>
             <input id="hotkey-adjust" type="text" spellcheck="false" />
           </label>
           <label class="form-row">
-            <span>One-shot Capture</span>
+            <span data-i18n="settings.hotkeys.one_shot">One-shot Capture</span>
             <input id="hotkey-one-shot" type="text" spellcheck="false" />
           </label>
         </div>
@@ -724,23 +738,23 @@
       </section>
 
       <section id="tab-about" class="page">
-        <h2>About</h2>
+        <h2 data-i18n="settings.about.title">About</h2>
         <!-- Ticket 41: info grid, folder actions and the privacy note in one
              section card, like every other single-concern tab. -->
         <div class="settings-section">
         <div class="about-grid">
-          <span>Product</span><span id="about-product">—</span>
-          <span>Version</span><span id="about-version">—</span>
-          <span>Target language</span><span id="about-target">—</span>
-          <span>Config file</span><span id="about-config-path" class="mono">—</span>
-          <span>Logs folder</span><span id="about-logs-path" class="mono">—</span>
+          <span data-i18n="settings.about.product">Product</span><span id="about-product">—</span>
+          <span data-i18n="settings.about.version">Version</span><span id="about-version">—</span>
+          <span data-i18n="settings.about.target">Target language</span><span id="about-target">—</span>
+          <span data-i18n="settings.about.config">Config file</span><span id="about-config-path" class="mono">—</span>
+          <span data-i18n="settings.about.logs">Logs folder</span><span id="about-logs-path" class="mono">—</span>
         </div>
         <div class="row">
-          <button id="about-open-config" class="btn small">Open config folder</button>
-          <button id="about-open-logs" class="btn small">Go to logs directory</button>
-          <button id="about-wizard" class="btn small">Run setup wizard</button>
+          <button id="about-open-config" class="btn small" data-i18n="settings.about.open_config">Open config folder</button>
+          <button id="about-open-logs" class="btn small" data-i18n="settings.about.open_logs">Go to logs directory</button>
+          <button id="about-wizard" class="btn small" data-i18n="settings.about.wizard_btn">Run setup wizard</button>
         </div>
-        <p class="hint">
+        <p class="hint" data-i18n="settings.about.privacy_hint">
           Privacy: cloud engines send screen text to their service — the ☁
           badge shows whenever one is active; OCR runs locally. The config
           file is hand-editable. See the project README for details.
@@ -754,19 +768,19 @@
              result area doubles as the launch-time check's surface (the
              outcome arrives as an event or rides the page's boot status). -->
         <div class="settings-section">
-        <h3>Updates</h3>
+        <h3 data-i18n="settings.about.updates.title">Updates</h3>
         <div class="row">
-          <button id="about-check-updates" class="btn small">Check for new version</button>
-          <label class="inline-toggle" title="Check automatically every time Langception starts. Off by default — nothing is fetched at launch unless you turn this on.">
+          <button id="about-check-updates" class="btn small" data-i18n="settings.about.updates.check_btn">Check for new version</button>
+          <label class="inline-toggle" data-i18n-title="settings.about.updates.launch_toggle_title" title="Check automatically every time Langception starts. Off by default — nothing is fetched at launch unless you turn this on.">
             <input id="about-update-on-launch" type="checkbox" />
-            <span>Check on launch</span>
+            <span data-i18n="settings.about.updates.launch_toggle">Check on launch</span>
           </label>
         </div>
         <div id="about-update-result" class="hint hidden"></div>
         <div id="about-update-download-row" class="row hidden">
-          <button id="about-update-download" class="btn small">Open download page</button>
+          <button id="about-update-download" class="btn small" data-i18n="settings.about.updates.download_btn">Open download page</button>
         </div>
-        <p class="hint">
+        <p class="hint" data-i18n="settings.about.updates.check_only_hint">
           Check-only: Langception never downloads or installs anything — a
           new version is reported with a link, opened in your browser only
           when you click it.
@@ -781,10 +795,11 @@
          window bottom so it stays reachable from any tab; ticket 41 restyles
          this footer. -->
     <footer id="save-footer" class="save-footer hidden">
-      <button id="save-all" class="btn primary">Save changes</button>
+      <button id="save-all" class="btn primary" data-i18n="settings.footer.save">Save changes</button>
     </footer>
 
     <div id="toast" class="toast hidden"></div>
+    <script src="i18n.js"></script>
     <script src="titlebar.js"></script>
     <script src="pill-style.js"></script>
     <script src="settings.js"></script>

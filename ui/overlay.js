@@ -9,6 +9,7 @@
 // mode) pills clickable to mark Excluded Blocks. No build step.
 
 const { invoke } = window.__TAURI__.core;
+const { t } = window.I18n;
 // Targeted listeners, NOT window.__TAURI__.event.listen: the plain event API
 // registers EventTarget::Any, which Tauri delivers to on every emit
 // regardless of emit_to targeting — with two overlays both pages rendered
@@ -468,7 +469,10 @@ document.addEventListener("mouseup", async (e) => {
     width: Math.max(1, Math.round(rect.w * dpr)),
     height: Math.max(1, Math.round(rect.h * dpr)),
   };
-  showAdjustNote("Saving…", false);
+  // Same ready-guard as the adjust notes: before the dictionaries resolve
+  // (milliseconds after load) t() would render the raw key; the resolved
+  // promise runs this synchronously, so the normal path is unchanged.
+  window.I18n.ready.then(() => showAdjustNote(t("overlay.saving"), false));
   try {
     // Ticket 40: the payload's rects are a Profile's when `profileId` is
     // set — the shell converts global px back to window-relative and
@@ -488,7 +492,6 @@ document.addEventListener("mouseup", async (e) => {
     showAdjustNote(String(err), true);
   }
 });
-
 function applyAdjustPayload(payload) {
   const dpr = window.devicePixelRatio || 1;
   adjust.active = payload.active;
@@ -514,17 +517,22 @@ function applyAdjustPayload(payload) {
     ensureAdjustLayer();
     renderZoneRects();
     // Ticket 40: a profile app with no visible window cannot offer its
-    // zones — the payload carries the same message zone drawing shows.
-    // Otherwise the note names what the rects are: profile zones while a
-    // Profile is active, the global zones otherwise.
+    // zones — the payload carries the same message zone drawing shows
+    // (Rust-composed through the notices seam, already in the user's UI
+    // language). Otherwise the note names what the rects are: profile
+    // zones while a Profile is active, the global zones otherwise.
     const note = payload.note
       ? payload.note
       : payload.fullscreen
-        ? "Adjust Mode — click a block to exclude it (it will not be translated again) · Alt+Shift+A to exit"
+        ? t("overlay.note.fullscreen")
         : adjust.profileId != null
-          ? "Adjust Mode — drag profile zones to move, handles to resize · Alt+Shift+A to exit"
-          : "Adjust Mode — drag zones to move, handles to resize · Alt+Shift+A to exit";
-    showAdjustNote(note, Boolean(payload.note));
+          ? t("overlay.note.profile")
+          : t("overlay.note.zones");
+    // The dictionaries resolve within milliseconds of page load; a note
+    // rendered before that would show raw keys, so the first note waits
+    // for the seam (later calls run synchronously through the resolved
+    // promise, in payload order).
+    window.I18n.ready.then(() => showAdjustNote(note, Boolean(payload.note)));
   } else {
     adjust.rects = new Map();
     if (adjustLayer) {
@@ -542,6 +550,15 @@ document.addEventListener("keydown", (e) => {
 });
 
 window.addEventListener("DOMContentLoaded", () => {
+  // Ticket 62: the overlay has no status payload — one invoke resolves the
+  // language. NOT awaited before the listeners register: a pill update
+  // arriving during the fetch must not be dropped, so the listeners attach
+  // synchronously and only the adjust-note path defers to I18n.ready (the
+  // dictionaries resolve within milliseconds of page load).
+  invoke("get_ui_language")
+    .then((lang) => window.I18n.init(lang))
+    .catch(() => window.I18n.init("en"));
+
   listen("overlay-update", (event) => updateBlock(event.payload));
   listen("overlay-remove", (event) => removeBlocks(event.payload));
   listen("overlay-clear", (event) => clearBlocks(event.payload));

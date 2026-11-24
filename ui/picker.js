@@ -4,6 +4,7 @@
 // cancels a too-tiny drag. Esc always cancels.
 
 const { invoke } = window.__TAURI__.core;
+const { t } = window.I18n;
 
 const selection = document.getElementById("selection");
 const bar = document.getElementById("picker-bar");
@@ -30,17 +31,25 @@ function place(x, y, w, h) {
 }
 
 (async () => {
+  // Ticket 62: the picker has no status payload — the one-invoke
+  // bootstrap seam resolves the language for the bar's instruction text.
   try {
-    mode = await invoke("get_picker_mode");
+    const [pickerMode, uiLang] = await Promise.all([
+      invoke("get_picker_mode"),
+      invoke("get_ui_language"),
+    ]);
+    mode = pickerMode;
+    await window.I18n.init(uiLang);
   } catch {
     mode = "zone";
+    await window.I18n.init("en");
   }
   setBar(
     mode === "oneshot"
-      ? "One-shot Capture — drag a rectangle to translate it once · Esc to cancel"
+      ? t("picker.oneshot")
       : mode === "profile"
-        ? "Profile Capture Zone — drag a rectangle inside the app's window · Esc to cancel"
-        : "Drag to draw a Capture Zone · Esc to cancel",
+        ? t("picker.profile")
+        : t("picker.zone"),
     false,
   );
 })();
@@ -78,7 +87,7 @@ document.addEventListener("mouseup", async (e) => {
     return;
   }
 
-  setBar("Capturing…", false);
+  setBar(t("picker.capturing"), false);
   try {
     await invoke("commit_zone_drag", {
       x: Math.round(x),

@@ -288,6 +288,59 @@ impl std::fmt::Display for TextVAlignment {
     }
 }
 
+/// The language the app's own UI renders in (ticket 62, Settings →
+/// General's "UI Language"): the webview windows' labels/toasts and the
+/// tray menu, as opposed to the Source Language read on screen. The
+/// dictionaries live beside the pages (`ui/i18n/*.json`); Thai's content
+/// is ticket 63 — until then `Th` resolves to the English strings
+/// everywhere (the JS fallback and the Rust seams' fallback arm alike).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UiLanguage {
+    #[default]
+    En,
+    Th,
+}
+
+impl UiLanguage {
+    /// The config-file / bootstrap-seam spelling (the dictionary file name
+    /// too: `ui/i18n/<code>.json`).
+    pub fn code(self) -> &'static str {
+        match self {
+            UiLanguage::En => "en",
+            UiLanguage::Th => "th",
+        }
+    }
+
+    /// Parses [`UiLanguage::code`] output; `None` for anything else, so a
+    /// settings-surface value outside the enum is rejected with a visible
+    /// error — the sibling enums' (Placement, TextAlignment, …) shape.
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "en" => Some(UiLanguage::En),
+            "th" => Some(UiLanguage::Th),
+            _ => None,
+        }
+    }
+}
+
+/// The app's own UI preferences (ticket 62) — everything about how
+/// Langception's windows render itself, as opposed to what it reads or
+/// translates. Currently only the UI Language; future UI prefs land here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UiSettings {
+    pub ui_language: UiLanguage,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            ui_language: UiLanguage::En,
+        }
+    }
+}
+
 /// `#rgb` / `#rrggbb` (leading `#` optional) — everything the overlay's
 /// CSS needs for text/outline colors.
 pub fn is_valid_hex_color(value: &str) -> bool {
@@ -793,6 +846,11 @@ pub struct AppConfig {
     /// → General). The overlay and picker are not configurable here.
     #[serde(default)]
     pub windows: WindowSettings,
+    /// The app's own UI preferences (ticket 62): see [`UiSettings`]. A
+    /// config written before it has no `[ui]` section; serde fills the
+    /// default (English) — existing files parse byte-for-byte unchanged.
+    #[serde(default)]
+    pub ui: UiSettings,
     /// The Update Check (ticket 28, CONTEXT.md): the published app-list
     /// URL and the opt-in launch-time check. See [`crate::update`].
     #[serde(default)]
@@ -1238,6 +1296,17 @@ settings_on_top = false
 # Overlay stays invisible in captures in both modes, unconditionally.
 capture_visible = false
 
+[ui]
+# The language Langception's own UI renders in (Settings → General →
+# "UI Language"): the windows' labels, buttons, and toasts, and the tray
+# menu — NOT the Source Language read on the screen. "en" is English (the
+# default); "th" is Thai. Thai ships complete from ticket 63 of the
+# thai-ui feature on; until then "th" renders English (a graceful
+# fallback, nothing breaks). Applies to the Settings window on Save; the
+# other windows pick it up when they are next shown, the tray on the next
+# state change (some items on relaunch).
+ui_language = "en"
+
 [update]
 # Update Check (CONTEXT.md): where "Check for new version" (Settings →
 # About) fetches its app list — the maintainer's published latest.json; the
@@ -1389,6 +1458,52 @@ mod tests {
         assert_eq!(config.hotkeys, HotkeySettings::default());
         assert!(!config.genderless);
         assert_eq!(config.update, crate::update::UpdateSettings::default());
+        // The UI Language (ticket 62): a fresh config is English.
+        assert_eq!(config.ui, UiSettings::default());
+        assert_eq!(config.ui.ui_language, UiLanguage::En);
+    }
+
+    // ---- UI Language (ticket 62) ----
+
+    #[test]
+    fn ui_language_defaults_for_configs_written_before_it() {
+        // A pre-ticket-62 config has no [ui] section; the default (English)
+        // must fill it in rather than reject the file — existing configs
+        // parse byte-for-byte unchanged (ticket 57's pin pattern).
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .lines()
+            .filter(|line| !line.trim().starts_with("ui_language"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = text.replace("[ui]\n", "");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.ui, UiSettings::default());
+        assert_eq!(config.ui.ui_language, UiLanguage::En);
+        // Same for the minimal hand-written config shape.
+        let bare = AppConfig::from_toml_str("[source]\nlanguage = \"en\"\n").unwrap();
+        assert_eq!(bare.ui.ui_language, UiLanguage::En);
+    }
+
+    #[test]
+    fn ui_language_th_roundtrips_through_toml() {
+        // A saved "th" survives the reparse — ticket 63 fills the Thai
+        // dictionary against this persisted value.
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("ui_language = \"en\"", "ui_language = \"th\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.ui.ui_language, UiLanguage::Th);
+        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert_eq!(config, reparsed);
+    }
+
+    #[test]
+    fn unknown_ui_language_is_rejected() {
+        // An unknown hand-edited value is a visible parse error naming the
+        // value — the same invalid-enum semantics as the Source Language
+        // (never a silent fallback to English).
+        let text =
+            AppConfig::DEFAULT_TEMPLATE.replace("ui_language = \"en\"", "ui_language = \"fr\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("fr"), "names the value: {err}");
     }
 
     // ---- Update Check (ticket 28) ----
@@ -1840,8 +1955,11 @@ language = "en"
 
     #[test]
     fn full_config_roundtrips_through_toml() {
+        // Match the [source] line by its whole commented context: a bare
+        // "language = \"en\"" pattern would also hit [ui]'s ui_language
+        // line (ticket 62 added it).
         let text = template_with_zone()
-            .replace("language = \"en\"", "language = \"ja\"")
+            .replace("\nlanguage = \"en\"", "\nlanguage = \"ja\"")
             .replace("# Vertin = \"เวอร์ติน\"", "Vertin = \"เวอร์ติน\"")
             .replace(
                 "toggle_translation = \"Alt+Shift+T\"",
@@ -1994,7 +2112,10 @@ height = 180
 
     #[test]
     fn unknown_language_is_rejected() {
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("language = \"en\"", "language = \"fr\"");
+        // The [source] line matches by its line-start anchor so [ui]'s
+        // ui_language line (ticket 62) is not caught by the pattern too.
+        let text =
+            AppConfig::DEFAULT_TEMPLATE.replace("\nlanguage = \"en\"", "\nlanguage = \"fr\"");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(err.to_string().contains("language"), "was: {err}");
     }

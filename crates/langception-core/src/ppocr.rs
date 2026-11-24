@@ -146,6 +146,15 @@ fn effective_selection(source: SourceLanguage, tier: ModelTier) -> ModelSelectio
     }
 }
 
+/// Fires when a pass ran a substituted model set (Japanese with tiny
+/// selected — see [`PpOcrv6Engine::with_substitution_notice`]) with the
+/// tier the user SELECTED. The callback composes the message itself, so
+/// the wording lives with the app's other user-visible strings (the
+/// notices seam, ticket 62) instead of baked-in English here; the
+/// substituted target is by definition the small tier
+/// (`effective_selection`), so the selected tier is all it needs.
+pub type SubstitutionNotice = std::sync::Arc<dyn Fn(ModelTier) + Send + Sync>;
+
 /// The PP-OCRv6 engine as an [`OcrEngine`]: a thin wrapper over the
 /// shared [`SidecarEngine`] state machine (lazy spawn, reuse across
 /// passes, respawn on death with a notice, restart on (language, tier)
@@ -158,7 +167,7 @@ pub struct PpOcrv6Engine {
     engine: SidecarEngine<ModelSelection>,
     /// Fires when a pass launches a substituted model set (Japanese with
     /// tiny selected) — see [`PpOcrv6Engine::with_substitution_notice`].
-    on_substitution: Option<crate::sidecar::RestartNotice>,
+    on_substitution: Option<SubstitutionNotice>,
     /// The substituted session a notice was already fired for: one
     /// notice per incident (a transition into the pairing), never one
     /// per pass. Reset by any honored pairing, so leaving Japanese and
@@ -212,10 +221,12 @@ impl PpOcrv6Engine {
 
     /// Observes the unsupported-combination rule kicking in (ticket 05):
     /// Japanese text with tiny selected runs on the small model set, and
-    /// this fires one line per transition into that pairing (the same
-    /// surface as the restart notice) so the loop never silently
-    /// degrades. Fired on the caller's async context, briefly.
-    pub fn with_substitution_notice(mut self, notice: crate::sidecar::RestartNotice) -> Self {
+    /// this fires once per transition into that pairing (the same surface
+    /// as the restart notice) so the loop never silently degrades. The
+    /// callback receives the SELECTED tier and composes the message (the
+    /// notices seam, ticket 62). Fired on the caller's async context,
+    /// briefly.
+    pub fn with_substitution_notice(mut self, notice: SubstitutionNotice) -> Self {
         self.on_substitution = Some(notice);
         self
     }
@@ -256,12 +267,7 @@ impl OcrEngine for PpOcrv6Engine {
             if *noticed != Some(effective) {
                 *noticed = Some(effective);
                 if let Some(notice) = &self.on_substitution {
-                    notice(format!(
-                        "{} cannot read Japanese (its vocabulary has no kana) — \
-                         running the {} model set instead",
-                        self.tier.display_name(),
-                        ModelTier::Small.display_name(),
-                    ));
+                    notice(self.tier);
                 }
             }
         }

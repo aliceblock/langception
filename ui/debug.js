@@ -15,6 +15,7 @@ const { listen } = window.__TAURI__.event;
 const { invoke } = window.__TAURI__.core;
 const { save: saveFileDialog } = window.__TAURI__.dialog;
 const { getVersion } = window.__TAURI__.app;
+const { t } = window.I18n;
 
 const summaryEl = document.getElementById("summary");
 const rowsEl = document.getElementById("rows");
@@ -22,9 +23,9 @@ const exportBtn = document.getElementById("export-btn");
 const clearBtn = document.getElementById("clear-btn");
 const exportStatusEl = document.getElementById("export-status");
 
-// The empty state's wording — the HTML ships the same text; Clear puts it
-// back verbatim.
-const EMPTY_SUMMARY = "waiting for the first pass…";
+// The empty state's wording — the HTML ships the same text (data-i18n);
+// Clear puts it back verbatim through the same key.
+const EMPTY_SUMMARY_KEY = "debug.empty_summary";
 
 // The per-stage durations a timing event can carry (ticket 47). `total`
 // rides along everywhere but never competes for "slowest" — it only sums
@@ -96,7 +97,7 @@ function record(stage, ms) {
 }
 
 function originLabel(origin) {
-  return origin.kind === "zone" ? origin.name : "One-shot";
+  return origin.kind === "zone" ? origin.name : t("debug.origin.oneshot");
 }
 
 // The run key both mirrors of the unchanged collapse key on (kind + id —
@@ -140,9 +141,11 @@ function chip(name, ms) {
   span.className = "ms" + (name === "total" ? " total" : "");
   span.dataset.stage = name;
   span.dataset.ms = String(ms);
+  // The stage names are display text (ticket 62) — routed like every
+  // other label; the keys stay stable ("debug.stage.capture", …).
   const label = document.createElement("span");
   label.className = "name";
-  label.textContent = `${name} `;
+  label.textContent = `${t(`debug.stage.${name}`)} `;
   span.append(label, document.createTextNode(`${ms}ms`));
   return span;
 }
@@ -183,7 +186,7 @@ function timingRow(event) {
   if (event.read_skipped) {
     const skipped = document.createElement("span");
     skipped.className = "no-read";
-    skipped.textContent = "OCR skipped — frame unchanged";
+    skipped.textContent = t("debug.no_read");
     li.append(skipped);
   }
   // capture always ran; the others only appear when they did.
@@ -194,9 +197,10 @@ function timingRow(event) {
   markSlowest(li);
   const blocks = document.createElement("span");
   blocks.className = "blocks";
-  blocks.textContent = `${event.blocks_translated} block${
-    event.blocks_translated === 1 ? "" : "s"
-  }`;
+  blocks.textContent =
+    event.blocks_translated === 1
+      ? t("debug.blocks_one", { count: event.blocks_translated })
+      : t("debug.blocks_many", { count: event.blocks_translated });
   li.append(blocks);
   if (event.reads?.length) li.append(readsDetail(event.reads));
   // Last in the DOM, pushed to the row's right edge by the stylesheet.
@@ -241,14 +245,17 @@ function readsDetail(reads) {
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const parts = COUNT_ORDER.filter((k) => counts.has(k)).map(
-    (k) => `${counts.get(k)} ${k}`
+    (k) => `${counts.get(k)} ${t(`debug.count.${k}`)}`
   );
   const wrap = document.createElement("span");
   wrap.className = "reads";
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "reads-toggle";
-  toggle.textContent = `${reads.length} read${reads.length === 1 ? "" : "s"}: ${parts.join(" · ")}`;
+  toggle.textContent =
+    reads.length === 1
+      ? t("debug.reads_toggle_one", { count: reads.length, parts: parts.join(" · ") })
+      : t("debug.reads_toggle_many", { count: reads.length, parts: parts.join(" · ") });
   const list = document.createElement("ul");
   list.className = "read-lines";
   list.hidden = true;
@@ -265,7 +272,7 @@ function readLine(read) {
   const li = document.createElement("li");
   const words = document.createElement("span");
   words.className = "words";
-  words.textContent = read.text === "" ? "(nothing after trim)" : `“${read.text}”`;
+  words.textContent = read.text === "" ? t("debug.nothing_after_trim") : `“${read.text}”`;
   const reason = document.createElement("span");
   reason.className = `reason ${dispositionTag(read)}`;
   reason.textContent = readReason(read);
@@ -279,27 +286,31 @@ function readReason(read) {
   const d = read.disposition;
   switch (dispositionTag(read)) {
     case "translated_engine":
-      return "translated · engine";
+      return t("debug.reason.translated_engine");
     case "translated_glossary":
-      return "translated · glossary";
+      return t("debug.reason.translated_glossary");
     case "translated_fused":
-      return "translated · fused read";
+      return t("debug.reason.translated_fused");
     case "translated_cached":
-      return "translated · cached read (no OCR this pass)";
+      return t("debug.reason.translated_cached");
     case "suppressed":
-      return "suppressed — identical text already shown";
+      return t("debug.reason.suppressed");
     case "waiting": {
       const left = Math.max(0, d.total_ms - d.elapsed_ms);
-      return `waiting ${d.elapsed_ms}/${d.total_ms}ms — ${left}ms to go`;
+      return t("debug.reason.waiting", {
+        elapsed: d.elapsed_ms,
+        total: d.total_ms,
+        left,
+      });
     }
     case "unchanged":
-      return "unchanged — pixels match what is shown";
+      return t("debug.reason.unchanged");
     case "excluded":
-      return "excluded — marked not-to-be-translated";
+      return t("debug.reason.excluded");
     case "empty":
-      return "empty — no text after trim";
+      return t("debug.reason.empty");
     case "gone":
-      return `gone from the read · miss ${d.misses}`;
+      return t("debug.reason.gone", { misses: d.misses });
     default:
       return d.disposition;
   }
@@ -322,12 +333,12 @@ function unchangedRunRow(event) {
   li.classList.add("unchanged");
   li.dataset.origin = runKey;
   const label = document.createElement("span");
-  label.textContent = "unchanged ×";
+  label.textContent = t("debug.unchanged.label");
   const count = document.createElement("span");
   count.className = "count";
   count.textContent = "1";
   const capture = document.createElement("span");
-  capture.textContent = " · capture ~";
+  capture.textContent = t("debug.unchanged.capture");
   const captureMs = document.createElement("span");
   captureMs.className = "capture-ms";
   captureMs.textContent = `${event.capture_ms}ms`;
@@ -373,7 +384,10 @@ function renderSummary() {
   summaryEl.replaceChildren();
   const passes = document.createElement("span");
   passes.className = "passes";
-  passes.textContent = `${passCount} pass${passCount === 1 ? "" : "es"}`;
+  passes.textContent =
+    passCount === 1
+      ? t("debug.summary.passes_one", { count: passCount })
+      : t("debug.summary.passes_many", { count: passCount });
   summaryEl.append(passes);
 
   const slowest = slowestStage();
@@ -384,11 +398,14 @@ function renderSummary() {
     el.className = "stage-chip" + (name === slowest ? " slow" : "");
     const label = document.createElement("span");
     label.className = "name";
-    label.textContent = name;
+    label.textContent = t(`debug.stage.${name}`);
     const detail = document.createElement("span");
-    detail.textContent =
-      `${Math.round(s.sum / s.n)} avg · ` +
-      `${s.min} min · ${s.max} max ms ×${s.n}`;
+    detail.textContent = t("debug.summary.stage_detail", {
+      avg: Math.round(s.sum / s.n),
+      min: s.min,
+      max: s.max,
+      n: s.n,
+    });
     el.append(label, detail);
     summaryEl.append(el);
   }
@@ -537,7 +554,7 @@ function stamp(ms) {
 // The export's origin label: the window's bare zone name gains a Zone
 // prefix so it reads as a name in prose (one-shots already say One-shot).
 function exportOrigin(entry) {
-  return entry.isZone ? `Zone "${entry.origin}"` : entry.origin;
+  return entry.isZone ? t("debug.export.zone_prefix", { name: entry.origin }) : entry.origin;
 }
 
 // One block head per full pass: the stages that ran in STAGES order with
@@ -557,11 +574,20 @@ function passLine(entry) {
   for (const name of STAGES) {
     const ms = entry.stages[name];
     if (ms === null) continue;
-    parts.push(`${name} ${ms}ms` + (name === slowestName ? " ◂" : ""));
+    // " ◂" marks the pass's slow stage — punctuation formatting, kept
+    // beside the label like the "---"/" · " line joins.
+    parts.push(
+      t("debug.export.stage_part", { name: t(`debug.stage.${name}`), ms }) +
+        (name === slowestName ? " ◂" : ""),
+    );
   }
-  parts.push(`total ${entry.totalMs}ms`);
-  parts.push(`${entry.blocks} block${entry.blocks === 1 ? "" : "s"}`);
-  if (entry.readSkipped) parts.push("OCR skipped — frame unchanged");
+  parts.push(t("debug.export.pass_total", { ms: entry.totalMs }));
+  parts.push(
+    entry.blocks === 1
+      ? t("debug.blocks_one", { count: entry.blocks })
+      : t("debug.blocks_many", { count: entry.blocks }),
+  );
+  if (entry.readSkipped) parts.push(t("debug.no_read"));
   return `--- ${clockTime(entry.atMs)} · ${parts.join(" · ")}`;
 }
 
@@ -569,9 +595,9 @@ function passLine(entry) {
 // window's expanded lines show, continuation lines aligned under the
 // first read.
 function readsLines(reads) {
-  const prefix = `  reads (${reads.length}): `;
+  const prefix = t("debug.export.reads_prefix", { count: reads.length });
   return reads.map((read, i) => {
-    const words = read.text === "" ? "(nothing after trim)" : `“${read.text}”`;
+    const words = read.text === "" ? t("debug.nothing_after_trim") : `“${read.text}”`;
     const indent = i === 0 ? prefix : " ".repeat(prefix.length);
     return `${indent}${words} → ${readReason(read)}`;
   });
@@ -579,28 +605,45 @@ function readsLines(reads) {
 
 function summaryLines() {
   const slowest = slowestStage();
-  const lines = ["", "per-stage summary"];
+  const lines = ["", t("debug.export.per_stage_summary")];
   for (const name of [...STAGES, "total"]) {
     const s = stats[name];
     if (s.n === 0) continue;
-    const mark = name === slowest ? " ← slowest" : "";
+    const mark = name === slowest ? t("debug.export.slowest_mark") : "";
     lines.push(
-      `  ${name} ${Math.round(s.sum / s.n)} avg · ${s.min} min · ${s.max} max ms ×${s.n}${mark}`
+      t("debug.export.stage_line", {
+        name: t(`debug.stage.${name}`),
+        avg: Math.round(s.sum / s.n),
+        min: s.min,
+        max: s.max,
+        n: s.n,
+        mark,
+      }),
     );
   }
   return lines;
 }
 
 function buildExportText(version) {
+  const coveredEvents =
+    history.length === 1
+      ? t("debug.export.covered_range_one", {
+          from: clockTime(history[0].atMs),
+          to: clockTime(history[history.length - 1].atMs),
+          count: history.length,
+        })
+      : t("debug.export.covered_range_many", {
+          from: clockTime(history[0].atMs),
+          to: clockTime(history[history.length - 1].atMs),
+          count: history.length,
+        });
   const lines = [
-    "Langception debug log — what the translation loop did",
-    `app version: ${version}`,
-    `exported at: ${stamp(Date.now())}`,
-    `session started at: ${stamp(openedAtMs)}`,
-    `passes: ${passCount}`,
-    `covered range: ${clockTime(history[0].atMs)} → ` +
-      `${clockTime(history[history.length - 1].atMs)} ` +
-      `(${history.length} event${history.length === 1 ? "" : "s"} in history)`,
+    t("debug.export.title"),
+    t("debug.export.app_version", { version }),
+    t("debug.export.exported_at", { time: stamp(Date.now()) }),
+    t("debug.export.session_started", { time: stamp(openedAtMs) }),
+    t("debug.export.passes", { count: passCount }),
+    coveredEvents,
   ];
   lines.push(...summaryLines());
   lines.push("");
@@ -611,11 +654,12 @@ function buildExportText(version) {
     } else if (entry.kind === "unchanged") {
       lines.push(
         `--- ${clockTime(entry.atMs)} · ${exportOrigin(entry)} · ` +
-          `unchanged ×${entry.count} · capture ~${entry.captureMs}ms`
+          `${t("debug.unchanged.label")}${entry.count} · ` +
+          `${t("debug.unchanged.capture").trimStart()}${entry.captureMs}ms`
       );
     } else {
       lines.push(
-        `--- ${clockTime(entry.atMs)} · error · ${entry.stage} · ${entry.message}`
+        `--- ${clockTime(entry.atMs)} · ${t("debug.export.error_word")} · ${entry.stage} · ${entry.message}`
       );
     }
   }
@@ -650,7 +694,7 @@ function defaultExportName() {
 async function exportLog() {
   try {
     const path = await saveFileDialog({
-      title: "Export debug log as text",
+      title: t("debug.export.dialog_title"),
       defaultPath: defaultExportName(),
       filters: [{ name: "Text", extensions: ["txt"] }],
     });
@@ -660,7 +704,7 @@ async function exportLog() {
     // exports without new events in between differ only in `exported at`.
     const text = buildExportText(version);
     await invoke("export_debug_log", { path, contents: text });
-    flashExportStatus("Saved ✓", false);
+    flashExportStatus(t("debug.export.saved"), false);
   } catch (e) {
     flashExportStatus(String(e), true);
   }
@@ -688,18 +732,26 @@ function clearAll() {
   passCount = 0;
   for (const name of [...STAGES, "total"]) stats[name] = freshStats();
   summaryEl.classList.add("empty");
-  summaryEl.textContent = EMPTY_SUMMARY;
+  summaryEl.textContent = t(EMPTY_SUMMARY_KEY);
   // Back to the empty state: nothing to export or clear until the next
   // event renders (showSessionControls unhides them).
   exportBtn.hidden = true;
   clearBtn.hidden = true;
   // The transient status doubles as the click's feedback — the minimal
   // nicety the brief floated, reusing the export status's flash.
-  flashExportStatus("Cleared ✓", false);
+  flashExportStatus(t("debug.clear.cleared"), false);
 }
 clearBtn.addEventListener("click", clearAll);
 
 window.addEventListener("DOMContentLoaded", async () => {
+  // Ticket 62: the window has no status payload to ride — the one-invoke
+  // bootstrap seam resolves the language before the first row renders.
+  try {
+    await window.I18n.init(await invoke("get_ui_language"));
+  } catch {
+    await window.I18n.init("en"); // offline of the backend: English
+  }
+
   await listen("loop-event", (event) => {
     const payload = event.payload;
     if (payload.type === "timing") {

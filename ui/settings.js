@@ -13,6 +13,7 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const { open: openFileDialog, save: saveFileDialog, ask: askDialog } = window.__TAURI__.dialog;
+const { t } = window.I18n;
 
 // Tabs + pages ---------------------------------------------------------------
 
@@ -84,9 +85,6 @@ for (const tab of document.querySelectorAll(".tab")) {
 
 // OCR language packs (wizard step 1 + Engines tab) ----------------------------
 
-const PACK_INSTALL_HINT = (name) =>
-  `missing — Windows Settings → Time & Language → Language & region → Add a language → ${name} (includes OCR)`;
-
 function packRow(status) {
   const li = document.createElement("li");
   li.className = "pack-row";
@@ -98,17 +96,17 @@ function packRow(status) {
   const pill = document.createElement("span");
   if (status.installed) {
     pill.className = "pill ok";
-    pill.textContent = "installed";
+    pill.textContent = t("settings.packs.installed");
     const tag = document.createElement("span");
     tag.className = "pack-tag";
     tag.textContent = status.packTag;
     li.append(name, pill, tag);
   } else {
     pill.className = "pill err";
-    pill.textContent = "missing";
+    pill.textContent = t("settings.packs.missing");
     const instructions = document.createElement("span");
     instructions.className = "pack-instructions";
-    instructions.textContent = PACK_INSTALL_HINT(status.name);
+    instructions.textContent = t("settings.packs.install_hint", { name: status.name });
     li.append(name, pill, instructions);
   }
   return li;
@@ -118,14 +116,16 @@ async function loadPacks(prefix) {
   const list = document.getElementById(`${prefix}-packs`);
   const note = document.getElementById(`${prefix}-packs-note`);
   list.replaceChildren();
-  note.textContent = "checking…";
+  note.textContent = t("settings.packs.checking");
   try {
     const packs = await invoke("get_ocr_pack_status");
     for (const pack of packs) list.append(packRow(pack));
     const missing = packs.filter((p) => !p.installed);
     note.textContent = missing.length
-      ? `${missing.length} pack${missing.length === 1 ? "" : "s"} missing`
-      : "all four source languages can be read";
+      ? missing.length === 1
+        ? t("settings.packs.missing_count_one", { count: missing.length })
+        : t("settings.packs.missing_count_many", { count: missing.length })
+      : t("settings.packs.all_readable");
   } catch (e) {
     note.textContent = "";
     toast(String(e), "error");
@@ -192,15 +192,17 @@ let savedEngines = null; // the last values confirmed by get_engines
 
 // The LM Studio model dropdown's placeholder option (ticket 10: the list
 // fills from the server's /models — no free-text model entry needed).
-const LMSTUDIO_MODEL_PLACEHOLDER = "— check the server to list models —";
+function lmstudioModelPlaceholder() {
+  return t("settings.card.lmstudio.model_placeholder");
+}
 
 function renderLmStudioModels(models, chosen) {
   enginesLmStudioModel.replaceChildren();
   const placeholder = document.createElement("option");
   placeholder.value = "";
   placeholder.textContent = models.length
-    ? LMSTUDIO_MODEL_PLACEHOLDER
-    : "— no models loaded in LM Studio —";
+    ? lmstudioModelPlaceholder()
+    : t("settings.card.lmstudio.no_models");
   enginesLmStudioModel.append(placeholder);
   // The saved model stays selectable even when the server no longer serves
   // it (it may be offline right now) so the config never silently changes.
@@ -213,7 +215,7 @@ function renderLmStudioModels(models, chosen) {
   if (chosen && !models.includes(chosen)) {
     const option = document.createElement("option");
     option.value = chosen;
-    option.textContent = `${chosen} (saved, not currently served)`;
+    option.textContent = t("settings.card.lmstudio.saved_not_served", { model: chosen });
     enginesLmStudioModel.append(option);
   }
   enginesLmStudioModel.value = chosen || "";
@@ -307,9 +309,9 @@ function renderPresetOptions() {
   if (enginesPreset.dataset.sig === signature) return;
   enginesPreset.dataset.sig = signature;
   const builtins = document.createElement("optgroup");
-  builtins.label = "Built-in presets";
+  builtins.label = t("settings.presets.builtins_group");
   const saved = document.createElement("optgroup");
-  saved.label = "Your presets";
+  saved.label = t("settings.presets.saved_group");
   for (const preset of promptPresets) {
     const option = document.createElement("option");
     option.value = preset.name;
@@ -318,7 +320,7 @@ function renderPresetOptions() {
   }
   const custom = document.createElement("option");
   custom.value = CUSTOM_PRESET;
-  custom.textContent = "Custom — no preset";
+  custom.textContent = t("settings.presets.custom_option");
   enginesPreset.replaceChildren(builtins);
   if (saved.childElementCount > 0) enginesPreset.append(saved);
   enginesPreset.append(custom);
@@ -374,7 +376,7 @@ function promptControlsSaved() {
 
 async function confirmDialog(message) {
   try {
-    return await askDialog(message, { title: "Langception — Settings", kind: "warning" });
+    return await askDialog(message, { title: t("settings.dialog.title"), kind: "warning" });
   } catch (e) {
     // A failed dialog must not strand the action silently.
     toast(String(e), "error");
@@ -422,13 +424,13 @@ for (const field of [enginesPromptTranslation, enginesPromptScreenReading]) {
 enginesPresetSave.addEventListener("click", async () => {
   const name = enginesPresetName.value.trim();
   if (!name) {
-    toast("Type a name for the preset first", "error");
+    toast(t("settings.presets.type_name_first"), "error");
     enginesPresetName.focus();
     return;
   }
   const { translation, screenReading } = promptFields();
   if (!translation.trim() && !screenReading.trim()) {
-    toast("Nothing to save — both prompts are empty, which is the General preset", "error");
+    toast(t("settings.presets.nothing_to_save"), "error");
     return;
   }
   // Saving over a saved preset replaces it, so ask first (the Rust side
@@ -438,7 +440,7 @@ enginesPresetSave.addEventListener("click", async () => {
   );
   if (existing) {
     const replace = await confirmDialog(
-      `A preset named "${existing.name}" already exists. Replace it with the prompts as they read now?`
+      t("settings.presets.replace_confirm", { name: existing.name })
     );
     if (!replace) return;
   }
@@ -449,7 +451,7 @@ enginesPresetSave.addEventListener("click", async () => {
       screenReading,
       overwrite: Boolean(existing),
     });
-    await refreshAfterPromptPresetEdit(active, `Preset "${active}" saved and selected`);
+    await refreshAfterPromptPresetEdit(active, t("settings.presets.saved", { name: active }));
     // The new preset is the selection in force; its name stays as the
     // Rename target, the way the config spells it.
     enginesPresetName.value = active;
@@ -464,22 +466,22 @@ enginesPresetName.addEventListener("keydown", (e) => {
 enginesPresetRename.addEventListener("click", async () => {
   const from = findPromptPreset(enginesPreset.value);
   if (!from || from.builtin) {
-    toast("Pick one of your saved presets to rename", "error");
+    toast(t("settings.presets.pick_to_rename"), "error");
     return;
   }
   const to = enginesPresetName.value.trim();
   if (!to) {
-    toast("Type the new name first", "error");
+    toast(t("settings.presets.type_new_name"), "error");
     enginesPresetName.focus();
     return;
   }
   if (to === from.name) {
-    toast("That is already its name");
+    toast(t("settings.presets.already_named"));
     return;
   }
   try {
     const active = await invoke("rename_prompt_preset", { name: from.name, newName: to });
-    await refreshAfterPromptPresetEdit(active, `Preset renamed to "${to}"`);
+    await refreshAfterPromptPresetEdit(active, t("settings.presets.renamed", { name: to }));
     enginesPresetName.value = to;
   } catch (e) {
     toast(String(e), "error");
@@ -489,7 +491,7 @@ enginesPresetRename.addEventListener("click", async () => {
 enginesPresetDelete.addEventListener("click", async () => {
   const target = findPromptPreset(enginesPreset.value);
   if (!target || target.builtin) {
-    toast("Pick one of your saved presets to delete", "error");
+    toast(t("settings.presets.pick_to_delete"), "error");
     return;
   }
   // Deleting the one in force returns the config to General and clears both
@@ -497,13 +499,13 @@ enginesPresetDelete.addEventListener("click", async () => {
   const inUse = target.name === activePromptPreset;
   const sure = await confirmDialog(
     inUse
-      ? `Delete the preset "${target.name}"? It is in use, so both prompts return to the General default.`
-      : `Delete the preset "${target.name}"?`
+      ? t("settings.presets.delete_confirm_in_use", { name: target.name })
+      : t("settings.presets.delete_confirm", { name: target.name })
   );
   if (!sure) return;
   try {
     const active = await invoke("delete_prompt_preset", { name: target.name });
-    await refreshAfterPromptPresetEdit(active, `Preset "${target.name}" deleted`);
+    await refreshAfterPromptPresetEdit(active, t("settings.presets.deleted", { name: target.name }));
     enginesPresetName.value = "";
   } catch (e) {
     toast(String(e), "error");
@@ -555,7 +557,7 @@ async function saveEngines() {
   try {
     const active = await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
     applyPromptSelection(active);
-    toast("Engines saved");
+    toast(t("settings.engines.saved"));
     return true;
   } catch (e) {
     // Ticket 51: the save was refused, so the config still holds the old
@@ -586,7 +588,11 @@ async function resetPromptToDefault(field, button) {
     // engines baseline moves with it.
     snapshotFields(TRACKED_ENGINES);
     updateSaveFooter();
-    toast(hadContent ? "Prompt reset — the built-in default applies again" : "Already using the built-in default");
+    toast(
+      hadContent
+        ? t("settings.prompt.reset_done")
+        : t("settings.prompt.already_default"),
+    );
   } catch (e) {
     revertEnginesFields();
     toast(String(e), "error");
@@ -656,7 +662,7 @@ expandSelectedEngineCard();
 document.getElementById("engines-lmstudio-check").addEventListener("click", async () => {
   const btn = document.getElementById("engines-lmstudio-check");
   btn.disabled = true;
-  enginesLmStudioNote.textContent = "checking…";
+  enginesLmStudioNote.textContent = t("settings.packs.checking");
   try {
     const result = await invoke("check_lmstudio", { baseUrl: enginesLmStudioBaseUrl.value.trim() });
     renderLmStudioModels(result.models, enginesLmStudioModel.value.trim());
@@ -677,10 +683,10 @@ document.getElementById("engines-lmstudio-check").addEventListener("click", asyn
 document.getElementById("engines-test").addEventListener("click", async () => {
   const btn = document.getElementById("engines-test");
   btn.disabled = true;
-  enginesNote.textContent = "testing…";
+  enginesNote.textContent = t("settings.engines.testing");
   try {
     const thai = await invoke("test_engine", { engine: enginesDefault.value });
-    enginesNote.textContent = `works — "Hello" → ${thai}`;
+    enginesNote.textContent = t("settings.engines.works", { thai });
   } catch (e) {
     enginesNote.textContent = "";
     toast(String(e), "error");
@@ -706,7 +712,7 @@ for (const [buttonId, url] of [
 document.getElementById("wizard-azure-use").addEventListener("click", async () => {
   const key = wizardAzureKey.value.trim();
   if (!key) {
-    toast("Paste an Azure API key first — create one with the link", "error");
+    toast(t("settings.wizard.paste_key_first"), "error");
     return;
   }
   try {
@@ -726,8 +732,8 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
       },
     });
     await loadEngines();
-    wizardAzureNote.textContent = "Azure F0 is now the default engine";
-    toast("Azure F0 is now the default engine");
+    wizardAzureNote.textContent = t("settings.wizard.azure_done");
+    toast(t("settings.wizard.azure_done"));
   } catch (e) {
     toast(String(e), "error");
   }
@@ -736,6 +742,11 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
 // General -------------------------------------------------------------------
 
 const generalLanguage = document.getElementById("general-language");
+// The UI Language select (ticket 62): choosing ไทย with the empty th
+// dictionary renders English (i18n.js's fallback — ticket 63 fills it);
+// a save applies the choice live in THIS window, the other windows at
+// their next load.
+const generalUiLanguage = document.getElementById("general-ui-language");
 const generalCadence = document.getElementById("general-cadence");
 const generalStability = document.getElementById("general-stability");
 // Translation Context (ticket 44): the LLM prompts carry this many of each
@@ -752,11 +763,13 @@ const generalSettingsOnTop = document.getElementById("general-settings-on-top");
 // restart).
 const generalCaptureVisible = document.getElementById("general-capture-visible");
 let generalLoaded = false;
+let appliedUiLanguage = "en";
 
 function loadGeneral(status) {
   if (generalLoaded) return;
   generalLoaded = true;
   generalLanguage.value = status.language;
+  generalUiLanguage.value = status.uiLanguage || "en";
   generalCadence.value = status.cadenceMs;
   generalStability.value = status.stabilityMs;
   generalContext.value = status.contextTranslations;
@@ -780,6 +793,7 @@ async function saveGeneral() {
     await invoke("set_general", {
       settings: {
         language: generalLanguage.value,
+        uiLanguage: generalUiLanguage.value,
         cadenceMs: cadence,
         stabilityMs: stability,
         contextTranslations: context,
@@ -790,7 +804,16 @@ async function saveGeneral() {
         captureVisible: generalCaptureVisible.checked,
       },
     });
-    toast("General settings saved");
+    // The UI Language applies live in this window: re-resolve the
+    // dictionaries (applyStatic runs inside), then re-render the
+    // JS-generated strings on screen. Everything else re-renders on its
+    // next event anyway.
+    if (generalUiLanguage.value !== appliedUiLanguage) {
+      appliedUiLanguage = await window.I18n.init(generalUiLanguage.value);
+      renderGlossary();
+      renderProfiles(await invoke("get_status"));
+    }
+    toast(t("settings.general.saved"));
     return true;
   } catch (e) {
     // Ticket 51: refused save — the form goes back to the stored values.
@@ -821,7 +844,10 @@ async function renderGlossary() {
   glossaryList.replaceChildren();
   for (const entry of entries) glossaryList.append(glossaryRow(entry));
   glossaryEmpty.classList.toggle("hidden", entries.length > 0);
-  glossaryNote.textContent = `${entries.length} term${entries.length === 1 ? "" : "s"}`;
+  glossaryNote.textContent =
+    entries.length === 1
+      ? t("settings.glossary.count_one", { count: entries.length })
+      : t("settings.glossary.count_many", { count: entries.length });
 }
 
 function glossaryRow(entry) {
@@ -843,7 +869,7 @@ function glossaryRow(entry) {
 
   const del = document.createElement("button");
   del.className = "delete-btn";
-  del.title = `Delete “${entry.term}”`;
+  del.title = t("settings.glossary.delete_title", { term: entry.term });
   del.textContent = "✕";
   del.addEventListener("click", async () => {
     del.disabled = true;
@@ -920,13 +946,17 @@ for (const input of [newTermInput, newThaiInput]) {
 document.getElementById("glossary-export").addEventListener("click", async () => {
   try {
     const path = await saveFileDialog({
-      title: "Export glossary as JSON",
+      title: t("settings.glossary.export_dialog_title"),
       defaultPath: "langception-glossary.json",
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (!path) return;
     const count = await invoke("export_glossary", { path });
-    toast(`Exported ${count} term${count === 1 ? "" : "s"}`);
+    toast(
+      count === 1
+        ? t("settings.glossary.exported_one", { count })
+        : t("settings.glossary.exported_many", { count }),
+    );
   } catch (e) {
     toast(String(e), "error");
   }
@@ -935,7 +965,7 @@ document.getElementById("glossary-export").addEventListener("click", async () =>
 document.getElementById("glossary-import").addEventListener("click", async () => {
   try {
     const path = await openFileDialog({
-      title: "Import glossary from JSON",
+      title: t("settings.glossary.import_dialog_title"),
       multiple: false,
       directory: false,
       filters: [{ name: "JSON", extensions: ["json"] }],
@@ -943,7 +973,9 @@ document.getElementById("glossary-import").addEventListener("click", async () =>
     if (!path) return;
     const mode = document.getElementById("glossary-import-mode").value;
     const report = await invoke("import_glossary", { path, mode });
-    toast(`Imported: ${report.added} added, ${report.updated} updated`);
+    toast(
+      t("settings.glossary.imported", { added: report.added, updated: report.updated }),
+    );
     renderGlossary();
   } catch (e) {
     toast(String(e), "error");
@@ -1003,7 +1035,7 @@ function renderExeOptions() {
   if (runningApps.length === 0) {
     const option = document.createElement("option");
     option.value = chosen;
-    option.textContent = chosen || "no running apps — start the app, then ↻";
+    option.textContent = chosen || t("settings.profiles.no_apps");
     profileExe.append(option);
   } else {
     for (const app of runningApps) {
@@ -1032,11 +1064,11 @@ function renderProfilePresetOptions() {
     profilePreset.dataset.sig = signature;
     const inherit = document.createElement("option");
     inherit.value = "";
-    inherit.textContent = "Inherit global (Settings → Engines)";
+    inherit.textContent = t("settings.profiles.preset.inherit");
     const builtins = document.createElement("optgroup");
-    builtins.label = "Built-in presets";
+    builtins.label = t("settings.presets.builtins_group");
     const saved = document.createElement("optgroup");
-    saved.label = "Your presets";
+    saved.label = t("settings.presets.saved_group");
     for (const preset of promptPresets) {
       const option = document.createElement("option");
       option.value = preset.name;
@@ -1083,7 +1115,7 @@ function renderProfiles(status) {
     profileSelect.replaceChildren();
     if (profiles.length === 0) {
       const option = document.createElement("option");
-      option.textContent = "no profiles";
+      option.textContent = t("settings.profiles.no_profiles_option");
       option.value = "";
       option.disabled = true;
       profileSelect.append(option);
@@ -1091,7 +1123,9 @@ function renderProfiles(status) {
     for (const profile of profiles) {
       const option = document.createElement("option");
       option.value = profile.id;
-      option.textContent = profile.active ? `${profile.name} — active` : profile.name;
+      option.textContent = profile.active
+        ? t("settings.profiles.active_suffix", { name: profile.name })
+        : profile.name;
       profileSelect.append(option);
     }
   }
@@ -1157,7 +1191,7 @@ profileName.addEventListener("input", () => {
 });
 
 function uniqueProfileName(base) {
-  const trimmed = (base || "").trim().slice(0, 40) || "New profile";
+  const trimmed = (base || "").trim().slice(0, 40) || t("settings.profiles.default_name");
   let name = trimmed;
   for (let n = 2; profiles.some((p) => p.name.toLowerCase() === name.toLowerCase()); n += 1) {
     name = `${trimmed} ${n}`;
@@ -1168,7 +1202,7 @@ function uniqueProfileName(base) {
 profileNewBtn.addEventListener("click", async () => {
   await loadRunningApps(true);
   if (runningApps.length === 0) {
-    toast("No running apps found — start the app you want to profile, then try again", "error");
+    toast(t("settings.profiles.no_running"), "error");
     return;
   }
   const first = runningApps[0];
@@ -1186,7 +1220,7 @@ profileNewBtn.addEventListener("click", async () => {
     selectedProfileId = id;
     renderProfiles(await invoke("get_status"));
     await renderProfileGlossary();
-    toast("Profile created — adjust it and press Save profile");
+    toast(t("settings.profiles.created"));
   } catch (e) {
     toast(String(e), "error");
   }
@@ -1198,7 +1232,7 @@ profileDeleteBtn.addEventListener("click", async () => {
   if (!selectedProfileId) return;
   if (profileDeleteBtn.dataset.armed !== "1") {
     profileDeleteBtn.dataset.armed = "1";
-    profileDeleteBtn.textContent = "Really delete?";
+    profileDeleteBtn.textContent = t("settings.profiles.delete_confirm");
     clearTimeout(deleteArmedTimer);
     deleteArmedTimer = setTimeout(disarmDelete, 3000);
     return;
@@ -1209,7 +1243,7 @@ profileDeleteBtn.addEventListener("click", async () => {
     await invoke("delete_profile", { id });
     selectedProfileId = null;
     renderProfiles(await invoke("get_status"));
-    toast("Profile deleted");
+    toast(t("settings.profiles.deleted"));
   } catch (e) {
     toast(String(e), "error");
   }
@@ -1218,7 +1252,7 @@ profileDeleteBtn.addEventListener("click", async () => {
 function disarmDelete() {
   clearTimeout(deleteArmedTimer);
   profileDeleteBtn.dataset.armed = "";
-  profileDeleteBtn.textContent = "Delete";
+  profileDeleteBtn.textContent = t("settings.profiles.delete_btn");
 }
 
 document.getElementById("profile-exe-refresh").addEventListener("click", () => loadRunningApps(true));
@@ -1240,7 +1274,7 @@ async function saveProfile() {
         promptPreset: profilePreset.value || null,
       },
     });
-    toast("Profile saved");
+    toast(t("settings.profiles.saved"));
     renderProfiles(await invoke("get_status"));
     await renderProfileGlossary();
     return true;
@@ -1300,7 +1334,7 @@ function profileGlossaryRow(entry) {
 
   const del = document.createElement("button");
   del.className = "delete-btn";
-  del.title = `Delete “${entry.term}”`;
+  del.title = t("settings.glossary.delete_title", { term: entry.term });
   del.textContent = "✕";
   del.addEventListener("click", async () => {
     del.disabled = true;
@@ -1381,13 +1415,17 @@ document.getElementById("profile-glossary-export").addEventListener("click", asy
   if (!selectedProfileId) return;
   try {
     const path = await saveFileDialog({
-      title: "Export profile glossary as JSON",
+      title: t("settings.profiles.glossary.export_dialog_title"),
       defaultPath: "langception-glossary.json",
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (!path) return;
     const count = await invoke("export_profile_glossary", { profileId: selectedProfileId, path });
-    toast(`Exported ${count} term${count === 1 ? "" : "s"}`);
+    toast(
+      count === 1
+        ? t("settings.glossary.exported_one", { count })
+        : t("settings.glossary.exported_many", { count }),
+    );
   } catch (e) {
     toast(String(e), "error");
   }
@@ -1397,7 +1435,7 @@ document.getElementById("profile-glossary-import").addEventListener("click", asy
   if (!selectedProfileId) return;
   try {
     const path = await openFileDialog({
-      title: "Import profile glossary from JSON",
+      title: t("settings.profiles.glossary.import_dialog_title"),
       multiple: false,
       directory: false,
       filters: [{ name: "JSON", extensions: ["json"] }],
@@ -1409,7 +1447,9 @@ document.getElementById("profile-glossary-import").addEventListener("click", asy
       path,
       mode,
     });
-    toast(`Imported: ${report.added} added, ${report.updated} updated`);
+    toast(
+      t("settings.glossary.imported", { added: report.added, updated: report.updated }),
+    );
     renderProfileGlossary();
   } catch (e) {
     toast(String(e), "error");
@@ -1423,7 +1463,7 @@ function renderProfileZones(profile) {
   profileZonesEmpty.classList.toggle("hidden", zones.length > 0);
   if (zones.length === 0) {
     profileZonesEmpty.textContent = selectedProfileId
-      ? "No zones — the whole app window is watched."
+      ? t("settings.profiles.zones.empty")
       : "";
   }
 }
@@ -1438,11 +1478,11 @@ function profileZoneRow(zone) {
 
   const region = document.createElement("span");
   region.className = "hint";
-  region.textContent = `${zone.region} (window-relative)`;
+  region.textContent = t("settings.profiles.zone_region", { region: zone.region });
 
   const del = document.createElement("button");
   del.className = "delete-btn";
-  del.title = `Delete “${zone.name}”`;
+  del.title = t("settings.glossary.delete_title", { term: zone.name });
   del.textContent = "✕";
   del.addEventListener("click", async () => {
     del.disabled = true;
@@ -1593,7 +1633,7 @@ function updateStylePreview() {
 async function saveStyle() {
   try {
     await invoke("set_text_style", { style: collectStyle() });
-    toast("Text style saved");
+    toast(t("settings.style.saved"));
     return true;
   } catch (e) {
     // Ticket 51: the save was refused — the controls go back to the stored
@@ -1646,7 +1686,7 @@ async function loadFontList() {
     }
   } catch (e) {
     styleFont.dataset.loaded = ""; // retry next open: the list is optional
-    toast(`Could not list installed fonts: ${e}`, "error");
+    toast(t("settings.style.fonts_error", { error: e }), "error");
   }
 }
 
@@ -1690,7 +1730,7 @@ async function saveHotkeys() {
         oneShot: hotkeyInputs.oneShot.value,
       },
     });
-    toast("Hotkeys saved and re-registered");
+    toast(t("settings.hotkeys.saved"));
     return true;
   } catch (e) {
     // Ticket 51: refused registration — the fields snap back to the
@@ -1714,6 +1754,7 @@ async function saveHotkeys() {
 const saveFooter = document.getElementById("save-footer");
 const TRACKED_GENERAL = [
   generalLanguage,
+  generalUiLanguage,
   generalCadence,
   generalStability,
   generalContext,
@@ -1899,8 +1940,8 @@ async function handleSettingsCloseRequest() {
   }
   closeAskOpen = true;
   try {
-    const discard = await askDialog("Discard unsaved changes?", {
-      title: "Langception — Settings",
+    const discard = await askDialog(t("settings.close.discard_confirm"), {
+      title: t("settings.dialog.title"),
       kind: "warning",
     });
     if (discard) invoke("hide_settings").catch((e) => toast(String(e), "error"));
@@ -1944,11 +1985,11 @@ function renderUpdateCheck(outcome) {
   updateDownloadUrl = null;
   switch (outcome.kind) {
     case "up-to-date":
-      aboutUpdateResult.textContent = "You are on the latest version.";
+      aboutUpdateResult.textContent = t("settings.about.updates.up_to_date");
       break;
     case "new-version": {
-      const parts = [`New version available: ${outcome.version}`];
-      if (outcome.released) parts.push(`Released: ${outcome.released}`);
+      const parts = [t("settings.about.updates.new_version", { version: outcome.version })];
+      if (outcome.released) parts.push(t("settings.about.updates.released", { released: outcome.released }));
       aboutUpdateResult.textContent = parts.join(" · ");
       if (outcome.downloadUrl) {
         updateDownloadUrl = outcome.downloadUrl;
@@ -1957,15 +1998,13 @@ function renderUpdateCheck(outcome) {
       break;
     }
     case "not-listed":
-      aboutUpdateResult.textContent =
-        "The update server answered, but no update information for Langception is published there yet.";
+      aboutUpdateResult.textContent = t("settings.about.updates.not_listed");
       break;
     case "unavailable":
-      aboutUpdateResult.textContent =
-        "Update check unavailable — no update URL is configured (the feature is disabled).";
+      aboutUpdateResult.textContent = t("settings.about.updates.unavailable");
       break;
     case "error":
-      aboutUpdateResult.textContent = `Update check unavailable — ${outcome.message}`;
+      aboutUpdateResult.textContent = t("settings.about.updates.error", { message: outcome.message });
       break;
     default:
       aboutUpdateResult.textContent = "";
@@ -1976,7 +2015,7 @@ aboutCheckUpdates.addEventListener("click", async () => {
   aboutCheckUpdates.disabled = true;
   aboutUpdateResult.classList.remove("hidden");
   aboutUpdateDownloadRow.classList.add("hidden");
-  aboutUpdateResult.textContent = "Checking…";
+  aboutUpdateResult.textContent = t("settings.about.updates.checking");
   try {
     renderUpdateCheck(await invoke("check_for_updates"));
   } catch (e) {
@@ -1996,8 +2035,8 @@ aboutUpdateOnLaunch.addEventListener("change", async () => {
   try {
     await invoke("set_update_check_on_launch", { enabled: wanted });
     toast(wanted
-      ? "Langception will check for a new version at launch"
-      : "Launch-time update checks disabled");
+      ? t("settings.about.updates.launch_on")
+      : t("settings.about.updates.launch_off"));
   } catch (e) {
     aboutUpdateOnLaunch.checked = !wanted; // revert
     toast(String(e), "error");
@@ -2055,6 +2094,11 @@ window.addEventListener("DOMContentLoaded", async () => {
     return;
   }
 
+  // Ticket 62: the status payload carries the UI Language — the bootstrap
+  // seam. The dictionaries resolve (and the static markup re-applies)
+  // before the first dynamic render writes any t() string.
+  appliedUiLanguage = await window.I18n.init(status.uiLanguage);
+
   loadGeneral(status);
   loadStyleInputs(status.textStyle);
   updateStylePreview();
@@ -2093,11 +2137,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
 function updateChips(status) {
   // Privacy badge mirror (ticket 06): same data the Results Window badge
-  // and the tray tooltip use.
+  // and the tray tooltip use. The wording differs from the Results
+  // Window's on purpose — each window's own, preserved through the seam.
   const cloud = status.privacyEngine;
   privacyChip.classList.toggle("hidden", !cloud);
   if (cloud) {
-    privacyChip.title = `${cloud} sends screen text off-machine while translation runs`;
+    privacyChip.title = t("settings.header.privacy_chip.cloud_title", { engine: cloud });
   }
   configErrorChip.classList.toggle("hidden", !status.configError);
 }

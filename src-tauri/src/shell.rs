@@ -11,8 +11,7 @@
 use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{
     AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextAlignment,
-    TextVAlignment, TextStyle,
-    WindowSettings,
+    TextVAlignment, TextStyle, UiLanguage, WindowSettings,
 };
 use langception_core::deepl::DeepLTranslateEngine;
 use langception_core::fused::{GeminiFusedEngine, OpenAiFusedEngine};
@@ -151,6 +150,10 @@ pub struct Status {
     /// closed still surfaces.
     pub update_check_on_launch: bool,
     pub last_update_check: Option<langception_core::update::UpdateCheckOutcome>,
+    /// The configured UI Language (ticket 62), as the bootstrap seam: the
+    /// Settings and Results windows resolve their dictionaries from this
+    /// field on the status they already fetch. "en" | "th".
+    pub ui_language: String,
     /// The per-app Profiles (ticket 07), with an `active` flag on each.
     pub profiles: Vec<ProfileStatus>,
     /// The id of the Profile currently matched to the foreground app, or
@@ -365,10 +368,6 @@ pub(crate) struct AppState {
     pub(crate) context_tx: watch::Sender<u32>,
     pub(crate) warnings: Mutex<Vec<String>>,
     registered: Mutex<RegisteredHotkeys>,
-    toggle_item: Mutex<Option<MenuItem<Wry>>>,
-    pause_item: Mutex<Option<MenuItem<Wry>>>,
-    adjust_item: Mutex<Option<MenuItem<Wry>>>,
-    fullscreen_item: Mutex<Option<CheckMenuItem<Wry>>>,
     tray: Mutex<Option<TrayIcon<Wry>>>,
     /// `Some` while the picker overlay is open, recording why.
     picker_mode: Mutex<Option<PickerMode>>,
@@ -483,10 +482,6 @@ pub fn run() {
             context_tx,
             warnings: Mutex::new(Vec::new()),
             registered: Mutex::new(RegisteredHotkeys::default()),
-            toggle_item: Mutex::new(None),
-            pause_item: Mutex::new(None),
-            adjust_item: Mutex::new(None),
-            fullscreen_item: Mutex::new(None),
             tray: Mutex::new(None),
             picker_mode: Mutex::new(None),
             cloud_engine: Mutex::new(None),
@@ -500,6 +495,7 @@ pub fn run() {
             start_translation,
             stop_translation,
             get_status,
+            get_ui_language,
             toggle_pause_translation,
             toggle_adjust_mode,
             set_capture_mode,
@@ -699,37 +695,164 @@ fn monitor_name(monitor: &Monitor) -> String {
     monitor.name().cloned().unwrap_or_default()
 }
 
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+// ---- The tray/notices text seams (ticket 62) ----
+
+/// The configured UI Language (ticket 62): which language the app's own
+/// windows and tray render in (`[ui] ui_language`). A broken or
+/// not-yet-loaded config falls back to English — the same graceful
+/// fallback the webview dictionaries apply to a missing key.
+pub(crate) fn ui_language(app: &AppHandle) -> UiLanguage {
+    match &*app
+        .state::<AppState>()
+        .config
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+    {
+        Some(Ok(config)) => config.ui.ui_language,
+        Some(Err(_)) | None => UiLanguage::En,
+    }
+}
+
+/// Every user-visible string the tray shows: the menu items' labels and
+/// the tooltip's three states plus its full-screen note. Resolved per
+/// menu construction ([`build_tray_menu`], called by [`build_tray`] and
+/// every [`apply_state`]), so a saved UI Language change relabels the
+/// tray live.
+struct TrayStrings {
+    show_results: &'static str,
+    /// The toggle item's two states.
+    start_translation: &'static str,
+    stop_translation: &'static str,
+    /// The pause item's two states.
+    pause_translation: &'static str,
+    resume_translation: &'static str,
+    /// The adjust item's two states.
+    enter_adjust_mode: &'static str,
+    exit_adjust_mode: &'static str,
+    fullscreen_mode: &'static str,
+    new_capture_zone: &'static str,
+    one_shot_capture: &'static str,
+    settings: &'static str,
+    debug_log_window: &'static str,
+    open_config_folder: &'static str,
+    quit: &'static str,
+    tooltip_stopped: &'static str,
+    tooltip_running: &'static str,
+    tooltip_paused: &'static str,
+    /// The tooltip's note while full-screen mode is the capture target.
+    mode_note_fullscreen: &'static str,
+}
+
+/// The tray strings for `lang`. Only the English arm exists (ticket 62) —
+/// `Th` falls through to it so a saved Thai keeps rendering today's
+/// strings until ticket 63 fills the arm, the Rust mirror of the webview
+/// dictionaries' missing-key fallback.
+fn tray_text(lang: UiLanguage) -> TrayStrings {
+    match lang {
+        UiLanguage::En | UiLanguage::Th => TrayStrings {
+            show_results: "Show Results Window",
+            start_translation: "Start Translation",
+            stop_translation: "Stop Translation",
+            pause_translation: "Pause Translation",
+            resume_translation: "Resume Translation",
+            enter_adjust_mode: "Enter Adjust Mode",
+            exit_adjust_mode: "Exit Adjust Mode",
+            fullscreen_mode: "Full-Screen Mode",
+            new_capture_zone: "New Capture Zone",
+            one_shot_capture: "One-shot Capture",
+            settings: "Settings…",
+            debug_log_window: "Debug Log Window…",
+            open_config_folder: "Open Config Folder",
+            quit: "Quit",
+            tooltip_stopped: "Langception — stopped",
+            tooltip_running: "Langception — running",
+            tooltip_paused: "Langception — paused",
+            mode_note_fullscreen: " · full screen",
+        },
+    }
+}
+
+/// Builds the tray menu from [`tray_text`] plus the loop state the labels
+/// reflect. Built at startup and rebuilt by every [`apply_state`] (the
+/// labels' only live-update path — the whole menu is swapped, so no item
+/// handles need storing), which is also what makes a UI Language switch
+/// relabel the tray without a relaunch.
+fn build_tray_menu(
+    app: &AppHandle,
+    text: &TrayStrings,
+    running: bool,
+    paused: bool,
+    adjusting: bool,
+    fullscreen: bool,
+) -> tauri::Result<Menu<Wry>> {
     // Ticket 18: closing the Results Window hides it (tray-first), so the
     // menu needs an explicit way back — a left-click on the icon does the
     // same thing, but nobody discovers that.
     let show_results =
-        MenuItem::with_id(app, "show-results", "Show Results Window", true, None::<&str>)?;
-    let toggle = MenuItem::with_id(app, "toggle", "Start Translation", true, None::<&str>)?;
-    let pause = MenuItem::with_id(app, "pause", "Pause Translation", false, None::<&str>)?;
-    let adjust = MenuItem::with_id(app, "adjust", "Enter Adjust Mode", true, None::<&str>)?;
+        MenuItem::with_id(app, "show-results", text.show_results, true, None::<&str>)?;
+    let toggle = MenuItem::with_id(
+        app,
+        "toggle",
+        if running {
+            text.stop_translation
+        } else {
+            text.start_translation
+        },
+        true,
+        None::<&str>,
+    )?;
+    let pause = MenuItem::with_id(
+        app,
+        "pause",
+        if paused {
+            text.resume_translation
+        } else {
+            text.pause_translation
+        },
+        running,
+        None::<&str>,
+    )?;
+    let adjust = MenuItem::with_id(
+        app,
+        "adjust",
+        if adjusting {
+            text.exit_adjust_mode
+        } else {
+            text.enter_adjust_mode
+        },
+        true,
+        None::<&str>,
+    )?;
     // Full-screen mode is a capture target, so its tray entry shows the
     // current state with a checkmark. Monitor choice lives in the Results
     // Window's mode panel (a dropdown, bad tray material).
-    let fullscreen = CheckMenuItem::with_id(
+    let fullscreen_item = CheckMenuItem::with_id(
         app,
         "fullscreen",
-        "Full-Screen Mode",
+        text.fullscreen_mode,
         true,
-        false,
+        fullscreen,
         None::<&str>,
     )?;
-    let new_zone = MenuItem::with_id(app, "new-zone", "New Capture Zone", true, None::<&str>)?;
-    let one_shot = MenuItem::with_id(app, "one-shot", "One-shot Capture", true, None::<&str>)?;
-    let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+    let new_zone =
+        MenuItem::with_id(app, "new-zone", text.new_capture_zone, true, None::<&str>)?;
+    let one_shot =
+        MenuItem::with_id(app, "one-shot", text.one_shot_capture, true, None::<&str>)?;
+    let settings_item = MenuItem::with_id(app, "settings", text.settings, true, None::<&str>)?;
     // The Debug Log window (ticket 47): support tool for "which stage is
     // slow" — open it and watch the per-pass timings stream.
-    let debug_item = MenuItem::with_id(app, "timing-debug", "Debug Log Window…", true, None::<&str>)?;
-    let open_config =
-        MenuItem::with_id(app, "open-config", "Open Config Folder", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let debug_item =
+        MenuItem::with_id(app, "timing-debug", text.debug_log_window, true, None::<&str>)?;
+    let open_config = MenuItem::with_id(
+        app,
+        "open-config",
+        text.open_config_folder,
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", text.quit, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(
+    Menu::with_items(
         app,
         &[
             &show_results,
@@ -738,7 +861,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &pause,
             &adjust,
             &separator,
-            &fullscreen,
+            &fullscreen_item,
             &separator,
             &new_zone,
             &one_shot,
@@ -747,23 +870,23 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &open_config,
             &quit,
         ],
-    )?;
+    )
+}
 
-    let state = app.state::<AppState>();
-    *state.toggle_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(toggle);
-    *state.pause_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(pause);
-    *state.adjust_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(adjust);
-    *state.fullscreen_item.lock().unwrap_or_else(|p| p.into_inner()) = Some(fullscreen);
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let text = tray_text(ui_language(app));
+    let menu = build_tray_menu(app, &text, false, false, false, false)?;
 
     // Tray menu events are handled here only (not via Builder::on_menu_event)
-    // so each item fires exactly once.
+    // so each item fires exactly once. The labels may change (apply_state
+    // swaps the menu); the ids never do.
     let tray = TrayIconBuilder::with_id("main")
         .icon(
             app.default_window_icon()
                 .expect("bundled window icon")
                 .clone(),
         )
-        .tooltip("Langception — stopped")
+        .tooltip(text.tooltip_stopped)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -826,6 +949,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    let state = app.state::<AppState>();
     *state.tray.lock().unwrap_or_else(|p| p.into_inner()) = Some(tray);
     Ok(())
 }
@@ -956,33 +1080,25 @@ pub(crate) fn apply_state(app: &AppHandle) {
         _ => false,
     };
 
-    if let Some(item) = state.toggle_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-        let _ = item.set_text(if running {
-            "Stop Translation"
-        } else {
-            "Start Translation"
-        });
-    }
-    if let Some(item) = state.pause_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-        let _ = item.set_enabled(running);
-        let _ = item.set_text(if paused {
-            "Resume Translation"
-        } else {
-            "Pause Translation"
-        });
-    }
-    if let Some(item) = state.adjust_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-        let _ = item.set_text(if adjusting {
-            "Exit Adjust Mode"
-        } else {
-            "Enter Adjust Mode"
-        });
-    }
-    if let Some(item) = state.fullscreen_item.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-        let _ = item.set_checked(fullscreen);
-    }
+    // The tray menu is rebuilt from the current UI Language's tray_text
+    // (ticket 62) and the loop state — labels, the pause item's enabled
+    // state, and the fullscreen checkmark included — and swapped in
+    // wholesale, so no item handles are stored anywhere. A UI Language
+    // save therefore relabels the menu live, and the tooltip follows in
+    // the same pass.
     if let Some(tray) = state.tray.lock().unwrap_or_else(|p| p.into_inner()).as_ref() {
-        let mode_note = if fullscreen { " · full screen" } else { "" };
+        let text = tray_text(ui_language(app));
+        match build_tray_menu(app, &text, running, paused, adjusting, fullscreen) {
+            Ok(menu) => {
+                let _ = tray.set_menu(Some(menu));
+            }
+            Err(e) => crate::logging::log("warning", format!("could not rebuild the tray menu: {e}")),
+        }
+        let mode_note = if fullscreen {
+            text.mode_note_fullscreen
+        } else {
+            ""
+        };
         // Privacy badge (ticket 06): whenever a pipeline is in flight and
         // its Translate Engine sends screen text off-machine, the tooltip
         // says so — the user never has to open a window to know.
@@ -991,11 +1107,11 @@ pub(crate) fn apply_state(app: &AppHandle) {
             _ => String::new(),
         };
         let tooltip = if !running {
-            "Langception — stopped"
+            text.tooltip_stopped
         } else if paused {
-            "Langception — paused"
+            text.tooltip_paused
         } else {
-            "Langception — running"
+            text.tooltip_running
         };
         let _ = tray.set_tooltip(Some(format!("{tooltip}{mode_note}{privacy_note}")));
     }
@@ -1352,6 +1468,7 @@ fn status_for(app: &AppHandle) -> Status {
         capture_visible: windows.capture_visible,
         update_check_on_launch,
         last_update_check,
+        ui_language: ui_language(app).code().to_string(),
         profiles,
         active_profile_id,
     }
@@ -1547,11 +1664,20 @@ fn build_ocr_engine(
     // app-log line (ticket 31: crashes surface, never silently heal); a
     // failure that degrades a pass is the fallback wrapper's warning
     // instead. The substitution notice (ticket 05: tiny + Japanese runs
-    // the small model) lands on the same `ocr` log surface.
+    // the small model) lands on the same `ocr` log surface, its wording
+    // composed through the notices seam (ticket 62) — the engine hands
+    // over the selected tier, the text resolves in the UI language
+    // current at fire time.
     let notice: langception_core::sidecar::RestartNotice = Arc::new(move |message| {
         crate::logging::log("ocr", message);
     });
-    let substitution_notice = notice.clone();
+    let app_for_notices = app.clone();
+    let substitution_notice: langception_core::ppocr::SubstitutionNotice = Arc::new(move |tier| {
+        crate::logging::log(
+            "ocr",
+            substitution_notice_text(ui_language(&app_for_notices), tier),
+        );
+    });
     let v6: Arc<dyn langception_core::ports::OcrEngine> = match resolve_ppocrv6(app) {
         Some((program, models)) => Arc::new(
             langception_core::ppocr::PpOcrv6Engine::new(program, models, tier)
@@ -2019,7 +2145,7 @@ fn start_loop(app: &AppHandle) -> Result<(), String> {
         .clone()
         .unwrap_or_else(|| config.active_prompt_preset().code().to_string());
     let zone_count = target.zones.len();
-    apply_watching_nothing(&state, target.zones.is_empty());
+    apply_watching_nothing(app, target.zones.is_empty());
     let _ = state.zones_tx.send(target.zones);
     let _ = state.exclusions_tx.send(target.exclusions);
     let _ = state.context_tx.send(config.context_translations);
@@ -2121,7 +2247,7 @@ fn stop_loop(app: &AppHandle) {
         crate::overlay::clear_and_hide(app);
     }
     // Nothing is watched once stopped: the warning must not linger.
-    apply_watching_nothing(&state, false);
+    apply_watching_nothing(app, false);
     apply_state(app);
 }
 
@@ -2141,20 +2267,57 @@ pub(crate) fn push_warning(state: &AppState, message: String) {
 /// empty, no Profile matched): the most silent failure the app can have —
 /// everything looks alive and nothing translates. Fixed text so the push
 /// dedup keeps one copy and [`apply_watching_nothing`] can clear it again
-/// once a real target exists.
+/// once a real target exists. The English pin; [`notices`] resolves the
+/// wording per UI Language from it.
 const WATCHING_NOTHING: &str = "Translation is running, but nothing is being watched — draw a Capture Zone (Alt+Shift+Z), turn on Full-Screen Mode, or focus an app that has a Profile.";
 
-/// Adds or clears [`WATCHING_NOTHING`] to match the loop's target. Called
-/// wherever the target is (re)computed while the loop runs; stopping the
-/// loop clears it.
-fn apply_watching_nothing(state: &AppState, watching_nothing: bool) {
+/// The Rust-composed user-visible notice strings (ticket 62): the status
+/// warnings the loop emits and the OCR log's engine-substitution line
+/// ([`substitution_notice_text`]). Like [`tray_text`], only the English
+/// wording exists — every language falls through to it until ticket 63
+/// fills Thai.
+struct NoticeTexts {
+    watching_nothing: &'static str,
+}
+
+fn notices(lang: UiLanguage) -> NoticeTexts {
+    match lang {
+        UiLanguage::En | UiLanguage::Th => NoticeTexts {
+            watching_nothing: WATCHING_NOTHING,
+        },
+    }
+}
+
+/// The engine-substitution notice's wording (ticket 62's seam over ticket
+/// 05's notice): the selected tier cannot read Japanese (its vocabulary
+/// has no kana), so the pass runs the small model set instead.
+fn substitution_notice_text(lang: UiLanguage, selected: langception_core::ppocr::ModelTier) -> String {
+    match lang {
+        UiLanguage::En | UiLanguage::Th => format!(
+            "{} cannot read Japanese (its vocabulary has no kana) — running the {} model set instead",
+            selected.display_name(),
+            langception_core::ppocr::ModelTier::Small.display_name(),
+        ),
+    }
+}
+
+/// Adds or clears the UI language's [`notices`] watching-nothing text to
+/// match the loop's target. Called wherever the target is (re)computed
+/// while the loop runs; stopping the loop clears it. Both operations
+/// compare against the CURRENT language's wording, so a warning pushed in
+/// one language is cleared in the same language; a mid-session UI
+/// Language switch can therefore leave the old wording until the target
+/// changes again — the same next-refresh semantics the windows have.
+fn apply_watching_nothing(app: &AppHandle, watching_nothing: bool) {
+    let text = notices(ui_language(app)).watching_nothing;
+    let state = app.state::<AppState>();
     let mut warnings = state.warnings.lock().unwrap_or_else(|p| p.into_inner());
     if watching_nothing {
-        if !warnings.iter().any(|w| w == WATCHING_NOTHING) {
-            warnings.push(WATCHING_NOTHING.to_string());
+        if !warnings.iter().any(|w| w == text) {
+            warnings.push(text.to_string());
         }
     } else {
-        warnings.retain(|w| w != WATCHING_NOTHING);
+        warnings.retain(|w| w != text);
     }
 }
 
@@ -2959,7 +3122,7 @@ fn push_active_target(app: &AppHandle) -> Result<(), String> {
     let target = effective_target(app, &config);
     *state.active_profile.lock().unwrap_or_else(|p| p.into_inner()) = target.profile_id.clone();
     *state.active_window.lock().unwrap_or_else(|p| p.into_inner()) = target.window;
-    apply_watching_nothing(&state, target.zones.is_empty());
+    apply_watching_nothing(app, target.zones.is_empty());
     let old = state.zones_tx.borrow().clone();
     for zone in &old {
         if !target
@@ -3045,6 +3208,16 @@ async fn stop_translation(app: AppHandle) {
 #[tauri::command]
 fn get_status(app: AppHandle) -> Status {
     status_for(&app)
+}
+
+/// The UI Language bootstrap seam (ticket 62) for the windows that never
+/// fetch the full status — the Debug Log window, the picker, the
+/// overlays: one invoke at page load resolves the i18n dictionaries'
+/// language. The Settings and Results windows read the same value off
+/// their get_status payload instead.
+#[tauri::command]
+fn get_ui_language(app: AppHandle) -> String {
+    ui_language(&app).code().to_string()
 }
 
 #[tauri::command]
@@ -3794,5 +3967,189 @@ mod tests {
         assert_eq!(resolved.1, models);
         assert_eq!(resolved.0, models.join(langception_core::ppocr::SIDECAR_EXE));
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ---- The tray/notices text seams + i18n dictionaries (ticket 62) ----
+
+    /// The tray seam's English strings are today's tray, byte-for-byte —
+    /// every visible label and tooltip state is pinned here, so a wording
+    /// change is a conscious one (menu construction is not unit-testable:
+    /// it needs a live Tauri app; the strings feed it verbatim).
+    #[test]
+    fn tray_text_english_strings_are_todays() {
+        let text = tray_text(UiLanguage::En);
+        assert_eq!(text.show_results, "Show Results Window");
+        assert_eq!(text.start_translation, "Start Translation");
+        assert_eq!(text.stop_translation, "Stop Translation");
+        assert_eq!(text.pause_translation, "Pause Translation");
+        assert_eq!(text.resume_translation, "Resume Translation");
+        assert_eq!(text.enter_adjust_mode, "Enter Adjust Mode");
+        assert_eq!(text.exit_adjust_mode, "Exit Adjust Mode");
+        assert_eq!(text.fullscreen_mode, "Full-Screen Mode");
+        assert_eq!(text.new_capture_zone, "New Capture Zone");
+        assert_eq!(text.one_shot_capture, "One-shot Capture");
+        assert_eq!(text.settings, "Settings…");
+        assert_eq!(text.debug_log_window, "Debug Log Window…");
+        assert_eq!(text.open_config_folder, "Open Config Folder");
+        assert_eq!(text.quit, "Quit");
+        assert_eq!(text.tooltip_stopped, "Langception — stopped");
+        assert_eq!(text.tooltip_running, "Langception — running");
+        assert_eq!(text.tooltip_paused, "Langception — paused");
+        assert_eq!(text.mode_note_fullscreen, " · full screen");
+        // The graceful fallback: a saved Thai renders today's strings
+        // until ticket 63 fills the arm — every field identical.
+        let th = tray_text(UiLanguage::Th);
+        assert_eq!(th.show_results, text.show_results);
+        assert_eq!(th.quit, text.quit);
+        assert_eq!(th.tooltip_running, text.tooltip_running);
+        assert_eq!(th.mode_note_fullscreen, text.mode_note_fullscreen);
+    }
+
+    /// The notices seam resolves the same English wording for every
+    /// language until ticket 63 (the watching-nothing warning included).
+    #[test]
+    fn the_notices_seam_resolves_the_english_wording_for_every_language() {
+        assert_eq!(notices(UiLanguage::En).watching_nothing, WATCHING_NOTHING);
+        assert_eq!(notices(UiLanguage::Th).watching_nothing, WATCHING_NOTHING);
+    }
+
+    /// The substitution notice composes the same wording the engine used
+    /// to bake in (ppocr.rs before ticket 62), now through the seam —
+    /// naming both the selected tier and the model set that actually runs.
+    #[test]
+    fn the_substitution_notice_names_both_tiers() {
+        use langception_core::ppocr::ModelTier;
+        let text = substitution_notice_text(UiLanguage::En, ModelTier::Tiny);
+        assert!(text.contains("PP-OCRv6-tiny"), "names the selection: {text}");
+        assert!(text.contains("PP-OCRv6-small"), "names what runs: {text}");
+        assert_eq!(
+            substitution_notice_text(UiLanguage::Th, ModelTier::Tiny),
+            text,
+            "Thai falls back to the English wording until ticket 63"
+        );
+    }
+
+    /// Both dictionaries parse as flat string maps (keys never nest), and
+    /// the Thai dictionary's keys never outrun the English one's. The
+    /// fallback chain (active → English → key) renders an en key even from
+    /// an empty th — ticket 62 ships th.json as the empty placeholder, and
+    /// the moment it carries real keys, parity tightens to the FULL en key
+    /// set: ticket 63 cannot miss a string (silently English forever) or
+    /// add a stale one (a typo'd key renders itself).
+    #[test]
+    fn i18n_dictionaries_are_flat_maps_with_no_orphan_thai_keys() {
+        let i18n_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/i18n");
+        let en: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(i18n_dir.join("en.json")).unwrap())
+                .unwrap();
+        let th: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(i18n_dir.join("th.json")).unwrap())
+                .unwrap();
+        for (key, value) in &en {
+            assert!(
+                value.is_string(),
+                "en key {key} must map to a string — dictionaries are flat string maps"
+            );
+        }
+        let th_real_keys: Vec<&String> =
+            th.keys().filter(|key| !key.starts_with('_')).collect();
+        // The extraction is real: the English dictionary holds every
+        // surface's strings (an accidentally emptied en.json must fail
+        // here, not as blank UI).
+        assert!(
+            en.len() > 200,
+            "en.json holds the extracted strings, got {} keys",
+            en.len()
+        );
+        if th_real_keys.is_empty() {
+            // The ticket-62 placeholder state: choosing Thai renders
+            // English through the fallback. Nothing more to pin yet.
+            return;
+        }
+        let missing: Vec<&String> = en
+            .keys()
+            .filter(|key| !th.contains_key(*key))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "th.json carries keys but is missing {} en key(s) — fill every key: {missing:?}",
+            missing.len()
+        );
+        for key in &th_real_keys {
+            assert!(
+                en.contains_key(*key),
+                "th key {key:?} has no en counterpart — a typo'd key renders itself"
+            );
+        }
+    }
+
+    /// Every literal i18n key the pages reference — `data-i18n*` attributes
+    /// in the HTML and `t("…")` calls in the JS — exists in the English
+    /// dictionary, so a typo'd key cannot ship (it would render the raw
+    /// key in the UI). Dynamic keys (`t(\`debug.stage.${name}\`)`) are not
+    /// visible to this scan; their vocabularies are pinned by the
+    /// dictionary test above plus the code's own constant lists (STAGES,
+    /// COUNT_ORDER).
+    #[test]
+    fn every_literal_i18n_key_in_the_pages_exists_in_the_dictionary() {
+        let i18n_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui/i18n");
+        let en: std::collections::BTreeMap<String, serde_json::Value> =
+            serde_json::from_str(&std::fs::read_to_string(i18n_dir.join("en.json")).unwrap())
+                .unwrap();
+
+        // Keys referenced by `data-i18n`, `data-i18n-html`,
+        // `data-i18n-placeholder` and `data-i18n-title` attributes. After
+        // the prefix, consume the variant suffix (-html/-placeholder/
+        // -title) so every form's value is captured, then expect `="`.
+        let mut keys: Vec<String> = Vec::new();
+        for file in ["index.html", "settings.html", "debug.html", "picker.html"] {
+            let html =
+                std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui").join(file))
+                    .unwrap();
+            let mut rest = html.as_str();
+            while let Some(pos) = rest.find("data-i18n") {
+                rest = &rest[pos + "data-i18n".len()..];
+                let suffix = rest
+                    .find(|c: char| !(c.is_ascii_lowercase() || c == '-'))
+                    .unwrap_or(rest.len());
+                let rest = &rest[suffix..];
+                let Some(rest) = rest.strip_prefix("=\"") else {
+                    continue;
+                };
+                let Some(end) = rest.find('"') else {
+                    break;
+                };
+                keys.push(rest[..end].to_string());
+            }
+        }
+        // Keys referenced by literal `t("…")` calls in the JS — only where
+        // the preceding character cannot be an identifier's (so `split("…")`
+        // never matches).
+        for file in ["main.js", "settings.js", "debug.js", "picker.js", "overlay.js", "titlebar.js", "i18n.js"] {
+            let js =
+                std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui").join(file))
+                    .unwrap();
+            let bytes = js.as_bytes();
+            for (i, _) in bytes.iter().enumerate().take(bytes.len().saturating_sub(2)) {
+                if &bytes[i..i + 3] != b"t(\"" {
+                    continue;
+                }
+                if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_' || bytes[i - 1] == b'$') {
+                    continue;
+                }
+                let rest = &js[i + 3..];
+                let Some(end) = rest.find('"') else {
+                    break;
+                };
+                keys.push(rest[..end].to_string());
+            }
+        }
+
+        for key in keys {
+            assert!(
+                en.contains_key(&key),
+                "key {key:?} is referenced by a page but missing from en.json — it would render as the raw key"
+            );
+        }
     }
 }
