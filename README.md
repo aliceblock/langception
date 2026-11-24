@@ -56,7 +56,9 @@ names can be pinned so `Vertin` always renders as `เวอร์ติน`.
 - The **WebView2 Runtime** — preinstalled on Windows 11 and on up-to-date
   Windows 10. The installer sets it up automatically if it is missing; the
   portable build needs it present (see below).
-- An **OCR language pack** for your source language (see next section).
+- An **OCR language pack** for your source language — the default OCR
+  engine (Windows OCR) needs one (see next section). If you cannot install
+  packs, the bundled Paddle OCR engine works without any.
 - Internet access for every engine except LM Studio.
 
 ## Install
@@ -79,9 +81,12 @@ On the very first launch the **setup wizard** opens automatically (it is a
 page inside the Settings window; you can skip it at any time — Langception
 works with zero configuration). It:
 
-1. **Checks your OCR language packs** and shows exactly which of the four
-   source languages are readable, with a button that jumps to Windows'
-   language settings if something is missing.
+1. **Checks your OCR language packs** — the default OCR engine is
+   Windows OCR, which needs a pack for your source language. The wizard
+   shows exactly which of the four source languages are readable, with a
+   button that jumps to Windows' language settings if something is missing
+   (and points at the bundled Paddle OCR engine if you cannot install
+   packs).
 2. Walks through **choosing an engine** — the default needs nothing; keyed
    engines have links to their signup pages.
 3. Shows the **hotkeys** so the app is usable without touching a window.
@@ -100,10 +105,10 @@ API keys, glossaries, and profiles are stored only there, on your machine.
 
 ## OCR language packs
 
-Langception reads text with the OCR engine built into Windows
-(Windows.Media.Ocr), which needs a **language pack** for your source
-language — English, Japanese, Chinese, or Korean. Without the right pack you
-get no text at all, so this is the first thing to check:
+The default OCR engine is **Windows OCR** (Windows.Media.Ocr) — lighter and
+faster than bundling models, but it needs a **language pack** for your
+source language — English, Japanese, Chinese, or Korean. Without the right
+pack you get no text at all, so this is the first thing to check:
 
 1. In Langception: **Settings → Engines** lists the installed packs and which
    source languages are covered.
@@ -117,6 +122,12 @@ get no text at all, so this is the first thing to check:
 
 > For Chinese, both Simplified and Traditional recognizers are supported;
 > when a Profile or config asks for generic `zh`, the Simplified pack wins.
+
+**No pack, or prefer offline reads?** Every release also bundles the
+**Paddle OCR** engine: select it in **Settings → Engines → OCR engine** and
+reads work with no Windows language packs at all, fully offline. It is
+heavier per pass (it runs a ~300 MB sidecar process), and if it cannot run
+a pass automatically falls back to Windows OCR.
 
 ## Translation engines
 

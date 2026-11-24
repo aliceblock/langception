@@ -224,7 +224,7 @@ async function loadEngines() {
     savedEngines = await invoke("get_engines");
     enginesLoaded = true;
     enginesDefault.value = savedEngines.defaultEngine;
-    enginesOcr.value = savedEngines.ocrEngine || "paddle";
+    enginesOcr.value = savedEngines.ocrEngine || "windows";
     enginesReading.value = savedEngines.reading || "ocr";
     enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
     // Ticket 54: the saved engine's card is the expanded one.

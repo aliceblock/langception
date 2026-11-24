@@ -154,7 +154,7 @@ pub(crate) fn get_about(app: AppHandle) -> About {
 
 // ---- Engines tab (tickets 09 + 10 + 11) ----
 
-/// Matches the config's paddle default for a page that (somehow) sends no
+/// Matches the config's OCR default for a page that (somehow) sends no
 /// ocrEngine field — always the config-side default, never an error.
 fn default_ocr_engine_dto() -> String {
     langception_core::config::DEFAULT_OCR_ENGINE.to_string()
@@ -172,7 +172,8 @@ fn default_ocr_engine_dto() -> String {
 pub struct EnginesDto {
     pub default_engine: String,
     /// "paddle" | "windows" (ticket 31): which engine reads on-screen
-    /// text. Defaults to the bundled PaddleOCR sidecar.
+    /// text. Defaults to Windows OCR (ticket 55) — the bundled PaddleOCR
+    /// sidecar is the pack-independent alternative.
     #[serde(default = "default_ocr_engine_dto")]
     pub ocr_engine: String,
     /// "ocr" | "fused" (ticket 12).

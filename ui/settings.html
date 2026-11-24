@@ -40,9 +40,13 @@
       <section class="wizard-step">
         <h3>1 · OCR language packs</h3>
         <p class="hint">
-          Windows OCR needs a language pack for the language you will read —
-          English is usually preinstalled; the others install through the
-          button below if missing.
+          Langception reads your screen with <strong>Windows OCR</strong> by
+          default, which needs a language pack for the language you will
+          read — without it nothing is read. English is usually
+          preinstalled; the others install through the button below if
+          missing. If you cannot install packs, switch to the bundled
+          <strong>Paddle OCR</strong> in Settings → Engines — it works with
+          no packs at all.
         </p>
         <ul id="wizard-packs" class="packs"></ul>
         <div class="row">
@@ -183,8 +187,8 @@
           <label class="form-row">
             <span>OCR engine</span>
             <select id="engines-ocr">
+              <option value="windows">Windows OCR — default, needs an installed language pack</option>
               <option value="paddle">Paddle OCR — bundled, offline, no language packs needed</option>
-              <option value="windows">Windows OCR — needs an installed language pack</option>
             </select>
           </label>
           <label class="form-row">
@@ -201,10 +205,10 @@
         </div>
         <p class="hint">
           The OCR engine reads the screen before translation.
+          <strong>Windows OCR</strong> (the default) is lighter but needs
+          the matching language pack installed (checked below).
           <strong>Paddle OCR</strong> ships with the app and runs fully
-          offline — no language packs needed. <strong>Windows OCR</strong> is
-          lighter but needs the matching language pack installed (checked
-          below).
+          offline — heavier per pass, but no language packs needed.
         </p>
         <p id="engines-reading-warning" class="hint hidden">
           Sends every captured frame to the engine as an image — read and

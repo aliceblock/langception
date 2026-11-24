@@ -14,14 +14,14 @@ Requirements
   missing, install it once from:
   https://developer.microsoft.com/microsoft-edge/webview2/
   (the "Evergreen Bootstrapper" is enough; it needs internet access).
-- OCR: the bundled Paddle OCR engine works out of the box, fully
-  offline — no language packs needed. It lives in the "resources"
-  folder next to Langception.exe; keep the two together when moving
-  the folder. Windows OCR (Settings > Engines) is an alternative that
-  needs an OCR language pack for your source language (English,
-  Japanese, Chinese, or Korean): Settings > Engines shows what is
-  installed, with a jump to Windows' language settings. See the
-  project README.
+- OCR: the default Windows OCR engine needs an OCR language pack for
+  your source language (English, Japanese, Chinese, or Korean) — without
+  it nothing is read. Settings > Engines shows what is installed, with a
+  jump to Windows' language settings. If you cannot install packs,
+  switch to the bundled Paddle OCR engine there: it works out of the
+  box, fully offline, and lives in the "resources" folder next to
+  Langception.exe — keep the two together when moving the folder. See
+  the project README.
 
 Where settings live
 -------------------

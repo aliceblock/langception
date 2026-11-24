@@ -29,6 +29,11 @@ the Windows autostart registry behavior. Run once on a real machine.
       "installed" + the pack tag, or "missing" with install instructions —
       matching what Windows Settings shows. "Re-check" re-runs the probe
       without reopening the window.
+- [ ] **New default stated up front (ticket 55)**: the OCR step says
+      Windows OCR is the default and that it needs a language pack for
+      the Source Language, and names the bundled Paddle OCR as the
+      no-packs alternative in Settings → Engines — visible before any
+      translation runs, not only after a failed read.
 - [ ] **"Open Windows language settings"** opens Time & Language →
       Language & region.
 - [ ] **Skippable**: "Skip setup" and "Get started" both reveal the six

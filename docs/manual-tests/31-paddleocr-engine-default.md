@@ -1,5 +1,10 @@
 # Manual tests — Ticket 31: PaddleOCR engine (bundled) as the default OCR engine
 
+> **Ticket 55 note:** the default OCR engine is now **Windows OCR**; Paddle
+> stays bundled and selectable. The checklist below still applies, but
+> "fresh config" no longer means paddle — select Paddle OCR in
+> Settings → Engines where an item says so.
+
 The sidecar protocol (reply parsing, request encoding) and the process state
 machine (lazy spawn, reuse, model switch, crash recovery, kill-on-drop) are
 covered offline by `cargo test` (fixtures + `paddle_stub`). This checklist
@@ -20,10 +25,16 @@ desktop and the ~300 MB bundle.
 
 ## Checklist
 
-- [ ] **Default out of the box**: fresh install/config, NO Windows OCR
-      language packs needed — starting translation (Alt+T) reads the text.
-      The sidecar spawns on the first capture (first pass takes ~1–3s to
-      load models; later passes are fast). Log line says `ocr=paddle`.
+- [ ] **New default (ticket 55)**: fresh install/config starts on Windows
+      OCR — Settings → Engines shows "Windows OCR" selected, the log line
+      says `ocr=windows`, and no `PaddleOCR-json.exe` appears while the
+      loop runs.
+- [ ] **Paddle out of the box when selected**: with Paddle OCR selected in
+      Settings → Engines (the ticket-31 default behavior), NO Windows OCR
+      language packs are needed — starting translation (Alt+T) reads the
+      text. The sidecar spawns on the first capture (first pass takes
+      ~1–3s to load models; later passes are fast). Log line says
+      `ocr=paddle`.
 - [ ] **No console flash**: the sidecar runs hidden — no terminal window
       appears with the app.
 - [ ] **Sidecar is reused**: watch the process list (Task Manager →
@@ -37,7 +48,9 @@ desktop and the ~300 MB bundle.
 - [ ] **Config roundtrip**: switch OCR engine in Settings → Engines, save,
       reopen — the choice persisted. Check `config.toml` gained
       `[ocr] engine = "…"`; a config WITHOUT the `[ocr]` section (written
-      by an older build) still loads and means paddle.
+      by an older build) still loads and means the current default
+      (windows) — while a saved `engine = "paddle"` keeps paddle across
+      the ticket-55 flip, no migration, no silent switch.
 - [ ] **Live switch**: with the loop running, switch the OCR engine in
       Settings → Engines and save — the next capture uses the other engine
       (paddle: one `PaddleOCR-json.exe` appears; windows: none), no app
