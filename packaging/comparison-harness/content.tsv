@@ -1,0 +1,54 @@
+panel	font	size	color	x	y	text
+en-dialogue	Segoe UI	14	d8dde2	40	28	Sonetto
+en-dialogue	Segoe UI	12	9aa3ab	40	50	MISSION UPDATE
+en-dialogue	Segoe UI	18	f2f4f6	60	576	Regulus's ship's been sunk.
+en-dialogue	Segoe UI	18	f2f4f6	60	604	Landed ... Good. They landed safely.
+en-dialogue	Segoe UI	18	f2f4f6	60	632	Gosh! Those rioters are still after them! At this rate ...
+en-small-lowcontrast	Segoe UI	14	8f959d	40	40	SETTINGS
+en-small-lowcontrast	Segoe UI	14	8f959d	200	40	ITEM LOADOUT
+en-small-lowcontrast	Segoe UI	14	8f959d	640	40	DURABILITY 87/100
+en-small-lowcontrast	Segoe UI	14	8f959d	640	70	Stamina 42/120
+en-small-lowcontrast	Segoe UI	14	8f959d	980	40	CO-OP ROOM 4/8
+en-small-lowcontrast	Segoe UI	13	8f959d	980	690	Ver 2.4.1 (build 11927)
+en-small-lowcontrast	Segoe UI	12	8f959d	40	690	AUTO-SAVE COMPLETE
+ja-dialogue	Meiryo	14	d8dde2	40	28	ミッション
+ja-dialogue	Meiryo	12	9aa3ab	40	50	クエスト更新
+ja-dialogue	Meiryo	18	f2f4f6	60	576	レグラス「船が沈んだんだ……！」
+ja-dialogue	Meiryo	18	f2f4f6	60	604	ソネット「無事に着陸した。よかった……」
+ja-dialogue	Meiryo	18	f2f4f6	60	632	なんてことだ！暴徒たちはまだ彼らを追っているのか！
+ja-small-lowcontrast	Meiryo	14	8f959d	40	40	メニュー
+ja-small-lowcontrast	Meiryo	14	8f959d	200	40	設定
+ja-small-lowcontrast	Meiryo	14	8f959d	360	40	所持アイテム
+ja-small-lowcontrast	Meiryo	14	8f959d	640	40	耐久度 87/100
+ja-small-lowcontrast	Meiryo	14	8f959d	640	70	スタミナ 42/120
+ja-small-lowcontrast	Meiryo	13	8f959d	980	690	Ver 2.4.1 (build 11927)
+ja-small-lowcontrast	Meiryo	12	8f959d	40	690	オートセーブ完了
+zh-hans-dialogue	Microsoft YaHei	14	d8dde2	40	28	任务
+zh-hans-dialogue	Microsoft YaHei	12	9aa3ab	40	50	任务更新
+zh-hans-dialogue	Microsoft YaHei	18	f2f4f6	60	576	雷格拉斯「船沉了……！」
+zh-hans-dialogue	Microsoft YaHei	18	f2f4f6	60	604	桑内特「平安着陆了。太好了……」
+zh-hans-dialogue	Microsoft YaHei	18	f2f4f6	60	632	天哪！那些暴徒还在追他们！这样下去……
+zh-hans-small-lowcontrast	Microsoft YaHei	14	8f959d	40	40	菜单
+zh-hans-small-lowcontrast	Microsoft YaHei	14	8f959d	200	40	设置
+zh-hans-small-lowcontrast	Microsoft YaHei	14	8f959d	360	40	持有道具
+zh-hans-small-lowcontrast	Microsoft YaHei	14	8f959d	640	40	耐久度 87/100
+zh-hans-small-lowcontrast	Microsoft YaHei	14	8f959d	640	70	体力 42/120
+zh-hans-small-lowcontrast	Microsoft YaHei	13	8f959d	980	690	Ver 2.4.1 (build 11927)
+zh-hans-small-lowcontrast	Microsoft YaHei	12	8f959d	40	690	自动保存完成
+zh-hant-dialogue	Microsoft JhengHei	14	d8dde2	40	28	任務
+zh-hant-dialogue	Microsoft JhengHei	12	9aa3ab	40	50	任務更新
+zh-hant-dialogue	Microsoft JhengHei	18	f2f4f6	60	576	雷格拉斯「船沉沒了……！」
+zh-hant-dialogue	Microsoft JhengHei	18	f2f4f6	60	604	桑內特「平安著陸了。太好了……」
+zh-hant-dialogue	Microsoft JhengHei	18	f2f4f6	60	632	天啊！那些暴徒還在追他們！這樣下去……
+ko-dialogue	Malgun Gothic	14	d8dde2	40	28	임무
+ko-dialogue	Malgun Gothic	12	9aa3ab	40	50	임무 갱신
+ko-dialogue	Malgun Gothic	18	f2f4f6	60	576	레구라스「배가 침몰했어……！」
+ko-dialogue	Malgun Gothic	18	f2f4f6	60	604	소넷토「무사히 착륙했어. 다행이야……」
+ko-dialogue	Malgun Gothic	18	f2f4f6	60	632	저런! 폭도들이 아직도 그들을 쫓고 있다니!
+ko-small-lowcontrast	Malgun Gothic	14	8f959d	40	40	메뉴
+ko-small-lowcontrast	Malgun Gothic	14	8f959d	200	40	설정
+ko-small-lowcontrast	Malgun Gothic	14	8f959d	360	40	보유 아이템
+ko-small-lowcontrast	Malgun Gothic	14	8f959d	640	40	내구도 87/100
+ko-small-lowcontrast	Malgun Gothic	14	8f959d	640	70	스태미너 42/120
+ko-small-lowcontrast	Malgun Gothic	13	8f959d	980	690	Ver 2.4.1 (build 11927)
+ko-small-lowcontrast	Malgun Gothic	12	8f959d	40	690	자동 저장 완료

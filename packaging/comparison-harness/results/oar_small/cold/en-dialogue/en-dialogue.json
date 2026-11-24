@@ -1,0 +1,342 @@
+{
+  "index": 0,
+  "input_path": "E:\\projects\\langception\\packaging\\comparison-harness\\fixtures\\en-dialogue.png",
+  "orientation_angle": null,
+  "text_regions": [
+    {
+      "bounding_box": {
+        "points": [
+          {
+            "x": 38.0,
+            "y": 28.0
+          },
+          {
+            "x": 92.0,
+            "y": 30.0
+          },
+          {
+            "x": 91.0,
+            "y": 47.0
+          },
+          {
+            "x": 38.0,
+            "y": 45.0
+          }
+        ]
+      },
+      "confidence": 0.9998849034309387,
+      "dt_poly": {
+        "points": [
+          {
+            "x": 38.0,
+            "y": 28.0
+          },
+          {
+            "x": 92.0,
+            "y": 30.0
+          },
+          {
+            "x": 91.0,
+            "y": 47.0
+          },
+          {
+            "x": 38.0,
+            "y": 45.0
+          }
+        ]
+      },
+      "label": null,
+      "orientation_angle": null,
+      "rec_poly": {
+        "points": [
+          {
+            "x": 38.0,
+            "y": 28.0
+          },
+          {
+            "x": 92.0,
+            "y": 30.0
+          },
+          {
+            "x": 91.0,
+            "y": 47.0
+          },
+          {
+            "x": 38.0,
+            "y": 45.0
+          }
+        ]
+      },
+      "text": "Sonetto",
+      "word_boxes": null
+    },
+    {
+      "bounding_box": {
+        "points": [
+          {
+            "x": 38.0,
+            "y": 49.0
+          },
+          {
+            "x": 138.0,
+            "y": 49.0
+          },
+          {
+            "x": 138.0,
+            "y": 67.0
+          },
+          {
+            "x": 38.0,
+            "y": 67.0
+          }
+        ]
+      },
+      "confidence": 0.9992401003837585,
+      "dt_poly": {
+        "points": [
+          {
+            "x": 38.0,
+            "y": 49.0
+          },
+          {
+            "x": 138.0,
+            "y": 49.0
+          },
+          {
+            "x": 138.0,
+            "y": 67.0
+          },
+          {
+            "x": 38.0,
+            "y": 67.0
+          }
+        ]
+      },
+      "label": null,
+      "orientation_angle": null,
+      "rec_poly": {
+        "points": [
+          {
+            "x": 38.0,
+            "y": 49.0
+          },
+          {
+            "x": 138.0,
+            "y": 49.0
+          },
+          {
+            "x": 138.0,
+            "y": 67.0
+          },
+          {
+            "x": 38.0,
+            "y": 67.0
+          }
+        ]
+      },
+      "text": "MISSION UPDATE",
+      "word_boxes": null
+    },
+    {
+      "bounding_box": {
+        "points": [
+          {
+            "x": 60.0,
+            "y": 579.0
+          },
+          {
+            "x": 278.0,
+            "y": 579.0
+          },
+          {
+            "x": 278.0,
+            "y": 600.0
+          },
+          {
+            "x": 60.0,
+            "y": 600.0
+          }
+        ]
+      },
+      "confidence": 0.9847741723060608,
+      "dt_poly": {
+        "points": [
+          {
+            "x": 60.0,
+            "y": 579.0
+          },
+          {
+            "x": 278.0,
+            "y": 579.0
+          },
+          {
+            "x": 278.0,
+            "y": 600.0
+          },
+          {
+            "x": 60.0,
+            "y": 600.0
+          }
+        ]
+      },
+      "label": null,
+      "orientation_angle": null,
+      "rec_poly": {
+        "points": [
+          {
+            "x": 60.0,
+            "y": 579.0
+          },
+          {
+            "x": 278.0,
+            "y": 579.0
+          },
+          {
+            "x": 278.0,
+            "y": 600.0
+          },
+          {
+            "x": 60.0,
+            "y": 600.0
+          }
+        ]
+      },
+      "text": "Regulus's ship's been sunk.",
+      "word_boxes": null
+    },
+    {
+      "bounding_box": {
+        "points": [
+          {
+            "x": 60.0,
+            "y": 604.0
+          },
+          {
+            "x": 348.0,
+            "y": 607.0
+          },
+          {
+            "x": 348.0,
+            "y": 630.0
+          },
+          {
+            "x": 60.0,
+            "y": 628.0
+          }
+        ]
+      },
+      "confidence": 0.9842496514320374,
+      "dt_poly": {
+        "points": [
+          {
+            "x": 60.0,
+            "y": 604.0
+          },
+          {
+            "x": 348.0,
+            "y": 607.0
+          },
+          {
+            "x": 348.0,
+            "y": 630.0
+          },
+          {
+            "x": 60.0,
+            "y": 628.0
+          }
+        ]
+      },
+      "label": null,
+      "orientation_angle": null,
+      "rec_poly": {
+        "points": [
+          {
+            "x": 60.0,
+            "y": 604.0
+          },
+          {
+            "x": 348.0,
+            "y": 607.0
+          },
+          {
+            "x": 348.0,
+            "y": 630.0
+          },
+          {
+            "x": 60.0,
+            "y": 628.0
+          }
+        ]
+      },
+      "text": "Landed ... Good. They landed safely.",
+      "word_boxes": null
+    },
+    {
+      "bounding_box": {
+        "points": [
+          {
+            "x": 62.0,
+            "y": 633.0
+          },
+          {
+            "x": 478.0,
+            "y": 635.0
+          },
+          {
+            "x": 478.0,
+            "y": 657.0
+          },
+          {
+            "x": 62.0,
+            "y": 655.0
+          }
+        ]
+      },
+      "confidence": 0.9894633293151855,
+      "dt_poly": {
+        "points": [
+          {
+            "x": 62.0,
+            "y": 633.0
+          },
+          {
+            "x": 478.0,
+            "y": 635.0
+          },
+          {
+            "x": 478.0,
+            "y": 657.0
+          },
+          {
+            "x": 62.0,
+            "y": 655.0
+          }
+        ]
+      },
+      "label": null,
+      "orientation_angle": null,
+      "rec_poly": {
+        "points": [
+          {
+            "x": 62.0,
+            "y": 633.0
+          },
+          {
+            "x": 478.0,
+            "y": 635.0
+          },
+          {
+            "x": 478.0,
+            "y": 657.0
+          },
+          {
+            "x": 62.0,
+            "y": 655.0
+          }
+        ]
+      },
+      "text": "Gosh! Those rioters are still after them! At this rate ..",
+      "word_boxes": null
+    }
+  ]
+}

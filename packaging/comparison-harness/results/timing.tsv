@@ -1,0 +1,53 @@
+engine	variant	image	ms
+paddle	en	(init)	1924
+paddle	en	en-dialogue.png	772
+paddle	en	en-small-lowcontrast.png	270
+paddle	ja	(init)	790
+paddle	ja	ja-dialogue.png	350
+paddle	ja	ja-small-lowcontrast.png	157
+paddle	zh-hans	(init)	768
+paddle	zh-hans	zh-hans-dialogue.png	351
+paddle	zh-hans	zh-hans-small-lowcontrast.png	248
+paddle	zh-hant	(init)	638
+paddle	zh-hant	zh-hant-dialogue.png	275
+paddle	zh-hant-cht	(init)	708
+paddle	zh-hant-cht	zh-hant-dialogue.png	258
+paddle	ko	(init)	682
+paddle	ko	ko-dialogue.png	283
+paddle	ko	ko-small-lowcontrast.png	149
+oar	tiny	en-dialogue.png	201
+oar	tiny	en-small-lowcontrast.png	204
+oar	tiny	ja-dialogue.png	198
+oar	tiny	ja-small-lowcontrast.png	187
+oar	tiny	ko-dialogue.png (v6-vocab)	189
+oar	tiny	ko-small-lowcontrast.png (v6-vocab)	185
+oar	tiny	zh-hans-dialogue.png	205
+oar	tiny	zh-hans-small-lowcontrast.png	209
+oar	tiny	zh-hant-dialogue.png	201
+oar	tiny	ko-dialogue.png	302
+oar	tiny	ko-small-lowcontrast.png	292
+oar	tiny warm-avg	(batch 9)	62
+oar	small	en-dialogue.png	395
+oar	small	en-small-lowcontrast.png	341
+oar	small	ja-dialogue.png	364
+oar	small	ja-small-lowcontrast.png	352
+oar	small	ko-dialogue.png (v6-vocab)	364
+oar	small	ko-small-lowcontrast.png (v6-vocab)	356
+oar	small	zh-hans-dialogue.png	360
+oar	small	zh-hans-small-lowcontrast.png	347
+oar	small	zh-hant-dialogue.png	335
+oar	small	ko-dialogue.png	351
+oar	small	ko-small-lowcontrast.png	332
+oar	small warm-avg	(batch 9)	131
+oar	medium	en-dialogue.png	1044
+oar	medium	en-small-lowcontrast.png	962
+oar	medium	ja-dialogue.png	1017
+oar	medium	ja-small-lowcontrast.png	943
+oar	medium	ko-dialogue.png (v6-vocab)	1039
+oar	medium	ko-small-lowcontrast.png (v6-vocab)	907
+oar	medium	zh-hans-dialogue.png	947
+oar	medium	zh-hans-small-lowcontrast.png	916
+oar	medium	zh-hant-dialogue.png	1003
+oar	medium	ko-dialogue.png	696
+oar	medium	ko-small-lowcontrast.png	679
+oar	medium warm-avg	(batch 9)	510

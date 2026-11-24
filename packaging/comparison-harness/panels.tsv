@@ -1,0 +1,10 @@
+panel	language	width	height	background
+en-dialogue	en	1280	720	art
+en-small-lowcontrast	en	1280	720	flat:2b2f36
+ja-dialogue	ja	1280	720	art
+ja-small-lowcontrast	ja	1280	720	flat:2b2f36
+zh-hans-dialogue	zh-hans	1280	720	art
+zh-hans-small-lowcontrast	zh-hans	1280	720	flat:2b2f36
+zh-hant-dialogue	zh-hant	1280	720	art
+ko-dialogue	ko	1280	720	art
+ko-small-lowcontrast	ko	1280	720	flat:2b2f36
