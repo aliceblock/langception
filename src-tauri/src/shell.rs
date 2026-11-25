@@ -428,6 +428,24 @@ pub fn run() {
         // Single-instance MUST be the first registered plugin: a second
         // launch never reaches Builder::run — it hands off here and exits.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // [DEBUG-whtwin] diagnosis trigger (ticket 65): launching
+            // `langception.exe --open-debug-log` while an instance runs
+            // opens the Debug Log window in it. The white-window diagnosis
+            // is resolved (the DWM-cloak fix); the trigger stays because
+            // the regression harness drives the repro recipes through it
+            // (docs/manual-tests/65 + the .scratch diag scripts).
+            if _args.iter().any(|a| a == "--open-debug-log") {
+                let app = app.clone();
+                spawn_off_main(&app, open_debug_window);
+                return;
+            }
+            // [DEBUG-whtwin] same trigger for the settings window (the
+            // repro recipes drive both windows).
+            if _args.iter().any(|a| a == "--open-settings") {
+                let app = app.clone();
+                spawn_off_main(&app, crate::settings::open_settings);
+                return;
+            }
             // Surface the running instance: focus the Results Window when it
             // exists, otherwise open the settings window.
             let app = app.clone();
@@ -1247,22 +1265,24 @@ pub(crate) fn capture_visible(app: &AppHandle) -> bool {
 /// Applies the Capture Visibility mode (ticket 46) to whichever windows
 /// exist right now, mirroring [`apply_always_on_top_from_config`] (ticket
 /// 34): called at startup, when the settings window is created, when
-/// General saves, and at picker creation. OFF (the default) = ADR-0003:
-/// the Settings window, Results Window, and picker (when one exists) are
-/// excluded from capture. ON = `WDA_NONE` on those windows, so every
-/// capture pipeline shows them; the loop's protection switches to masking
-/// plus the picker suspension below. A hidden window takes the state too
-/// — it waits for its next show (the tray-first lifecycle hides instead of
-/// closing). Two windows are deliberately out of scope in BOTH modes: the
-/// per-monitor overlays (exclusion is structural, ADR-0003 — no toggle)
-/// and the Debug Log window (a support surface the masking does not cover,
-/// so it stays excluded even when visibility is on).
+/// General saves, at picker creation, and when the Debug Log window is
+/// created. OFF (the default) = ADR-0003: the Settings window, Results
+/// Window, picker (when one exists), and Debug Log window are excluded
+/// from capture. ON = `WDA_NONE` on those windows, so every capture
+/// pipeline shows them; the loop's protection switches to masking
+/// ( [`capture_mask_provider`] — the Debug Log window is masked like the
+/// other two) plus the picker suspension below. A hidden window takes the
+/// state too — it waits for its next show (the tray-first lifecycle hides
+/// instead of closing). One window is deliberately out of scope in BOTH
+/// modes: the per-monitor overlays (exclusion is structural, ADR-0003 —
+/// no toggle).
 pub(crate) fn apply_capture_visibility_from_config(app: &AppHandle) {
     let visible = capture_visible(app);
     let windows = [
         (RESULTS_LABEL, "Results Window"),
         (crate::settings::SETTINGS_LABEL, "Settings window"),
         (PICKER_LABEL, "picker"),
+        (DEBUG_LABEL, "Debug Log window"),
     ];
     for (label, name) in windows {
         if let Some(window) = app.get_webview_window(label) {
@@ -1306,24 +1326,28 @@ fn apply_picker_suspension(app: &AppHandle) {
 }
 
 /// The Capture Visibility mask provider (ticket 46): the CURRENT screen
-/// rects of the Results Window and the Settings window, read per capture
-/// so window moves, shows/hides, and the live toggle apply from the next
-/// frame. Empty when the setting is off — the windows are already excluded
-/// from capture, and defense in depth is free (ADR-0004). Also empty for a
-/// window that is not on screen (hidden to tray or minimized): masking its
-/// stale rect would blind a hole of the screen for nothing. The rect is
-/// filled regardless of occlusion — whether another app covers the window
-/// is not queryable reliably, and over-filling is the safe direction: the
-/// guarantee is "our pixels never reach an engine", paid for with a black
-/// rectangle wherever the visible window (or its occluder) sits (ADR-0004
-/// accepts the hole).
+/// rects of the Results Window, the Settings window, and the Debug Log
+/// window, read per capture so window moves, shows/hides, and the live
+/// toggle apply from the next frame. Empty when the setting is off — the
+/// windows are already excluded from capture, and defense in depth is
+/// free (ADR-0004). Also empty for a window that is not on screen (hidden
+/// to tray or minimized): masking its stale rect would blind a hole of
+/// the screen for nothing. The rect is filled regardless of occlusion —
+/// whether another app covers the window is not queryable reliably, and
+/// over-filling is the safe direction: the guarantee is "our pixels never
+/// reach an engine", paid for with a black rectangle wherever the visible
+/// window (or its occluder) sits (ADR-0004 accepts the hole).
 fn capture_mask_provider(app: &AppHandle) -> crate::capture::MaskRectsFn {
     let app = app.clone();
     Box::new(move || {
         if !capture_visible(&app) {
             return Vec::new();
         }
-        [RESULTS_LABEL, crate::settings::SETTINGS_LABEL]
+        [
+            RESULTS_LABEL,
+            crate::settings::SETTINGS_LABEL,
+            DEBUG_LABEL,
+        ]
             .into_iter()
             .filter_map(|label| {
                 let window = app.get_webview_window(label)?;
@@ -3006,19 +3030,13 @@ fn open_debug_window(app: &AppHandle) -> Result<(), String> {
             .visible(false)
             .build()
             .map_err(|e| format!("cannot open the debug log window: {e}"))?;
-    // Same rule as every other Langception window (ADR-0003): never a
-    // translation source — a zone over the timing rows must not OCR them.
-    if let Err(message) = crate::overlay::exclude_from_capture(&window) {
-        app.state::<AppState>()
-            .warnings
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(format!(
-                "could not exclude the debug log window from capture: {message}"
-            ));
-    }
-    // Shown explicitly because creation is hidden (ticket 58): the
-    // exclusion above is already in force before the first paint.
+    // Capture Visibility follows the config like every other support
+    // window (ticket 46): excluded when off, shown to captures when on —
+    // and in the on case the loop's protection is the mask provider, which
+    // carries this window's rect. The sync re-applies the mode to all the
+    // windows that exist, the same call settings creation makes — and it
+    // now runs before the first show, like every other window.
+    apply_capture_visibility_from_config(app);
     window
         .show()
         .map_err(|e| format!("cannot show the debug log window: {e}"))?;
