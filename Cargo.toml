@@ -6,7 +6,7 @@ resolver = "2"
 # exe metadata, and About tab report); the crates mirror it here so a
 # release bumps exactly two files. See docs/releasing.md.
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 
 [profile.dev]
 opt-level = 1
