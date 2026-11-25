@@ -296,7 +296,7 @@ mod tests {
             .unwrap();
         assert!(system.contains("translation engine"), "was: {system}");
         assert!(system.contains("Thai"), "was: {system}");
-        assert!(system.contains("(translation-prompt v2)"), "was: {system}");
+        assert!(system.contains("(translation-prompt v3)"), "was: {system}");
         let contents = value["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 1);
         assert_eq!(contents[0]["role"], "user");

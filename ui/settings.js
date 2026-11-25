@@ -303,8 +303,32 @@ function findPromptPreset(name) {
   return promptPresets.find((preset) => preset.name === name);
 }
 
+// The built-in default's two base instructions (default_prompt_texts, ticket
+// 68) — what an empty pair of fields sends. Fetched once; null until it
+// lands (the static i18n placeholders cover the meantime).
+let builtinPrompts = null;
+
+// General's fields are empty BY DESIGN (blank IS the default), so an empty
+// box otherwise says nothing about what General sets. The default's actual
+// wording rides in the placeholders instead — the same "what does this
+// preset configure" answer every other preset gives by loading its texts
+// into the fields. Placeholders, never values: typing into a placeholder is
+// still an edit, and saving an edit under General would store the wording as
+// an override and flip the selection to custom — that trap stays shut.
+function applyPromptPlaceholders() {
+  if (!builtinPrompts) return;
+  enginesPromptTranslation.placeholder =
+    `${t("settings.prompt.translation_placeholder")}\n\n${builtinPrompts.translation}`;
+  enginesPromptScreenReading.placeholder =
+    `${t("settings.prompt.screen_placeholder")}\n\n${builtinPrompts.screenReading}`;
+}
+
 async function loadPromptPresets() {
   promptPresets = (await invoke("list_prompt_presets")) || [];
+  if (!builtinPrompts) {
+    builtinPrompts = await invoke("default_prompt_texts").catch(() => null);
+    applyPromptPlaceholders();
+  }
 }
 
 // Rebuilt only when the option set changed, so a refresh never slams shut a
@@ -797,6 +821,7 @@ function loadGeneral(status) {
 // windows follow a language change immediately, no reopen).
 async function applyUiLanguage(lang, status) {
   appliedUiLanguage = await window.I18n.init(lang);
+  applyPromptPlaceholders();
   renderGlossary();
   renderProfiles(status);
   if (enginesPacksLoaded) loadPacks("engines");

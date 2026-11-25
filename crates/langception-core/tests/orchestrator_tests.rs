@@ -2134,7 +2134,7 @@ async fn genderless_mode_scrubs_engine_output() {
 
     // The fake engine returns gendered Thai (particles + first-person
     // pronouns) for three blocks; the displayed text must be genderless.
-    for gendered in ["สวัสดีครับ", "ฉันไม่รู้", "ได้นะครับ"]
+    for gendered in ["สวัสดีครับ", "ผมไม่รู้", "ได้นะครับ"]
     {
         h.responses.send(Ok(gendered.to_string())).await.unwrap();
     }
@@ -2156,7 +2156,7 @@ async fn genderless_mode_scrubs_engine_output() {
         ["Hello", "Bye", "Okay"],
         "the request side is untouched by the scrubber"
     );
-    for expected in ["สวัสดี", "เราไม่รู้", "ได้"] {
+    for expected in ["สวัสดี", "ฉันไม่รู้", "ได้"] {
         match next_event(&mut h.events).await {
             LoopEvent::Translated { translation, via, .. } => {
                 assert_eq!(translation, expected);
@@ -3068,7 +3068,7 @@ async fn pipeline_tick_sends_the_guided_prompt_to_the_http_engine() {
     let system = body["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
     assert!(system.contains("Genderless Mode"), "was: {system}");
-    assert!(system.contains("(translation-prompt v2)"), "was: {system}");
+    assert!(system.contains("(translation-prompt v3)"), "was: {system}");
     assert_eq!(body["messages"][1]["content"], "Vertin picks up the case");
 
     // And the loop completed with the engine's answer from the golden body.
@@ -3160,7 +3160,7 @@ async fn pipeline_tick_sends_a_custom_prompt_to_the_http_engine() {
     assert!(system.contains("- Vertin → เวอร์ติน"), "was: {system}");
     assert!(system.contains("Genderless Mode"), "was: {system}");
     assert!(
-        system.contains("(translation-prompt v2 custom)"),
+        system.contains("(translation-prompt v3 custom)"),
         "was: {system}"
     );
     assert_eq!(body["messages"][1]["content"], "Vertin picks up the case");
@@ -3270,7 +3270,7 @@ async fn pipeline_tick_sends_a_preset_prompt_to_the_http_engine() {
     assert!(system.contains("Genderless Mode"), "was: {system}");
     // ...and the tag names the preset that produced it.
     assert!(
-        system.ends_with("(translation-prompt v2 preset:game)"),
+        system.ends_with("(translation-prompt v3 preset:game)"),
         "was: {system}"
     );
 
@@ -3699,7 +3699,7 @@ async fn pipeline_tick_sends_the_image_to_the_http_fused_engine() {
     // The system message is the fused contract, with the glossary riding.
     let system = body["messages"][0]["content"].as_str().unwrap();
     assert!(system.contains("JSON array"), "was: {system}");
-    assert!(system.contains("(fused-prompt v2)"), "was: {system}");
+    assert!(system.contains("(fused-prompt v3)"), "was: {system}");
     assert!(system.contains("- Start → เริ่ม"), "was: {system}");
     assert!(system.contains("Genderless Mode"), "was: {system}");
     // The image rides as the OpenAI vision content part.
@@ -3939,6 +3939,189 @@ async fn one_shot_capture_merges_stacked_lines_too() {
             assert_eq!(origin, EventOrigin::OneShot);
         }
         other => panic!("expected Translated, got {other:?}"),
+    }
+}
+
+// ---- One-shot batched translation (ticket 69) ----
+//
+// A one-shot is the "translate this long set of sentences" gesture, so the
+// classic pass sends every block it read in ONE engine request instead of
+// one request per line. The fused one-shot always was one call; zone passes
+// keep per-block translation (their dedup and Translation Context are per
+// block) and stay pinned by the zone tests above.
+
+#[tokio::test]
+async fn one_shot_translates_spread_blocks_in_one_request() {
+    // Lines that do NOT merge (far apart rows leave the OCR as separate
+    // blocks) join into one request, and the reply — the engine contract's
+    // "Preserve line breaks" — splits back onto each block's own pill. A
+    // blank line the model inserted between answers is not an answer.
+    let (mut h, orch) = harness().await;
+    let lines = vec![block(0, 0, "Hello"), block(0, 200, "Bye")];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+    h.responses
+        .send(Ok("สวัสดี\n\nลาก่อน".into()))
+        .await
+        .unwrap();
+
+    orch.capture_once(REGION).await;
+
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello\nBye"],
+        "one request for the whole capture, calls were: {:?}",
+        h.translate.calls()
+    );
+    for ((x, y, height), thai) in [((100, 100, 20), "สวัสดี"), ((100, 300, 20), "ลาก่อน")] {
+        match next_event(&mut h.events).await {
+            LoopEvent::Translated {
+                block,
+                translation,
+                origin,
+                ..
+            } => {
+                assert_eq!((block.x, block.y, block.height), (x, y, height));
+                assert_eq!(translation, thai);
+                assert_eq!(origin, EventOrigin::OneShot);
+            }
+            other => panic!("expected Translated \"{thai}\", got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_batch_reply_that_does_not_map_back_falls_back_to_per_block() {
+    // The engine answered one line for two blocks: the batch cannot split
+    // it back onto the blocks, so the pass falls back to per-block requests
+    // — which cannot misalign — rather than showing a wrong pill or one
+    // blob across the capture.
+    let (mut h, orch) = harness().await;
+    let lines = vec![block(0, 0, "Hello"), block(0, 200, "Bye")];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+    h.responses.send(Ok("สวัสดีและลาก่อน".into())).await.unwrap();
+    h.responses.send(Ok("[TH] Hello".into())).await.unwrap();
+    h.responses.send(Ok("[TH] Bye".into())).await.unwrap();
+
+    orch.capture_once(REGION).await;
+
+    assert_eq!(
+        h.translate.calls(),
+        ["Hello\nBye", "Hello", "Bye"],
+        "the batch attempt, then one request per block, calls were: {:?}",
+        h.translate.calls()
+    );
+    for thai in ["[TH] Hello", "[TH] Bye"] {
+        match next_event(&mut h.events).await {
+            LoopEvent::Translated { translation, .. } => assert_eq!(translation, thai),
+            other => panic!("expected Translated \"{thai}\", got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_one_shot_glossary_pin_never_rides_the_batch() {
+    // A whole-block Glossary match is the user's own Thai: it pins without
+    // the engine — and without joining the batch — while the unpinned
+    // block's batch-of-one goes through the pre-69 lone-block path.
+    let mut glossary = Glossary::default();
+    glossary
+        .0
+        .insert("VERTIN".to_string(), "เวอร์ติน".to_string());
+    let (mut h, orch) = harness_with(glossary, Duration::ZERO, false).await;
+    let lines = vec![block(0, 0, "vertin"), block(0, 200, "Bye")];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+
+    orch.capture_once(REGION).await;
+
+    assert_eq!(h.translate.calls(), ["Bye"], "the pin skips the engine");
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, via, .. } => {
+            assert_eq!(translation, "เวอร์ติน");
+            assert_eq!(via, Via::Glossary);
+        }
+        other => panic!("expected the glossary Translated first, got {other:?}"),
+    }
+    match next_event(&mut h.events).await {
+        LoopEvent::Translated { translation, via, .. } => {
+            assert_eq!(translation, "[TH] Bye");
+            assert_eq!(via, Via::Engine);
+        }
+        other => panic!("expected the engine Translated second, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn genderless_scrubs_every_line_of_a_batch_reply() {
+    // Ticket 66's scrub rides the batch the same way it rides a per-block
+    // reply: line by line, after the split maps lines back onto blocks.
+    let (mut h, orch) = harness_genderless().await;
+    let lines = vec![block(0, 0, "Hello"), block(0, 200, "Bye")];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+    h.responses
+        .send(Ok("ผมจะไป\nหนูจะมา".into()))
+        .await
+        .unwrap();
+
+    orch.capture_once(REGION).await;
+
+    assert_eq!(h.translate.calls(), ["Hello\nBye"]);
+    for thai in ["ฉันจะไป", "ฉันจะมา"] {
+        match next_event(&mut h.events).await {
+            LoopEvent::Translated { translation, .. } => assert_eq!(translation, thai),
+            other => panic!("expected Translated \"{thai}\", got {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_batched_one_shot_charges_the_translate_stage_once() {
+    // Ticket 47's pinning, ticket 69 edition: three blocks in one request
+    // are ONE engine charge, not three — and every block still counts as
+    // translated in the timing row.
+    let (mut h, orch) = harness().await;
+    h.pin_stage_costs(5, 40, 30);
+    let lines = vec![
+        block(0, 0, "Hello"),
+        block(0, 200, "Bye"),
+        block(0, 400, "Okay"),
+    ];
+    h.images.send(frame_for(&lines)).await.unwrap();
+    h.ocr_results.send(Ok(lines)).await.unwrap();
+    h.responses
+        .send(Ok("สวัสดี\nลาก่อน\nโอเค".into()))
+        .await
+        .unwrap();
+
+    orch.capture_once(REGION).await;
+
+    assert_eq!(h.translate.calls(), ["Hello\nBye\nOkay"]);
+    for _ in 0..3 {
+        next_event(&mut h.events).await; // the three Translated rows
+    }
+    match next_timing(&mut h.events).await {
+        LoopEvent::Timing {
+            origin,
+            capture_ms,
+            ocr_ms,
+            translate_ms,
+            fused_ms,
+            total_ms,
+            blocks_translated,
+            ..
+        } => {
+            assert_eq!(origin, EventOrigin::OneShot);
+            assert_eq!(capture_ms, 5);
+            assert_eq!(ocr_ms, Some(40));
+            assert_eq!(translate_ms, Some(30), "one request, one charge");
+            assert_eq!(fused_ms, None);
+            assert_eq!(blocks_translated, 3);
+            assert_eq!(total_ms, 75);
+        }
+        other => panic!("expected Timing, got {other:?}"),
     }
 }
 

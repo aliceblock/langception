@@ -19,12 +19,12 @@ use crate::ports::{SourceLanguage, TranslationGuidance};
 
 /// The prompt template's version, tagged at the end of every system prompt.
 /// Bump on any wording change that could alter translation output.
-pub const PROMPT_VERSION: &str = "2";
+pub const PROMPT_VERSION: &str = "3";
 
 /// The fused vision prompt's version ([`fused_system_prompt`]), tagged the
 /// same way. Independent of [`PROMPT_VERSION`]: the two templates change
 /// for different reasons.
-pub const FUSED_PROMPT_VERSION: &str = "2";
+pub const FUSED_PROMPT_VERSION: &str = "3";
 
 /// The built-in default's tuning — what to translate (unchanged since
 /// ticket 10's OpenAI-compatible prompt). [`base_instruction`] appends the
@@ -36,10 +36,13 @@ const DEFAULT_TRANSLATION_TUNING: &str = "You are a translation engine. Translat
 /// the contract models actually follow. The loop shows the engine's reply
 /// verbatim, so the built-in default AND every built-in System Prompt
 /// Preset's translation text (ticket 42) ends with this: a preset's tuning
-/// can never drop the rules that keep the reply bare.
+/// can never drop the rules that keep the reply bare. The Arabic-numerals
+/// rule (ticket 67) rides here too — Thai models habitually rewrite `2024`
+/// as `๒๐๒๔`, and every built-in preset forbids it.
 const TRANSLATION_OUTPUT_CONTRACT: &str = "Reply with ONLY the translation — no explanations, no \
-     quotes around it, no notes. Preserve line breaks and surrounding whitespace. If the text is \
-     already in {target}, repeat it unchanged.";
+     quotes around it, no notes. Preserve line breaks and surrounding whitespace. Keep digits as \
+     Arabic numerals (0-9) — never convert them to Thai numerals (๐-๙). If the text is already \
+     in {target}, repeat it unchanged.";
 
 /// The base translation instruction for a tuning: the tuning, then the
 /// output contract.
@@ -70,7 +73,8 @@ const FUSED_REPLY_CONTRACT: &str = "\n\
      \"คำแปล\"}]\n\
      \"x\" and \"y\" are the block's top-left corner in image pixels; \"w\" and \"h\" are its \
      width and height in image pixels (all four integers). \"text\" is the source text exactly \
-     as written on screen; \"th\" is the {target} translation. Merge the lines of one paragraph \
+     as written on screen; \"th\" is the {target} translation, with digits as Arabic numerals \
+     (0-9), never Thai numerals (๐-๙). Merge the lines of one paragraph \
      into a single block. Omit anything you cannot actually read. Reply with [] when the image \
      contains no readable text.";
 
@@ -159,6 +163,20 @@ impl BuiltinPreset {
     }
 }
 
+/// The built-in default's two base instructions — exactly what a blank
+/// pair of override fields (the General preset, ticket 68) sends: the
+/// default tuning with the output contract, and the fused read-and-
+/// translate base (the reply contract excluded — it appends regardless,
+/// the same shape every preset's screen-reading text has). The Settings
+/// surface shows this wording in the prompt fields' placeholders, since
+/// General's stored texts are empty by design.
+pub fn default_texts() -> PromptTexts {
+    PromptTexts {
+        translation: base_instruction(DEFAULT_TRANSLATION_TUNING),
+        screen_reading: FUSED_BASE_INSTRUCTION.to_string(),
+    }
+}
+
 /// Game — translation tuning: game UI and dialogue. Terse strings must read
 /// as natural Thai UI text (concise, an imperative stays imperative, a
 /// single-word label stays a single word), proper nouns stay consistent,
@@ -213,12 +231,13 @@ const MANGA_SCREEN_READING: &str = "You are a screen-reading manga translation e
      lines short and punchy, and render sound effects the way Thai manga usually does.";
 
 /// The Genderless Mode instruction (ticket 08's rule at prompt level):
-/// particles drop, first person goes neutral. Worded as a directive — models
-/// follow "do not use X" better than descriptions.
+/// particles drop, first person goes neutral — ฉัน, per ticket 66 (it was
+/// เรา, which reads as "we"). Worded as a directive — models follow "do
+/// not use X" better than descriptions.
 const GENDERLESS_INSTRUCTION: &str = "Genderless Mode: write the translation so it carries no \
      speaker gender. Do not use gendered Thai politeness particles (ครับ, ค่ะ, คะ, จ้า, จ้ะ, \
-     นะครับ, นะคะ) — omit them. Do not use gendered first-person pronouns (ผม, ฉัน, หนู) — use \
-     the neutral เรา instead.";
+     นะครับ, นะคะ) — omit them. Do not use gendered first-person pronouns (ผม, หนู) — use \
+     the neutral ฉัน instead.";
 
 /// The Translation Context section's instruction (ticket 44): what the pairs
 /// below it are and what the model should do with them — continuity of tone,
@@ -436,7 +455,7 @@ mod tests {
     fn every_prompt_carries_the_version_tag() {
         let prompt = system_prompt(SourceLanguage::En, "th", &TranslationGuidance::plain());
         assert!(
-            prompt.contains("(translation-prompt v2)"),
+            prompt.contains("(translation-prompt v3)"),
             "the version tag must ride in the prompt, was: {prompt}"
         );
     }
@@ -470,7 +489,7 @@ mod tests {
         let prompt = prompt_with(&[], true);
         assert!(prompt.contains("Genderless Mode"), "was: {prompt}");
         assert!(prompt.contains("ครับ"), "particles must be named, was: {prompt}");
-        assert!(prompt.contains("เรา"), "the neutral pronoun must be named, was: {prompt}");
+        assert!(prompt.contains("ฉัน"), "the neutral pronoun must be named, was: {prompt}");
     }
 
     #[test]
@@ -495,7 +514,7 @@ mod tests {
         assert!(prompt.contains("JSON array"), "was: {prompt}");
         assert!(prompt.contains("no markdown fences"), "was: {prompt}");
         assert!(prompt.contains("\"th\""), "was: {prompt}");
-        assert!(prompt.contains("(fused-prompt v2)"), "was: {prompt}");
+        assert!(prompt.contains("(fused-prompt v3)"), "was: {prompt}");
         // The per-block translation template is untouched by the fused one.
         assert!(!prompt.contains("(translation-prompt"), "was: {prompt}");
     }
@@ -550,13 +569,14 @@ mod tests {
         // The built-in default, pinned byte-for-byte: an absent override, an
         // empty one, and a whitespace-only one all produce exactly this —
         // nothing about the default wording may shift. (Ticket 44 bumped
-        // the version tag v1 → v2 by the versioning rule; the rest of the
-        // template is the pre-44 bytes unchanged, and with Translation
-        // Context off no section appends.)
+        // the version tag v1 → v2 by the versioning rule; ticket 67 added
+        // the Arabic-numerals sentence and bumped v2 → v3, and with
+        // Translation Context off no section appends.)
         let expected = "You are a translation engine. Translate the user's text from \
 English to Thai. Reply with ONLY the translation — no explanations, no quotes \
-around it, no notes. Preserve line breaks and surrounding whitespace. If the \
-text is already in Thai, repeat it unchanged.\n\n(translation-prompt v2)";
+around it, no notes. Preserve line breaks and surrounding whitespace. Keep \
+digits as Arabic numerals (0-9) — never convert them to Thai numerals (๐-๙). \
+If the text is already in Thai, repeat it unchanged.\n\n(translation-prompt v3)";
         assert_eq!(
             system_prompt(SourceLanguage::En, "th", &TranslationGuidance::plain()),
             expected
@@ -571,7 +591,8 @@ text is already in Thai, repeat it unchanged.\n\n(translation-prompt v2)";
     fn the_default_fused_prompt_is_byte_identical_to_the_built_in_template() {
         // Splitting the reply contract out of the base instruction
         // (ticket 37) must not move a single byte of what shipped before;
-        // ticket 44's only change is the bumped version tag.
+        // ticket 44's only change is the bumped version tag, ticket 67's
+        // only change is the Arabic-numerals sentence (v2 → v3).
         let expected = "You are a screen-reading translation engine. The attached image is a \
 capture of the user's screen showing text in Japanese. Read every visible text \
 block and translate each one from Japanese to Thai. Reply with ONLY a JSON \
@@ -582,9 +603,10 @@ shape:\n\
 \"คำแปล\"}]\n\
 \"x\" and \"y\" are the block's top-left corner in image pixels; \"w\" and \"h\" are its \
 width and height in image pixels (all four integers). \"text\" is the source text \
-exactly as written on screen; \"th\" is the Thai translation. Merge the lines of \
+exactly as written on screen; \"th\" is the Thai translation, with digits as \
+Arabic numerals (0-9), never Thai numerals (๐-๙). Merge the lines of \
 one paragraph into a single block. Omit anything you cannot actually read. \
-Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
+Reply with [] when the image contains no readable text.\n\n(fused-prompt v3)";
         assert_eq!(
             fused_system_prompt(SourceLanguage::Ja, "th", &TranslationGuidance::plain()),
             expected
@@ -614,11 +636,11 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         // The version tag still rides, marked custom so a recorded request
         // shows what produced it.
         assert!(
-            prompt.contains("(translation-prompt v2 custom)"),
+            prompt.contains("(translation-prompt v3 custom)"),
             "was: {prompt}"
         );
         assert!(
-            !prompt.contains("(translation-prompt v2)"),
+            !prompt.contains("(translation-prompt v3)"),
             "the plain tag must not leak into custom prompts, was: {prompt}"
         );
     }
@@ -668,9 +690,9 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         assert!(prompt.contains("JSON array"), "was: {prompt}");
         assert!(prompt.contains("\"th\""), "was: {prompt}");
         assert!(prompt.contains("no readable text"), "was: {prompt}");
-        assert!(prompt.contains("(fused-prompt v2 custom)"), "was: {prompt}");
+        assert!(prompt.contains("(fused-prompt v3 custom)"), "was: {prompt}");
         assert!(
-            !prompt.contains("(fused-prompt v2)"),
+            !prompt.contains("(fused-prompt v3)"),
             "the plain tag must not leak into custom prompts, was: {prompt}"
         );
     }
@@ -695,11 +717,11 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         guidance.preset = Some("game".into());
         let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
         assert!(
-            prompt.contains("(translation-prompt v2 preset:game)"),
+            prompt.contains("(translation-prompt v3 preset:game)"),
             "was: {prompt}"
         );
         assert!(
-            !prompt.contains("(translation-prompt v2 custom)"),
+            !prompt.contains("(translation-prompt v3 custom)"),
             "a preset is not an anonymous custom prompt, was: {prompt}"
         );
     }
@@ -722,7 +744,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
             guidance.preset = Some(name.into());
             let prompt = system_prompt(SourceLanguage::En, "th", &guidance);
             assert!(
-                prompt.ends_with(&format!("\n\n(translation-prompt v2 preset:{label})")),
+                prompt.ends_with(&format!("\n\n(translation-prompt v3 preset:{label})")),
                 "name {name:?}, was: {prompt}"
             );
         }
@@ -736,7 +758,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         let tag = prompt.rfind('(').map(|at| &prompt[at..]).unwrap_or("");
         assert_eq!(
             tag,
-            format!("(translation-prompt v2 preset:{})", "x".repeat(40))
+            format!("(translation-prompt v3 preset:{})", "x".repeat(40))
         );
     }
 
@@ -921,7 +943,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         assert!(prompt.contains("- Vertin → เวอร์ติน"), "was: {prompt}");
         assert!(prompt.contains("Genderless Mode"), "was: {prompt}");
         assert!(
-            prompt.ends_with("(translation-prompt v2 preset:game)"),
+            prompt.ends_with("(translation-prompt v3 preset:game)"),
             "was: {prompt}"
         );
 
@@ -946,7 +968,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         assert!(fused.contains("- Vertin → เวอร์ติน"), "was: {fused}");
         assert!(fused.contains("Genderless Mode"), "was: {fused}");
         assert!(
-            fused.ends_with("(fused-prompt v2 preset:game)"),
+            fused.ends_with("(fused-prompt v3 preset:game)"),
             "was: {fused}"
         );
     }
@@ -982,7 +1004,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
             "pairs must render oldest first, was: {prompt}"
         );
         // The section sits before the version tag.
-        let tag_at = prompt.find("(translation-prompt v2)").unwrap();
+        let tag_at = prompt.find("(translation-prompt v3)").unwrap();
         assert!(hello_at < tag_at, "the section precedes the tag: {prompt}");
     }
 
@@ -1020,7 +1042,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
             "was: {prompt}"
         );
         assert!(
-            prompt.contains("(fused-prompt v2)"),
+            prompt.contains("(fused-prompt v3)"),
             "was: {prompt}"
         );
 
@@ -1041,7 +1063,7 @@ Reply with [] when the image contains no readable text.\n\n(fused-prompt v2)";
         assert!(prompt.contains("Genderless Mode"), "was: {prompt}");
         assert!(prompt.contains("- Hello → สวัสดี"), "was: {prompt}");
         assert!(
-            prompt.contains("(translation-prompt v2 custom)"),
+            prompt.contains("(translation-prompt v3 custom)"),
             "was: {prompt}"
         );
     }

@@ -596,6 +596,30 @@ pub(crate) fn list_prompt_presets(app: AppHandle) -> Result<Vec<PromptPresetDto>
     Ok(presets)
 }
 
+/// One pair of base instructions as the Engines tab's prompt fields show it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptTextsDto {
+    pub translation: String,
+    pub screen_reading: String,
+}
+
+/// The built-in default's two base instructions (ticket 68) — exactly what a
+/// blank pair of prompt fields (the General preset) sends. The page shows
+/// this wording in the fields' placeholders: General's stored texts are
+/// empty by design (blank IS the default), so without this an empty field
+/// explains itself only with "leave empty to use the built-in instruction".
+/// Placeholders, never values — loading the wording into a field and saving
+/// would store it as an override and flip the selection to custom.
+#[tauri::command]
+pub(crate) fn default_prompt_texts() -> PromptTextsDto {
+    let texts = langception_core::prompt::default_texts();
+    PromptTextsDto {
+        translation: texts.translation,
+        screen_reading: texts.screen_reading,
+    }
+}
+
 /// The prompt inputs a running loop sends (ticket 43), for deciding
 /// whether a preset edit needs a restart: the active Profile's binding —
 /// the Profile the loop is currently translating under — resolved against

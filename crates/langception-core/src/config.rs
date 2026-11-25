@@ -1115,7 +1115,7 @@ impl AppConfig {
 
 # Genderless Mode (CONTEXT.md): translated speech carries no speaker
 # gender — gendered politeness particles (ครับ/ค่ะ/จ้า …) and gendered
-# first-person pronouns (ผม/ฉัน/หนู → เรา) are scrubbed from every
+# first-person pronouns (ผม/หนู → ฉัน) are scrubbed from every
 # translation. Settings → General owns this toggle; a Profile's
 # "genderless" override below can force it on or off per app.
 genderless = false
@@ -2985,7 +2985,7 @@ language = "en"
         // default fills it) — and one written by hand without the key
         // still parses.
         let legacy = AppConfig::DEFAULT_TEMPLATE.replace(
-            "\n# Genderless Mode (CONTEXT.md): translated speech carries no speaker\n# gender — gendered politeness particles (ครับ/ค่ะ/จ้า …) and gendered\n# first-person pronouns (ผม/ฉัน/หนู → เรา) are scrubbed from every\n# translation. Settings → General owns this toggle; a Profile's\n# \"genderless\" override below can force it on or off per app.\ngenderless = false\n",
+            "\n# Genderless Mode (CONTEXT.md): translated speech carries no speaker\n# gender — gendered politeness particles (ครับ/ค่ะ/จ้า …) and gendered\n# first-person pronouns (ผม/หนู → ฉัน) are scrubbed from every\n# translation. Settings → General owns this toggle; a Profile's\n# \"genderless\" override below can force it on or off per app.\ngenderless = false\n",
             "",
         );
         let config = AppConfig::from_toml_str(&legacy).unwrap();

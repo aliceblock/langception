@@ -750,36 +750,244 @@ impl Orchestrator {
         timings.ocr_ms = Some(self.clock.now_ms().saturating_sub(read_started));
         // Ticket 23: the same merge pass as the zone loop's classic read
         // (crate::merge) — a multi-line paragraph is one Text Block here too.
-        for block in merge_lines(blocks, self.config.source_language) {
+        let merged = merge_lines(blocks, self.config.source_language);
+        // Ticket 69: the whole capture translates in ONE engine request.
+        self.translate_one_shot(
+            region,
+            &merged,
+            &image,
+            &exclusions,
+            &origin,
+            label,
+            &mut timings,
+        )
+        .await;
+        self.emit_timing(origin, timings, started, true);
+    }
+
+    /// The one-shot classic pass's translation (ticket 69): every Text
+    /// Block the capture found goes to the Translate Engine in ONE request,
+    /// because a one-shot is the "translate this long set of sentences"
+    /// gesture — per-block requests translate each line in isolation
+    /// (pronouns, register, and sentence flow cannot cross blocks) at N
+    /// times the request cost. Whole-block Glossary matches still pin
+    /// first (a pinned translation is the user's own Thai, never
+    /// rewritten, so it never rides a batch); the engine-bound blocks join
+    /// with newlines — block text is single-line, `merge_lines` joins its
+    /// lines with a space or a bare concat — and the reply splits back per
+    /// line, the engine contract's "Preserve line breaks" doing the
+    /// mapping, each block emitting its own pill at its own rect.
+    ///
+    /// Two passes skip the join/split deliberately: a single eligible
+    /// block is exactly the pre-69 path ([`Self::translate_and_emit`]),
+    /// so one paragraph's legitimate multi-line reply can never miscount;
+    /// and a reply whose non-empty trimmed line count does not map back
+    /// onto the blocks (the engine merged or split lines) falls back to
+    /// per-block requests, which cannot misalign. An engine error emits
+    /// one Translate-stage error for the pass — a dead engine is not
+    /// re-hammered once per block. Zone passes keep per-block translation:
+    /// their dedup, tracking state, and Translation Context are per block,
+    /// none of which a one-shot has (ticket 44's empty context is what
+    /// rides the batched guidance).
+    #[allow(clippy::too_many_arguments)]
+    async fn translate_one_shot(
+        &self,
+        region: Region,
+        blocks: &[TextBlock],
+        image: &CapturedImage,
+        exclusions: &[ExcludedBlock],
+        origin: &EventOrigin,
+        label: &str,
+        timings: &mut PassTimings,
+    ) {
+        // The same eligibility pass as before ticket 69: empty text and
+        // excluded rects drop here, each leaving its trace row.
+        let mut eligible: Vec<(&TextBlock, String)> = Vec::new();
+        for block in blocks {
             let text = block.text.trim().to_string();
             if text.is_empty() {
                 timings.trace(text, ReadDisposition::Empty);
                 continue;
             }
-            let screen_block = screen_block(&block, region);
-            if exclusions.iter().any(|e| e.covers(&screen_block)) {
+            let on_screen = screen_block(block, region);
+            if exclusions.iter().any(|e| e.covers(&on_screen)) {
                 timings.trace(text, ReadDisposition::Excluded);
                 continue;
             }
+            eligible.push((block, text));
+        }
+        if eligible.is_empty() {
+            return;
+        }
+        timings.translate_ran = true;
+
+        // A lone eligible block is the pre-69 path verbatim: one request,
+        // whatever the reply's shape — a paragraph's legitimate multi-line
+        // answer must never miscount against a join/split.
+        if eligible.len() == 1 {
+            let (block, text) = eligible.remove(0);
             if let Some((_, via)) = self
                 .translate_and_emit(
                     region,
-                    &block,
+                    block,
                     &text,
-                    &origin,
+                    origin,
                     label,
                     // No zone context in a one-shot pass (ticket 44).
                     &[],
-                    self.sampled_style(&image, &block),
-                    &mut timings,
+                    self.sampled_style(image, block),
+                    timings,
                 )
                 .await
             {
                 timings.blocks_translated += 1;
                 timings.trace(text, via.into());
             }
+            return;
         }
-        self.emit_timing(origin, timings, started, true);
+
+        // Glossary first (a pinned translation never rides the batch), then
+        // the rest joins into the one request. The whole production — pins
+        // plus the batched call — is this window; a mismatch fallback's
+        // per-block re-requests add their own windows below, so
+        // `translate_ms` stays the true total.
+        let translate_started = self.clock.now_ms();
+        let mut engine_blocks: Vec<(&TextBlock, String)> = Vec::new();
+        for (block, text) in eligible {
+            match self.glossary.lookup(&text) {
+                Some(pinned) => {
+                    self.emit_translated(
+                        region,
+                        block,
+                        pinned,
+                        Via::Glossary,
+                        origin,
+                        self.sampled_style(image, block),
+                    );
+                    timings.blocks_translated += 1;
+                    timings.trace(text, ReadDisposition::TranslatedGlossary);
+                }
+                None => engine_blocks.push((block, text)),
+            }
+        }
+        let mut batched: Option<String> = None;
+        if engine_blocks.len() >= 2 {
+            let joined = engine_blocks
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            // The same guidance a per-block request would carry, computed
+            // over the joined text: relevance over it IS the union of the
+            // per-block entries, and the one-shot has no zone context to
+            // continue from (ticket 44).
+            let guidance = crate::ports::TranslationGuidance {
+                glossary: self.glossary.relevant_entries(&joined),
+                genderless: self.config.genderless,
+                custom_base: self.config.translation_prompt_override.clone(),
+                preset: self.config.prompt_preset.clone(),
+                recent_translations: Vec::new(),
+            };
+            match self
+                .translate
+                .translate_guided(
+                    &joined,
+                    self.config.source_language,
+                    crate::ports::TARGET_LANGUAGE,
+                    &guidance,
+                )
+                .await
+            {
+                Ok(reply) => batched = Some(reply),
+                // The same surface a per-block failure gets (one
+                // Translate-stage event for the pass) — and no fallback
+                // re-requests: a dead engine is not hammered once per block.
+                Err(e) => self.emit(Stage::Translate, format!("{label}: {}", e.message)),
+            }
+        }
+        timings.translate_ms += self.clock.now_ms().saturating_sub(translate_started);
+
+        // Everything but one block pinned: the survivor goes alone, the
+        // pre-69 way (a one-block batch could only miscount).
+        if engine_blocks.len() < 2 {
+            if let Some((block, text)) = engine_blocks.pop() {
+                if let Some((_, via)) = self
+                    .translate_and_emit(
+                        region,
+                        block,
+                        &text,
+                        origin,
+                        label,
+                        &[],
+                        self.sampled_style(image, block),
+                        timings,
+                    )
+                    .await
+                {
+                    timings.blocks_translated += 1;
+                    timings.trace(text, via.into());
+                }
+            }
+            return;
+        }
+        let Some(reply) = batched else {
+            // The batch failed: the error is already emitted. Falling back
+            // would hammer a dead engine once per block.
+            return;
+        };
+        // The contract's "Preserve line breaks" is the mapping: one
+        // non-empty line per block, in order. Whitespace around a line is
+        // display noise (block text is trimmed), and a blank line the model
+        // inserted between answers is not an answer.
+        let lines: Vec<&str> = reply
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .collect();
+        if lines.len() != engine_blocks.len() {
+            // The engine merged or split lines — the batch cannot map back
+            // onto the blocks. Per-block requests cannot misalign; the cost
+            // is one extra request round exactly when the reply misbehaved.
+            for (block, text) in engine_blocks {
+                if let Some((_, via)) = self
+                    .translate_and_emit(
+                        region,
+                        block,
+                        &text,
+                        origin,
+                        label,
+                        &[],
+                        self.sampled_style(image, block),
+                        timings,
+                    )
+                    .await
+                {
+                    timings.blocks_translated += 1;
+                    timings.trace(text, via.into());
+                }
+            }
+            return;
+        }
+        for ((block, text), line) in engine_blocks.iter().zip(lines) {
+            // The same belt-and-braces scrub as translate_and_emit: the
+            // prompt instruction is the LLM mechanism, the scrub guarantees
+            // it for every engine (a no-op on already-neutral text).
+            let thai = if self.config.genderless {
+                crate::genderless::scrub(line)
+            } else {
+                line.to_string()
+            };
+            self.emit_translated(
+                region,
+                block,
+                thai,
+                Via::Engine,
+                origin,
+                self.sampled_style(image, block),
+            );
+            timings.blocks_translated += 1;
+            timings.trace(text.clone(), ReadDisposition::TranslatedEngine);
+        }
     }
 
     /// One pass over one zone. Fast path: the capture is pixel-identical to

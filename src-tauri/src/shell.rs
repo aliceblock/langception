@@ -531,6 +531,7 @@ pub fn run() {
             crate::settings::test_engine,
             crate::settings::open_engine_link,
             crate::settings::list_prompt_presets,
+            crate::settings::default_prompt_texts,
             crate::settings::save_prompt_preset,
             crate::settings::rename_prompt_preset,
             crate::settings::delete_prompt_preset,

@@ -1,7 +1,8 @@
 //! Genderless Mode (CONTEXT.md): the rule-based Thai post-processor that
 //! scrubs speaker gender from Translate Engine output — sentence-final
 //! politeness particles (ครับ/ค่ะ/คะ/จ้ะ/จ้า/นะครับ/นะคะ) and gendered
-//! first-person pronouns (ผม/ฉัน/หนู → เรา). Pure logic; the pipeline
+//! first-person pronouns (ผม/หนู → ฉัน, ticket 66 — the neutral was เรา,
+//! which reads as "we"). Pure logic; the pipeline
 //! seam tests it end to end with a fake engine (ticket 08). LLM engines
 //! replace this with a prompt-level variant (ticket 11).
 //!
@@ -30,10 +31,13 @@ const PARTICLES: [&str; 7] = ["นะครับ", "นะคะ", "ครั�
 const TRAILING_PUNCT: [char; 5] = ['.', '!', '?', '~', '…'];
 
 /// Gendered first-person pronouns (spec) — replaced with [`NEUTRAL`].
-const PRONOUNS: [&str; 3] = ["ผม", "ฉัน", "หนู"];
+/// ฉัน is not on the list: since ticket 66 it IS the neutral pronoun, so
+/// an engine reply that already followed the prompt instruction passes
+/// through untouched (scrubbing stays idempotent).
+const PRONOUNS: [&str; 2] = ["ผม", "หนู"];
 
 /// The gender-neutral first-person pronoun pronouns are replaced with.
-const NEUTRAL: &str = "เรา";
+const NEUTRAL: &str = "ฉัน";
 
 /// Whether `c` can separate a pronoun from the word before it: whitespace
 /// or sentence punctuation. Thai writes clauses fused (no spaces), so a
@@ -147,20 +151,27 @@ mod tests {
 
     #[test]
     fn replaces_clause_initial_gendered_pronouns() {
-        assert_eq!(scrub("ฉันไม่รู้"), "เราไม่รู้");
-        assert_eq!(scrub("ผมจะไป"), "เราจะไป");
-        assert_eq!(scrub("หนูอยากกิน"), "เราอยากกิน");
+        assert_eq!(scrub("ผมจะไป"), "ฉันจะไป");
+        assert_eq!(scrub("หนูอยากกิน"), "ฉันอยากกิน");
+    }
+
+    #[test]
+    fn the_neutral_pronoun_passes_through() {
+        // ฉัน IS the neutral (ticket 66): an engine reply that already
+        // followed the prompt instruction must survive the scrub unchanged
+        // — scrubbing is idempotent.
+        assert_eq!(scrub("ฉันไม่รู้"), "ฉันไม่รู้");
     }
 
     #[test]
     fn replaces_pronouns_after_a_boundary() {
-        assert_eq!(scrub("ถ้าไปได้ ฉันจะไป"), "ถ้าไปได้ เราจะไป");
-        assert_eq!(scrub("โอเค, ผมทำเอง"), "โอเค, เราทำเอง");
+        assert_eq!(scrub("ถ้าไปได้ ผมจะไป"), "ถ้าไปได้ ฉันจะไป");
+        assert_eq!(scrub("โอเค, ผมทำเอง"), "โอเค, ฉันทำเอง");
     }
 
     #[test]
     fn replaces_every_occurrence() {
-        assert_eq!(scrub("ฉันทำ ฉันรับผิดชอบ"), "เราทำ เรารับผิดชอบ");
+        assert_eq!(scrub("ผมทำ ผมรับผิดชอบ"), "ฉันทำ ฉันรับผิดชอบ");
     }
 
     #[test]
@@ -175,7 +186,7 @@ mod tests {
 
     #[test]
     fn scrubs_particle_and_pronoun_together() {
-        assert_eq!(scrub("ฉันจะไปครับ"), "เราจะไป");
+        assert_eq!(scrub("ผมจะไปครับ"), "ฉันจะไป");
     }
 
     #[test]
