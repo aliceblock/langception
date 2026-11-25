@@ -4,16 +4,20 @@
 //!
 //! Ticket 02 (ADR-0006): the engine is a CHAIN of legs into Google's
 //! translator, tried in order, each with its own cool-down — gtx first
-//! (the most durable but most-abused endpoint), then the Chrome
-//! Dictionary extension endpoint (a different, quieter quota pool). A
-//! third, mobile-web leg was planned but cut before it shipped: scraping
-//! the answer out of an HTML page without an HTML parser is more
-//! fragility than two legs already buy, and the ADR's consequences cover
-//! retiring legs. A leg that answers 429/5xx, is unreachable, or returns
-//! a shape we cannot parse parks itself for a minute, doubling per repeat
-//! hit up to ten minutes; the request is served by the next warm leg, so
-//! the sequential loop never sleeps inside a pass. An error reaches the
-//! user only when every leg is cooling.
+//! (the most durable but most-abused endpoint), then the keyless
+//! Chrome-Translate-extension endpoint (a later addition: a separate,
+//! quieter quota pool that answers our honest User-Agent), then the
+//! Chrome Dictionary extension endpoint (keyed, impersonating Google's
+//! own client one step further). A mobile-web leg was planned but cut
+//! before it shipped: scraping the answer out of an HTML page without
+//! an HTML
+//! parser is more fragility than the chain already buys, and the ADR's
+//! consequences cover re-ordering and retiring legs. A leg that answers
+//! 429/5xx, is unreachable, or returns a shape we cannot parse parks
+//! itself for a minute, doubling per repeat hit up to ten minutes; the
+//! request is served by the next warm leg, so the sequential loop never
+//! sleeps inside a pass. An error reaches the user only when every leg
+//! is cooling.
 //!
 //! Response parsing is tested offline against golden recorded responses
 //! in `fixtures/google/` (no network in tests). The live endpoints are
@@ -28,6 +32,14 @@ use async_trait::async_trait;
 /// The free, keyless endpoint. See ADR-0002 before "fixing" this default.
 const DEFAULT_ENDPOINT: &str = "https://translate.googleapis.com";
 
+/// The Chrome Translate extension endpoint (`client=dict-chrome-ex`, the
+/// client Chrome's own translate feature calls): keyless like gtx, drawn
+/// from a separate, quieter quota pool, and — unlike the dictionary
+/// extension — it answers an honest User-Agent with no impersonation
+/// (verified live). It sits between the gtx and dictionary-extension
+/// legs so the keyed, ToS-gray leg is reached last (ADR-0006).
+const CHROME_EX_ENDPOINT: &str = "https://clients5.google.com/translate_a/t";
+
 /// The Chrome Dictionary extension endpoint: Google's own browser
 /// extension ships this key publicly (anyone can extract it from the
 /// extension), and answering as that extension is ToS-gray one step
@@ -41,8 +53,9 @@ const DICTIONARY_EXTENSION_REFERER: &str =
 /// The dictionary-extension leg answers as a mobile Chrome client, the
 /// shape that endpoint serves.
 const DICTIONARY_EXTENSION_UA: &str = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.108 Mobile Safari/537.36";
-/// The gtx leg's honest UA: our app, versioned.
-const GTX_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Langception/0.1";
+/// The honest UA: our app, versioned — sent as-is by the gtx and
+/// chrome-ex legs; the dictionary-extension leg impersonates instead.
+const HONEST_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Langception/0.1";
 
 /// Cool-down policy (ADR-0006): the first strike parks a leg for a
 /// minute, each further strike doubles the wait, ten minutes is the cap.
@@ -126,6 +139,36 @@ pub fn parse_dictionary_extension(body: &str) -> Result<String, DictExtError> {
     }
 }
 
+/// Parses a `translate_a/t?client=dict-chrome-ex` response body and
+/// returns the translated text. Golden shape (both recorded fixtures):
+/// `["คำแปลทั้งก้อน"]` — a flat array of translated strings. The
+/// endpoint joins whole paragraphs into one element (observed live up
+/// to four sentences), but long inputs may come back as several
+/// elements, so the full translation is the concatenation in order,
+/// exactly like the gtx parser's segments.
+pub fn parse_chrome_ex(body: &str) -> Result<String, TranslateError> {
+    let value: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| TranslateError::new(format!("Google response is not valid JSON: {e}")))?;
+    let elements = value.as_array().ok_or_else(|| {
+        TranslateError::new(
+            "Google response has unexpected shape: not an array of translated strings",
+        )
+    })?;
+    if elements.is_empty() {
+        return Err(TranslateError::new(
+            "Google response contained no translated strings",
+        ));
+    }
+    let mut translated = String::new();
+    for element in elements {
+        let piece = element
+            .as_str()
+            .ok_or_else(|| TranslateError::new("Google response element has no translated text"))?;
+        translated.push_str(piece);
+    }
+    Ok(translated)
+}
+
 /// One response from a leg endpoint.
 pub(crate) struct LegResponse {
     pub status: u16,
@@ -182,6 +225,7 @@ struct Leg {
 
 enum LegKind {
     Gtx,
+    ChromeEx,
     DictionaryExtension,
 }
 
@@ -227,6 +271,7 @@ impl LegKind {
     fn name(&self) -> &'static str {
         match self {
             Self::Gtx => "gtx",
+            Self::ChromeEx => "chrome-ex",
             Self::DictionaryExtension => "dictionary extension",
         }
     }
@@ -241,12 +286,22 @@ impl LegKind {
         let (url, headers, query) = match self {
             Self::Gtx => (
                 format!("{DEFAULT_ENDPOINT}/translate_a/single"),
-                vec![("User-Agent", GTX_UA)],
+                vec![("User-Agent", HONEST_UA)],
                 vec![
                     ("client", "gtx"),
                     ("sl", sl),
                     ("tl", tl),
                     ("dt", "t"),
+                    ("q", text),
+                ],
+            ),
+            Self::ChromeEx => (
+                CHROME_EX_ENDPOINT.to_string(),
+                vec![("User-Agent", HONEST_UA)],
+                vec![
+                    ("client", "dict-chrome-ex"),
+                    ("sl", sl),
+                    ("tl", tl),
                     ("q", text),
                 ],
             ),
@@ -283,6 +338,10 @@ impl LegKind {
             Self::Gtx => match parse_translation_response(&response.body) {
                 Ok(translated) => LegOutcome::Translated(translated),
                 Err(e) => LegOutcome::Park(format!("Google [gtx] {e}")),
+            },
+            Self::ChromeEx => match parse_chrome_ex(&response.body) {
+                Ok(translated) => LegOutcome::Translated(translated),
+                Err(e) => LegOutcome::Park(format!("Google [chrome-ex] {e}")),
             },
             Self::DictionaryExtension => match parse_dictionary_extension(&response.body) {
                 Ok(translated) => LegOutcome::Translated(translated),
@@ -323,6 +382,10 @@ impl GoogleTranslateEngine {
             legs: vec![
                 Leg {
                     kind: LegKind::Gtx,
+                    cooldown: Mutex::new(Cooldown::default()),
+                },
+                Leg {
+                    kind: LegKind::ChromeEx,
                     cooldown: Mutex::new(Cooldown::default()),
                 },
                 Leg {
@@ -403,7 +466,7 @@ mod tests {
     use super::*;
     use crate::ports::Clock;
     use crate::test_support::{
-        no_translation_body, ok_dictext, ok_gtx, server_error, status, FakeClock,
+        no_translation_body, ok_chrome_ex, ok_dictext, ok_gtx, server_error, status, FakeClock,
         ScriptedTransport,
     };
     use std::sync::Arc;
@@ -497,15 +560,72 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn parses_the_chrome_ex_golden_response() {
+        let body = include_str!("../fixtures/google/chrome_ex.json");
+        assert_eq!(
+            parse_chrome_ex(body).unwrap(),
+            "เหตุใดคุณจึงบุกโจมตีคาเมลอตผู้ยุติธรรม"
+        );
+    }
+
+    #[test]
+    fn parses_the_chrome_ex_paragraph_golden_response_as_one_element() {
+        // Recorded live: the endpoint joins a four-sentence paragraph
+        // into a single element, so no separator logic is exercised.
+        let body = include_str!("../fixtures/google/chrome_ex_paragraph.json");
+        assert_eq!(
+            parse_chrome_ex(body).unwrap(),
+            "มังกรเฝ้าสะพาน จ่าย 500 ทองเพื่อผ่าน พ่อค้าปฏิเสธเหรียญและปิดประตูจนพระจันทร์ขึ้น นักท่องเที่ยวจะนอนในโรงเตี๊ยมเพื่อรอเสียงระฆังยามเช้า"
+        );
+    }
+
+    #[test]
+    fn parses_multi_element_chrome_ex_responses_in_order() {
+        // Long inputs may come back split across elements (the gtx
+        // behavior); the full translation is the concatenation in order.
+        assert_eq!(
+            parse_chrome_ex(r#"["มังกรเฝ้าสะพาน ","จ่าย 500 ทองเพื่อผ่าน"]"#).unwrap(),
+            "มังกรเฝ้าสะพาน จ่าย 500 ทองเพื่อผ่าน"
+        );
+    }
+
+    #[test]
+    fn chrome_ex_malformed_and_non_array_shapes_are_errors() {
+        let err = parse_chrome_ex("<html>blocked</html>").unwrap_err();
+        assert!(err.message.contains("not valid JSON"), "was: {}", err.message);
+
+        let err = parse_chrome_ex("{\"error\": \"blocked\"}").unwrap_err();
+        assert!(
+            err.message.contains("unexpected shape"),
+            "was: {}",
+            err.message
+        );
+
+        let err = parse_chrome_ex("[]").unwrap_err();
+        assert!(
+            err.message.contains("no translated strings"),
+            "was: {}",
+            err.message
+        );
+
+        let err = parse_chrome_ex("[\"ok\", 42]").unwrap_err();
+        assert!(
+            err.message.contains("no translated text"),
+            "was: {}",
+            err.message
+        );
+    }
+
     #[tokio::test]
     async fn a_5xx_or_an_unreachable_leg_still_serves_from_the_next() {
         let script = ScriptedTransport::new(vec![
-            server_error(), // t=0    gtx: a 5xx parks the same as a 429
-            ok_dictext(),   // t=0    dictext serves
-            ok_dictext(),   // t=59s  gtx still down; dictext serves
+            server_error(),   // t=0    gtx: a 5xx parks the same as a 429
+            ok_chrome_ex(),   // t=0    chrome-ex serves
+            ok_chrome_ex(),   // t=59s  gtx still down; chrome-ex serves
             Err("connection refused".into()), // t=61s gtx: unreachable parks too
-            ok_dictext(),   // t=61s  dictext serves
-            ok_dictext(),   // t=120s gtx still down (strike-2 window); dictext serves
+            ok_chrome_ex(),   // t=61s  chrome-ex serves
+            ok_chrome_ex(),   // t=120s gtx still down (strike-2 window); chrome-ex serves
         ]);
         let clock = FakeClock::at(0);
         let engine = engine(Arc::clone(&script), Arc::clone(&clock));
@@ -531,7 +651,7 @@ mod tests {
             .expect("third call");
         assert_eq!(
             script.contacted(),
-            ["gtx", "dictext", "dictext", "gtx", "dictext", "dictext"],
+            ["gtx", "chrome-ex", "chrome-ex", "gtx", "chrome-ex", "chrome-ex"],
             "both the 5xx and the unreachable shapes park the gtx leg"
         );
     }
@@ -539,24 +659,44 @@ mod tests {
 
     #[tokio::test]
     async fn a_rate_limited_leg_serves_from_the_next() {
-        let script = ScriptedTransport::new(vec![status(429), ok_dictext()]);
+        let script = ScriptedTransport::new(vec![status(429), ok_chrome_ex()]);
         let clock = FakeClock::at(0);
         let engine = engine(Arc::clone(&script), Arc::clone(&clock));
         let out = engine
             .translate("Hello", SourceLanguage::En, "th")
             .await
             .expect("the chain must answer from the second leg");
-        assert!(out.starts_with("Supondo que os associados"));
-        assert_eq!(script.contacted(), ["gtx", "dictext"]);
+        assert!(out.starts_with("เหตุใดคุณจึงบุกโจมตี"));
+        assert_eq!(script.contacted(), ["gtx", "chrome-ex"]);
+    }
+
+    #[tokio::test]
+    async fn the_chrome_ex_leg_sits_between_gtx_and_the_dictionary_extension() {
+        let script = ScriptedTransport::new(vec![status(429), status(429), ok_dictext()]);
+        let clock = FakeClock::at(0);
+        let engine = engine(Arc::clone(&script), Arc::clone(&clock));
+        let out = engine
+            .translate("Hello", SourceLanguage::En, "th")
+            .await
+            .expect("the chain must reach the third leg");
+        assert!(
+            out.starts_with("Supondo que os associados"),
+            "the keyed dictionary-extension leg answers last"
+        );
+        assert_eq!(
+            script.contacted(),
+            ["gtx", "chrome-ex", "dictext"],
+            "chrome-ex shields the dictionary-extension leg"
+        );
     }
 
     #[tokio::test]
     async fn a_cooling_leg_is_skipped_until_its_window_expires() {
         let script = ScriptedTransport::new(vec![
             status(429), // t=0: gtx parks until t=60_000
-            ok_dictext(),
-            ok_dictext(), // t=59_000: gtx still cooling — only dictext runs
-            ok_gtx(),     // t=61_000: gtx's window expired — it is first again
+            ok_chrome_ex(),
+            ok_chrome_ex(), // t=59_000: gtx still cooling — only chrome-ex runs
+            ok_gtx(),       // t=61_000: gtx's window expired — it is first again
         ]);
         let clock = FakeClock::at(0);
         let engine = engine(Arc::clone(&script), Arc::clone(&clock));
@@ -564,7 +704,7 @@ mod tests {
             .translate("Hello", SourceLanguage::En, "th")
             .await
             .expect("first call");
-        assert_eq!(script.contacted(), ["gtx", "dictext"]);
+        assert_eq!(script.contacted(), ["gtx", "chrome-ex"]);
 
         clock.advance(59_000);
         engine
@@ -573,7 +713,7 @@ mod tests {
             .expect("second call");
         assert_eq!(
             script.contacted(),
-            ["gtx", "dictext", "dictext"],
+            ["gtx", "chrome-ex", "chrome-ex"],
             "at t=59s the cooling gtx leg must receive no request"
         );
 
@@ -584,7 +724,7 @@ mod tests {
             .expect("third call");
         assert_eq!(
             script.contacted(),
-            ["gtx", "dictext", "dictext", "gtx"],
+            ["gtx", "chrome-ex", "chrome-ex", "gtx"],
             "at t=61s the gtx leg is warm again"
         );
     }
@@ -593,19 +733,20 @@ mod tests {
     async fn repeat_hits_double_the_window_and_cap_at_ten_minutes() {
         // Consecutive strikes (no success in between — a success resets the
         // ladder): 60s → 120s → 240s → 480s → capped at 600s.
-        // Pop order = request order: legs try gtx first, then dictext.
+        // Pop order = request order: legs try gtx, then chrome-ex, then
+        // dictext — but a serving chrome-ex keeps dictext untouched.
         let script = ScriptedTransport::new(vec![
-            status(429),  // t=0    gtx: strike 1 → down until t=60s
-            ok_dictext(), // t=0    dictext: serves
-            status(429),  // t=61s  gtx: strike 2 → down until t=181s
-            ok_dictext(), // t=61s  dictext: serves
-            status(429),  // t=182s gtx: strike 3 → down until t=422s
-            ok_dictext(), // t=182s dictext: serves
-            status(429),  // t=423s gtx: strike 4 → down until t=903s
-            ok_dictext(), // t=423s dictext: serves
-            status(429),  // t=904s gtx: strike 5 → 960s capped at 600 → t=1504s
-            ok_dictext(), // t=904s dictext: serves
-            ok_dictext(), // t=1000s gtx still capped-down; dictext serves
+            status(429),    // t=0    gtx: strike 1 → down until t=60s
+            ok_chrome_ex(), // t=0    chrome-ex: serves
+            status(429),    // t=61s  gtx: strike 2 → down until t=181s
+            ok_chrome_ex(), // t=61s  chrome-ex: serves
+            status(429),    // t=182s gtx: strike 3 → down until t=422s
+            ok_chrome_ex(), // t=182s chrome-ex: serves
+            status(429),    // t=423s gtx: strike 4 → down until t=903s
+            ok_chrome_ex(), // t=423s chrome-ex: serves
+            status(429),    // t=904s gtx: strike 5 → 960s capped at 600 → t=1504s
+            ok_chrome_ex(), // t=904s chrome-ex: serves
+            ok_chrome_ex(), // t=1000s gtx still capped-down; chrome-ex serves
         ]);
         let clock = FakeClock::at(0);
         let engine = engine(Arc::clone(&script), Arc::clone(&clock));
@@ -614,7 +755,7 @@ mod tests {
         engine.translate("Hello", SourceLanguage::En, "th").await.expect("t=61s");
         assert_eq!(
             script.contacted(),
-            ["gtx", "dictext", "gtx", "dictext"],
+            ["gtx", "chrome-ex", "gtx", "chrome-ex"],
             "strike 2 parks gtx until t=181s"
         );
         clock.advance(121_000); // t=182s — the 120s window expired
@@ -622,7 +763,7 @@ mod tests {
         assert_eq!(
             script.contacted().len(),
             6,
-            "the window expired: gtx fires (and strikes again), dictext serves"
+            "the window expired: gtx fires (and strikes again), chrome-ex serves"
         );
         clock.advance(241_000); // t=423s — strike-3 window (until 422s) expired
         engine.translate("Hello", SourceLanguage::En, "th").await.expect("t=423s");
@@ -634,7 +775,7 @@ mod tests {
         engine.translate("Hello", SourceLanguage::En, "th").await.expect("t=1000s");
         assert_eq!(
             script.contacted().last(),
-            Some(&"dictext"),
+            Some(&"chrome-ex"),
             "the cap must hold gtx down well past the doubled windows"
         );
         assert_eq!(script.contacted().len(), 11, "gtx stayed parked under the cap");
@@ -642,14 +783,14 @@ mod tests {
 
     #[tokio::test]
     async fn every_leg_cooling_is_an_error_with_no_requests() {
-        let script = ScriptedTransport::new(vec![status(429), status(500)]);
+        let script = ScriptedTransport::new(vec![status(429), status(429), status(500)]);
         let clock = FakeClock::at(0);
         let engine = engine(Arc::clone(&script), Arc::clone(&clock));
         let first = engine
             .translate("Hello", SourceLanguage::En, "th")
             .await;
-        assert!(first.is_err(), "both legs parked: the request fails");
-        assert_eq!(script.contacted(), ["gtx", "dictext"]);
+        assert!(first.is_err(), "all three legs parked: the request fails");
+        assert_eq!(script.contacted(), ["gtx", "chrome-ex", "dictext"]);
 
         let second = engine
             .translate("Hello", SourceLanguage::En, "th")
@@ -657,7 +798,7 @@ mod tests {
         assert!(second.is_err());
         assert_eq!(
             script.contacted(),
-            ["gtx", "dictext"],
+            ["gtx", "chrome-ex", "dictext"],
             "the all-cooling path must fire no requests at all"
         );
         let message = second.unwrap_err().message;
@@ -674,8 +815,8 @@ mod tests {
                 status: 200,
                 body: "<html>blocked</html>".into(),
             }),
-            ok_dictext(),
-            ok_dictext(), // next call: gtx parked — only dictext runs
+            ok_chrome_ex(),
+            ok_chrome_ex(), // next call: gtx parked — only chrome-ex runs
         ]);
         let clock = FakeClock::at(0);
         let engine = engine(Arc::clone(&script), Arc::clone(&clock));
@@ -691,7 +832,7 @@ mod tests {
             .expect("second call");
         assert_eq!(
             script.contacted(),
-            ["gtx", "dictext", "dictext"],
+            ["gtx", "chrome-ex", "chrome-ex"],
             "a shape change parks the leg the same as a rate limit"
         );
     }
@@ -702,6 +843,7 @@ mod tests {
         // (its documented 404 shape): the leg is fine, so the next call
         // must try it again instead of waiting out a cool-down.
         let script = ScriptedTransport::new(vec![
+            status(429),
             status(429),
             no_translation_body(),
             ok_dictext(),
@@ -715,6 +857,6 @@ mod tests {
             .translate("Hello", SourceLanguage::En, "th")
             .await
             .expect("the healthy-but-empty leg is warm and serves the retry");
-        assert_eq!(script.contacted(), ["gtx", "dictext", "dictext"]);
+        assert_eq!(script.contacted(), ["gtx", "chrome-ex", "dictext", "dictext"]);
     }
 }

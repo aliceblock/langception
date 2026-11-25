@@ -342,7 +342,7 @@ mod tests {
 
     #[tokio::test]
     async fn all_cooling_routes_to_the_secondary_and_announces_the_episode() {
-        let script = ScriptedTransport::new(vec![rate_limited(), server_error()]);
+        let script = ScriptedTransport::new(vec![rate_limited(), rate_limited(), server_error()]);
         let secondary = CountingSecondary::new();
         let (_notify, events) = recording_notify();
         let clock = FakeClock::at(0);
@@ -372,7 +372,8 @@ mod tests {
     #[tokio::test]
     async fn recovery_announces_once_and_serving_during_an_episode_is_silent() {
         let script = ScriptedTransport::new(vec![
-            rate_limited(), // t=0: both legs park
+            rate_limited(), // t=0: all three legs park
+            rate_limited(),
             server_error(),
             ok_gtx(), // t=61s: google warm again — serves
             ok_gtx(), // t=62s: still warm — nothing announced
@@ -410,8 +411,9 @@ mod tests {
     #[tokio::test]
     async fn the_google_cache_serves_even_while_google_cools() {
         let script = ScriptedTransport::new(vec![
-            ok_gtx(),      // primes the google cache entry
-            rate_limited(), // then both legs park
+            ok_gtx(),       // primes the google cache entry
+            rate_limited(), // then all three legs park
+            rate_limited(),
             server_error(),
         ]);
         let secondary = CountingSecondary::new();
@@ -438,10 +440,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_healthy_but_useless_google_failure_does_not_switch() {
-        // gtx parks, but the dictionary extension answered healthy-with-no
-        // entry: google is not "all cooling", so the error surfaces and
-        // the secondary stays untouched.
-        let script = ScriptedTransport::new(vec![rate_limited(), no_translation_body()]);
+        // gtx and chrome-ex park, but the dictionary extension answered
+        // healthy-with-no entry: google is not "all cooling", so the
+        // error surfaces and the secondary stays untouched.
+        let script = ScriptedTransport::new(vec![rate_limited(), rate_limited(), no_translation_body()]);
         let secondary = CountingSecondary::new();
         let (_notify, events) = recording_notify();
         let clock = FakeClock::at(0);
@@ -460,7 +462,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_guided_path_reaches_the_secondary_with_its_guidance() {
-        let script = ScriptedTransport::new(vec![rate_limited(), server_error()]);
+        let script = ScriptedTransport::new(vec![rate_limited(), rate_limited(), server_error()]);
         let secondary = CountingSecondary::new();
         let (_notify, events) = recording_notify();
         let clock = FakeClock::at(0);
@@ -482,7 +484,7 @@ mod tests {
 
     #[tokio::test]
     async fn secondary_answers_cache_under_the_secondary_engine_name() {
-        let script = ScriptedTransport::new(vec![rate_limited(), server_error()]);
+        let script = ScriptedTransport::new(vec![rate_limited(), rate_limited(), server_error()]);
         let secondary = CountingSecondary::new();
         let (_notify, events) = recording_notify();
         let clock = FakeClock::at(0);

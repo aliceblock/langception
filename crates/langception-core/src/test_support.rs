@@ -79,6 +79,8 @@ impl LegTransport for ScriptedTransport {
     ) -> Result<LegResponse, String> {
         let leg = if url.contains("translate_a/single") {
             "gtx"
+        } else if url.contains("translate_a/t") {
+            "chrome-ex"
         } else if url.contains("dictionaryExtensionData") {
             "dictext"
         } else {
@@ -108,6 +110,14 @@ pub(crate) fn ok_dictext() -> Result<LegResponse, String> {
     Ok(LegResponse {
         status: 200,
         body: include_str!("../fixtures/google/dictionaryextension.json").into(),
+    })
+}
+
+/// A healthy chrome-ex answer (the recorded golden fixture).
+pub(crate) fn ok_chrome_ex() -> Result<LegResponse, String> {
+    Ok(LegResponse {
+        status: 200,
+        body: include_str!("../fixtures/google/chrome_ex.json").into(),
     })
 }
 
