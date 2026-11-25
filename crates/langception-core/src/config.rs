@@ -1372,7 +1372,7 @@ ui_language = "en"
 # default). Point it at any HTTPS URL serving the same shape to use a
 # different source. Check-only — the app never downloads or installs
 # anything from here.
-url = "https://raw.githubusercontent.com/aliceblock/langception/main/latest.json"
+url = "https://raw.githubusercontent.com/intception-app/langception/main/latest.json"
 # Check automatically at every launch (Settings → About's toggle). Off by
 # default — opt-in, since it contacts the URL without being asked. A
 # launch-time check never blocks startup and its failures stay silent.

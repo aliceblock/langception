@@ -1,6 +1,6 @@
 # Langception
 
-[![CI](https://github.com/aliceblock/langception/actions/workflows/ci.yml/badge.svg)](https://github.com/aliceblock/langception/actions/workflows/ci.yml)
+[![CI](https://github.com/intception-app/langception/actions/workflows/ci.yml/badge.svg)](https://github.com/intception-app/langception/actions/workflows/ci.yml)
 
 Langception อ่านข้อความบนหน้าจอของคุณแล้วแปลเป็นภาษาไทย โดยแสดงผลทับลงบนตำแหน่งเดิมหรือแสดงในหน้าต่างแยกแบบ Always-on-top เพียงเปิดใช้งานกับเกมหรือแอปที่เป็นภาษา **English, Japanese, Chinese หรือ Korean** ตัวโปรแกรมจะอัปเดตคำแปลให้อัตโนมัติทันทีที่ข้อความเปลี่ยนไป รองรับ Windows เป็นหลัก (Windows 10/11 แบบ 64-bit) ส่วนแกนหลักของการแปลถูกออกแบบให้ไม่ผูกติดกับแพลตฟอร์ม จึงสามารถพอร์ตไปยัง macOS/Linux ได้ในอนาคต
 

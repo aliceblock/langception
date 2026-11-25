@@ -26,7 +26,7 @@ pub const APP_NAME: &str = "langception";
 /// in `docs/update-check-endpoint.md` § The payload; the config template's
 /// `url` line must match this (a unit test pins the two together).
 pub const DEFAULT_UPDATE_URL: &str =
-    "https://raw.githubusercontent.com/aliceblock/langception/main/latest.json";
+    "https://raw.githubusercontent.com/intception-app/langception/main/latest.json";
 
 /// The `[update]` config section: where to check, and whether launches
 /// check by themselves. Both keys predate the feature for configs written
