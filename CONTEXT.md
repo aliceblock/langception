@@ -66,6 +66,10 @@ _Avoid_: edit mode, config mode
 The continuous mode: capture, detect change, OCR, translate. Text that has not changed is never re-translated.
 _Avoid_: live translate, realtime mode
 
+**Pass**:
+One step of the translation loop for a Capture Zone or a One-shot Capture: capture, then either OCR plus per-block translation (classic Reading Mode) or the fused read-and-translate call. A pass that detects no change ends at capture and never translates. A pass is complete when every stage of its Reading Mode ran.
+_Avoid_: process, run, iteration, cycle
+
 **OCR Engine**:
 A pluggable component that turns a captured image region into text blocks with positions.
 _Avoid_: reader, recognizer

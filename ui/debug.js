@@ -22,6 +22,9 @@
 // - The mock's translated-output quote block got a real data source: the
 //   forwarder now emits Translated events here too (shell.rs), and they
 //   are correlated onto the pass's read trace below.
+// Post-70: the Full-pipeline checkbox joins the view controls — a
+// complete-pass gate (capture→ocr→translate all fired, or capture→fused)
+// ANDed with the pills and the search, pill counts included.
 // What stays prototype-only: the mock's "Simulate Pass" button (its data
 // driver, like ticket 61's "Simulate Capture") and its per-pass toast
 // (a real pass every cadence tick must not toast); its sample data
@@ -46,6 +49,7 @@ const passesLabelEl = document.getElementById("passes-label");
 const kpiGridEl = document.getElementById("kpi-grid");
 const searchInputEl = document.getElementById("search-input");
 const clearSearchBtn = document.getElementById("clear-search-btn");
+const fullPipelineToggle = document.getElementById("full-pipeline-toggle");
 const autoscrollBtn = document.getElementById("autoscroll-btn");
 const exportBtn = document.getElementById("export-btn");
 const clearBtn = document.getElementById("clear-btn");
@@ -122,6 +126,13 @@ let currentFilter = "all";
 let searchQuery = "";
 let autoScroll = true;
 let exportFormat = "json";
+// The Full-pipeline checkbox: ON shows only complete passes — every
+// stage of the pass's reading mode actually ran (classic: capture, OCR,
+// and translate all fired; fused: capture and the fused call). Unchanged
+// runs, error cards, and passes whose translate (or fused) never fired
+// are hidden. Default off and never persisted (like every view state
+// here — reopening the window shows everything).
+let fullPipelineOnly = false;
 
 // Recent translations per origin (ticket 70's quote-block seam): the
 // forwarder emits Translated events here, and they arrive BEFORE their
@@ -233,7 +244,7 @@ function appendPinned(card) {
 // Live events append incrementally; a filter or search active means the
 // visible set is a view over history — full re-render.
 function filterActive() {
-  return currentFilter !== "all" || searchQuery.trim() !== "";
+  return currentFilter !== "all" || searchQuery.trim() !== "" || fullPipelineOnly;
 }
 
 // ---- Read dispositions (ticket 48) — unchanged from the first build.
@@ -406,10 +417,13 @@ function renderKPIs() {
 }
 
 function renderFilterCounts() {
-  countAllEl.textContent = String(history.length);
+  // The counts see the same view the stream does: the Full-pipeline gate
+  // applies before the pill statuses — one view, three projections.
+  const gated = fullPipelineOnly ? history.filter(isCompletePass) : history;
+  countAllEl.textContent = String(gated.length);
   for (const f of ["translated", "waiting", "suppressed"]) {
     countFilterEls[f].textContent = String(
-      history.filter((e) => e.kind === "timing" && e.primaryStatus === f).length
+      gated.filter((e) => e.kind === "timing" && e.primaryStatus === f).length
     );
   }
 }
@@ -697,7 +711,22 @@ function cardFor(entry) {
 // ---- full re-render on every view change and on live events while a
 // ---- view is active.
 
+// A complete pass — the Full-pipeline checkbox's subject. A timing card
+// IS the pass, and its payload declares which stages ran (null = skipped
+// or never attempted; capture_ms is non-optional on every timing event,
+// so the ocr/translate pair carries the whole classic gate). Classic
+// reading: ocr AND translate both fired; a pass where nothing fired
+// (every read waiting or suppressed) is not complete. Fused reading: the
+// fused call fired. Unchanged-run cards and error cards are not passes
+// at all.
+function isCompletePass(entry) {
+  if (entry.kind !== "timing") return false;
+  if (entry.stages.fused !== null) return true;
+  return entry.stages.ocr !== null && entry.stages.translate !== null;
+}
+
 function entryMatches(entry) {
+  if (fullPipelineOnly && !isCompletePass(entry)) return false;
   if (currentFilter !== "all") {
     if (entry.kind !== "timing" || entry.primaryStatus !== currentFilter) return false;
   }
@@ -779,15 +808,22 @@ function handleTiming(event) {
     // to some later pass that happens to repeat the text.
     attachShownTranslations(event);
     const runKey = originRunKey(event);
-    if (unchangedRun !== null && unchangedRun.dataset.origin === runKey) {
+    // The collapse lives in history (openHistoryRun), not in the DOM: a
+    // view that hides unchanged cards — the Full-pipeline gate, any pill
+    // or search view — must not shred an idle screen into ×1 entries.
+    // The run keeps counting while hidden (unchecking renders it as ONE
+    // ×N card again); the DOM bump happens only when the card is shown.
+    if (openHistoryRun !== null && openHistoryRun.runKey === runKey) {
       const entry = openHistoryRun;
       entry.count += 1;
       entry.captureMs = event.capture_ms;
       entry.atMs = event.at_ms;
-      unchangedRun.querySelector(".count").textContent = String(entry.count);
-      unchangedRun.querySelector(".capture-ms").textContent = `${event.capture_ms}ms`;
-      unchangedRun.querySelector(".card-time").textContent = clockTime(event.at_ms);
-      if (autoScroll && isPinned()) scrollToBottom();
+      if (unchangedRun !== null) {
+        unchangedRun.querySelector(".count").textContent = String(entry.count);
+        unchangedRun.querySelector(".capture-ms").textContent = `${event.capture_ms}ms`;
+        unchangedRun.querySelector(".card-time").textContent = clockTime(event.at_ms);
+        if (autoScroll && isPinned()) scrollToBottom();
+      }
       return;
     }
     const entry = {
@@ -1178,16 +1214,25 @@ downloadExportBtn.addEventListener("click", downloadExport);
 // ---- Ticket 52: the Clear button — one click resets every piece of
 // ---- window state the way reopening the window would.
 
-function clearAll() {
-  // The view resets with everything else (like reopening the window):
-  // a stale filter/search must not keep incoming events invisible.
+// The view reset that Clear (ticket 52) and Reset Filters share — the
+// checkbox is view state like any other; both paths restore the opening
+// view, and each caller re-renders after.
+function resetViewFilters() {
   currentFilter = "all";
   searchQuery = "";
   searchInputEl.value = "";
   clearSearchBtn.hidden = true;
+  fullPipelineOnly = false;
+  fullPipelineToggle.checked = false;
   for (const b of document.querySelectorAll(".filter-pill")) {
     b.classList.toggle("active", b.dataset.filter === "all");
   }
+}
+
+function clearAll() {
+  // The view resets with everything else (like reopening the window):
+  // a stale filter/search must not keep incoming events invisible.
+  resetViewFilters();
   rowsEl.replaceChildren();
   unchangedRun = null; // a run must not continue across a clear
   openHistoryRun = null;
@@ -1225,9 +1270,14 @@ searchInputEl.addEventListener("input", () => {
   renderStream();
 });
 
-// Clearing the search box and resetting the whole view share one recipe
-// (the ✕ button resets the query only; Reset Filters also restores the
-// All pill) — both end in a re-render.
+fullPipelineToggle.addEventListener("change", () => {
+  fullPipelineOnly = fullPipelineToggle.checked;
+  renderStream();
+});
+
+// Clearing the search box resets the query only (the ✕ button); the
+// whole view — pills, search, Full-pipeline checkbox — resets through
+// resetViewFilters (shared with Clear above). Both end in a re-render.
 function clearSearchOnly() {
   searchQuery = "";
   searchInputEl.value = "";
@@ -1238,11 +1288,7 @@ function clearSearchOnly() {
 clearSearchBtn.addEventListener("click", clearSearchOnly);
 
 resetFiltersBtn.addEventListener("click", () => {
-  clearSearchOnly();
-  currentFilter = "all";
-  for (const b of document.querySelectorAll(".filter-pill")) {
-    b.classList.toggle("active", b.dataset.filter === "all");
-  }
+  resetViewFilters();
   renderStream();
 });
 

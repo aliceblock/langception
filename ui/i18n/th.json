@@ -57,6 +57,8 @@
   "debug.export.zone_prefix": "โซน \"{name}\"",
   "debug.export_btn": "ส่งออก…",
   "debug.filter.all": "ทั้งหมด",
+  "debug.filter.full_pipeline": "ครบไปป์ไลน์",
+  "debug.filter.full_pipeline_title": "แสดงเฉพาะรอบที่ทำงานครบทุกขั้นตอน: จับภาพ อ่านภาพ แปล (รอบผสานก็นับ)",
   "debug.filter.suppressed": "ระงับ",
   "debug.filter.translated": "แปลแล้ว",
   "debug.filter.waiting": "กำลังรอ",

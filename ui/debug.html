@@ -72,8 +72,8 @@
          pin-to-bottom follow the window always had; Export…/Clear stay
          hidden until the first rendered event — tickets 49/52), the KPI
          metric cards (one per stage that ran + total, the slowest average
-         carrying the mock's BOTTLENECK treatment), and the filter pills
-         with search. -->
+         carrying the mock's BOTTLENECK treatment), and the filter pills,
+         search, and Full-pipeline checkbox (the complete-pass gate). -->
     <header id="topbar">
       <div class="top-row">
         <div class="brand-crumb">
@@ -132,6 +132,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         </div>
+        <label class="pipeline-toggle" data-i18n-title="debug.filter.full_pipeline_title">
+          <input id="full-pipeline-toggle" type="checkbox" />
+          <span data-i18n="debug.filter.full_pipeline">Full pipeline</span>
+        </label>
       </div>
     </header>
 

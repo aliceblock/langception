@@ -485,6 +485,38 @@ button svg, .search-glyph { width: 14px; height: 14px; }
   opacity: 0.75;
 }
 
+/* The Full-pipeline checkbox (the complete-pass gate): dresses like a
+   filter pill so the row reads as one filter family, but stays a real
+   checkbox (the app-wide idiom, settings.css's accent-color rule). */
+.pipeline-toggle {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--dbg-panel-3);
+  color: var(--muted);
+  border: 1px solid var(--dbg-border);
+  cursor: pointer;
+  user-select: none;
+}
+.pipeline-toggle:hover { color: var(--dbg-text); }
+.pipeline-toggle:has(input:checked) { color: var(--dbg-text); border-color: var(--accent); }
+.pipeline-toggle input {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+/* Column mode keeps the toggle compact (align-self: flex-start); in the
+   640px row the parent centers its children — the toggle goes back to
+   that, or it would top-align against the centered pills and search. */
+@media (min-width: 640px) { .pipeline-toggle { align-self: center; } }
+
 .search-wrap {
   position: relative;
   flex: 1;

@@ -34,6 +34,17 @@ behind the new look.
       name, translation text ("storm" finds the Storm pass); the ✕ clears;
       a no-match view shows the dashed empty card and **Reset Filters**
       restores everything.
+- [ ] **Full pipeline checkbox**: unchecked on open (like every view
+      state here, it is not persisted); checking it keeps only complete
+      passes — a classic pass with its capture/ocr/translate pills all
+      present, a fused pass with capture/fused — and hides unchanged-run
+      cards, error cards, and passes whose translate (or fused) never
+      fired (every read waiting/suppressed); pill counts and the
+      "Showing N" legend follow the same gate; it ANDs with the pills
+      and the search box; **Reset Filters** unchecks it, and Clear
+      resets it like reopening the window; an idle stretch while it is
+      on still collapses into ONE run entry — unchecking renders it as
+      one ×N card, not a pile of ×1 cards.
 - [ ] **Cards**: the pass's slowest stage pill carries the amber border +
       ◀; blocks turn emerald when > 0; the total badge goes amber on
       passes ≥ 500ms; the colored latency bar proportions roughly match

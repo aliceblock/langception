@@ -57,6 +57,8 @@
   "debug.export.zone_prefix": "Zone \"{name}\"",
   "debug.export_btn": "Export…",
   "debug.filter.all": "All",
+  "debug.filter.full_pipeline": "Full pipeline",
+  "debug.filter.full_pipeline_title": "Show only passes that ran every stage: capture, OCR, translate (fused passes count too)",
   "debug.filter.suppressed": "Suppressed",
   "debug.filter.translated": "Translated",
   "debug.filter.waiting": "Waiting",
