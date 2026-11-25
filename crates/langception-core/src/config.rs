@@ -53,11 +53,11 @@ impl Default for CaptureSettings {
 }
 
 fn default_cadence_ms() -> u32 {
-    500
+    250
 }
 
 fn default_stability_ms() -> u32 {
-    400
+    250
 }
 
 /// How translated text is drawn on the In-place Overlay (CONTEXT.md):
@@ -1268,11 +1268,11 @@ language = "en"
 
 [capture]
 # How often each Capture Zone is re-checked, in milliseconds.
-cadence_ms = 500
+cadence_ms = 250
 # How long a Text Block whose pixels changed must hold them stable before
 # it is translated (debounces animations, whose pixels never stop
 # changing). 0 translates every change on the pass that detects it.
-stability_ms = 400
+stability_ms = 250
 
 [mode]
 # What the loop watches: "zones" (the Capture Zones below) or "fullscreen"
@@ -1504,7 +1504,7 @@ mod tests {
     fn default_template_parses() {
         let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
         assert_eq!(config.source.language, SourceLanguage::En);
-        assert_eq!(config.capture.cadence_ms, 500);
+        assert_eq!(config.capture.cadence_ms, 250);
         assert_eq!(config.mode, ModeSettings::default());
         assert_eq!(config.text_style, TextStyle::default());
         assert!(config.glossary.0.is_empty());
@@ -2039,7 +2039,7 @@ language = "ko"
 "#;
         let config = AppConfig::from_toml_str(text).unwrap();
         assert_eq!(config.source.language, SourceLanguage::Ko);
-        assert_eq!(config.capture.cadence_ms, 500);
+        assert_eq!(config.capture.cadence_ms, 250);
         assert_eq!(config.hotkeys, HotkeySettings::default());
         assert!(config.glossary.0.is_empty());
         assert!(config.zones.is_empty());
@@ -2178,7 +2178,7 @@ height = 180
 
     #[test]
     fn absurd_cadence_is_rejected() {
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("cadence_ms = 500", "cadence_ms = 1");
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("cadence_ms = 250", "cadence_ms = 1");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(matches!(err, ConfigError::Validation(_)), "was: {err}");
     }
@@ -2186,9 +2186,9 @@ height = 180
     #[test]
     fn stability_defaults_and_roundtrips() {
         let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
-        assert_eq!(config.capture.stability_ms, 400);
+        assert_eq!(config.capture.stability_ms, 250);
 
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("stability_ms = 400", "stability_ms = 0");
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("stability_ms = 250", "stability_ms = 0");
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.capture.stability_ms, 0);
         let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
@@ -2198,15 +2198,15 @@ height = 180
     #[test]
     fn capture_section_without_stability_gets_the_default() {
         // A ticket-01..04 config predates stability_ms.
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("\nstability_ms = 400", "");
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("\nstability_ms = 250", "");
         let config = AppConfig::from_toml_str(&text).unwrap();
-        assert_eq!(config.capture.stability_ms, 400);
+        assert_eq!(config.capture.stability_ms, 250);
     }
 
     #[test]
     fn absurd_stability_is_rejected() {
         let text =
-            AppConfig::DEFAULT_TEMPLATE.replace("stability_ms = 400", "stability_ms = 20000");
+            AppConfig::DEFAULT_TEMPLATE.replace("stability_ms = 250", "stability_ms = 20000");
         let err = AppConfig::from_toml_str(&text).unwrap_err();
         assert!(err.to_string().contains("stability_ms"), "was: {err}");
     }

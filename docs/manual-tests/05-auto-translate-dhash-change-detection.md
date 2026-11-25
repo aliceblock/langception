@@ -42,17 +42,17 @@ a real Windows display; a game with an animated HUD is the ideal target.
       design — animations are noise).
 - [ ] **A stable change fires once, promptly**: change the text (e.g. a
       dialog line advances) → the new Thai appears within about a second
-      (change detected at tick N, fired at N+1 once the 400 ms window has
+      (change detected at tick N, fired at N+1 once the 250 ms window has
       elapsed with the default cadence) and fires exactly ONCE — no
       duplicate entries.
 - [ ] **A flash never translates**: brief text that appears and vanishes
-      within ~half a second (a tooltip flash, a hit-point popup) produces
+      within ~200 ms (a tooltip flash, a hit-point popup) produces
       no Results Window entry and no flickering pill.
 - [ ] **stability_ms is honored**: set `stability_ms = 2000` in
       `[capture]`, restart, change text → the translation now waits ~2 s
       of stability; set `stability_ms = 0` → every pixel change translates
       on the detecting pass (animation backgrounds now DO spam — that is
-      the knob doing its job). Restore `stability_ms = 400`.
+      the knob doing its job). Restore `stability_ms = 250`.
 - [ ] **absurd stability is rejected**: `stability_ms = 20000` → the
       Results Window shows the config validation error on restart; fix it.
 
@@ -60,7 +60,7 @@ a real Windows display; a game with an animated HUD is the ideal target.
 
 - [ ] **cadence_ms is honored**: set `cadence_ms = 50` (the minimum) → text
       changes show almost instantly; set `cadence_ms = 2000` → visibly
-      slower. Restore `cadence_ms = 500`.
+      slower. Restore `cadence_ms = 250`.
 - [ ] **cadence floor enforced**: `cadence_ms = 1` → config validation
       error on restart (must be at least 50).
 
