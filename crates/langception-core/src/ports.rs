@@ -275,6 +275,17 @@ pub trait TranslateEngine: Send + Sync {
         "engine"
     }
 
+    /// Whether the most recent `translate`/`translate_guided` call on this
+    /// engine answered from a cache — the Debug Log's read provenance
+    /// (ticket 04) needs it without reshaping every engine's return type.
+    /// The loop is the only caller and reads it right after the await;
+    /// calls are sequential per task, so no lock is needed. Engines that
+    /// never cache keep the default.
+    fn last_answer_cached(&self) -> bool {
+        let _ = self;
+        false
+    }
+
     /// Whether this engine sends screen text off-machine. The shell consults
     /// it whenever a pipeline becomes active: a cloud engine must surface the
     /// privacy badge (spec: "the user always knows what leaves their

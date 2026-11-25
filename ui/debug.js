@@ -297,6 +297,8 @@ function readReason(read) {
   switch (dispositionTag(read)) {
     case "translated_engine":
       return t("debug.reason.translated_engine");
+    case "translated_engine_cached":
+      return t("debug.reason.translated_engine_cached");
     case "translated_glossary":
       return t("debug.reason.translated_glossary");
     case "translated_fused":
@@ -473,7 +475,17 @@ function stagePill(name, ms, isSlow) {
 }
 
 function readBadge(read) {
-  const key = countKey(dispositionTag(read));
+  const tag = dispositionTag(read);
+  // The Translation Cache's own badge (ticket 04): a translated answer
+  // that cost no request at all reads differently from a live one.
+  if (tag === "translated_engine_cached") {
+    const b = document.createElement("span");
+    b.className = "reason-badge reason-cached";
+    b.insertAdjacentHTML("afterbegin", ICONS.check);
+    b.append(document.createTextNode(readReason(read)));
+    return b;
+  }
+  const key = countKey(tag);
   if (key === "translated") {
     const b = document.createElement("span");
     b.className = "reason-badge reason-translated";

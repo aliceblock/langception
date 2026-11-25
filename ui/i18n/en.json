@@ -80,6 +80,7 @@
   "debug.reason.suppressed": "suppressed — identical text already shown",
   "debug.reason.translated_cached": "translated · cached read (no OCR this pass)",
   "debug.reason.translated_engine": "translated · engine",
+  "debug.reason.translated_engine_cached": "translated · cache (no request sent)",
   "debug.reason.translated_fused": "translated · fused read",
   "debug.reason.translated_glossary": "translated · glossary",
   "debug.reason.unchanged": "unchanged — pixels match what is shown",

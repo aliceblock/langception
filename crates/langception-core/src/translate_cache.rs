@@ -306,6 +306,10 @@ pub struct CachingTranslateEngine {
     inner: Arc<dyn TranslateEngine>,
     engine_key: String,
     cache: Arc<TranslationCache>,
+    /// Whether THIS wrapper served the last request from the cache —
+    /// the loop's provenance probe ([`TranslateEngine::last_answer_cached`])
+    /// reads it right after each await.
+    last_cache_hit: AtomicBool,
 }
 
 impl CachingTranslateEngine {
@@ -318,11 +322,14 @@ impl CachingTranslateEngine {
             inner,
             engine_key: engine_key.to_string(),
             cache,
+            last_cache_hit: AtomicBool::new(false),
         }
     }
 
     fn cached(&self, text: &str, sl: &str, target: &str) -> Option<String> {
-        self.cache.lookup(&self.engine_key, sl, target, text)
+        let hit = self.cache.lookup(&self.engine_key, sl, target, text);
+        self.last_cache_hit.store(hit.is_some(), Ordering::SeqCst);
+        hit
     }
 
     fn remember(&self, text: &str, sl: &str, target: &str, translation: &str) {
@@ -344,6 +351,7 @@ impl TranslateEngine for CachingTranslateEngine {
             return Ok(hit);
         }
         let translated = self.inner.translate(text, source, target).await?;
+        self.last_cache_hit.store(false, Ordering::SeqCst);
         self.remember(text, sl, target, &translated);
         Ok(translated)
     }
@@ -363,6 +371,7 @@ impl TranslateEngine for CachingTranslateEngine {
             .inner
             .translate_guided(text, source, target, guidance)
             .await?;
+        self.last_cache_hit.store(false, Ordering::SeqCst);
         self.remember(text, sl, target, &translated);
         Ok(translated)
     }
@@ -373,6 +382,10 @@ impl TranslateEngine for CachingTranslateEngine {
 
     fn is_cloud(&self) -> bool {
         self.inner.is_cloud()
+    }
+
+    fn last_answer_cached(&self) -> bool {
+        self.last_cache_hit.load(Ordering::SeqCst)
     }
 }
 

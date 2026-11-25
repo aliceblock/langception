@@ -83,6 +83,9 @@ use tokio::sync::{mpsc, watch};
 pub enum Via {
     /// From the active Translate Engine.
     Engine,
+    /// From the engine layer's Translation Cache — no request left the
+    /// machine (ADR-0006, ticket 04).
+    EngineCached,
     /// From a Glossary whole-block match (engine never called).
     Glossary,
 }
@@ -132,6 +135,9 @@ pub enum EventOrigin {
 pub enum ReadDisposition {
     /// Shown: the Translate Engine answered this pass's own read.
     TranslatedEngine,
+    /// Shown: the engine layer answered from the Translation Cache — no
+    /// request left the machine (ADR-0006, ticket 04).
+    TranslatedEngineCached,
     /// Shown: a Glossary whole-block match pinned it (engine never called).
     TranslatedGlossary,
     /// Shown: the fused vision call answered read + translation together
@@ -186,6 +192,7 @@ impl From<Via> for ReadDisposition {
     fn from(via: Via) -> Self {
         match via {
             Via::Engine => Self::TranslatedEngine,
+            Via::EngineCached => Self::TranslatedEngineCached,
             Via::Glossary => Self::TranslatedGlossary,
         }
     }
@@ -977,16 +984,23 @@ impl Orchestrator {
             } else {
                 line.to_string()
             };
+            // One-shot provenance (ticket 04): same probe as the loop path.
+            let via = if self.translate.last_answer_cached() {
+                Via::EngineCached
+            } else {
+                Via::Engine
+            };
             self.emit_translated(
                 region,
                 block,
                 thai,
-                Via::Engine,
+                via,
                 origin,
                 self.sampled_style(image, block),
             );
             timings.blocks_translated += 1;
-            timings.trace(text.clone(), ReadDisposition::TranslatedEngine);
+            let disposition = ReadDisposition::from(via);
+            timings.trace(text.clone(), disposition);
         }
     }
 
@@ -1596,14 +1610,24 @@ impl Orchestrator {
                     preset: self.config.prompt_preset.clone(),
                     recent_translations: recent.to_vec(),
                 };
-                self.translate
+                let answered = self
+                    .translate
                     .translate_guided(
                         text,
                         self.config.source_language,
                         crate::ports::TARGET_LANGUAGE,
                         &guidance,
                     )
-                    .await
+                    .await;
+                // The Debug Log's provenance (ticket 04): read right after
+                // the await — the loop is the only caller, sequential per
+                // task.
+                let via = if self.translate.last_answer_cached() {
+                    Via::EngineCached
+                } else {
+                    Via::Engine
+                };
+                answered
                     .map(|thai| {
                         // Genderless Mode (ticket 08): engine output is
                         // scrubbed before display; the glossary path above
@@ -1618,7 +1642,7 @@ impl Orchestrator {
                         } else {
                             thai
                         };
-                        (thai, Via::Engine)
+                        (thai, via)
                     })
                     .map_err(|e| e.message)
             }

@@ -800,6 +800,13 @@ button svg, .search-glyph { width: 14px; height: 14px; }
   font-weight: 500;
 }
 .reason-translated svg { color: #34d399; }
+.reason-cached {
+  color: var(--muted);
+  background: rgba(39, 39, 42, 0.8);
+  border: 1px solid rgba(63, 63, 70, 0.7);
+  font-weight: 500;
+}
+.reason-cached svg { color: #6ee7b7; }
 .reason-suppressed {
   color: var(--muted);
   background: rgba(39, 39, 42, 0.8);

@@ -53,6 +53,13 @@ pub struct AutoSwitchEngine {
     secondary: Arc<dyn TranslateEngine>,
     cache: Arc<TranslationCache>,
     serving_secondary: AtomicBool,
+    /// Whether the last routed request went to the secondary — the
+    /// provenance probe delegates to it (its own cache wrapper reports);
+    /// the google side has no wrapper when auto-switch is on, so this
+    /// wrapper keeps that flag itself.
+    last_via_secondary: AtomicBool,
+    /// Whether the google side answered from the google cache.
+    google_hit: AtomicBool,
     on_switch: SwitchNotify,
 }
 
@@ -68,6 +75,8 @@ impl AutoSwitchEngine {
             secondary,
             cache,
             serving_secondary: AtomicBool::new(false),
+            last_via_secondary: AtomicBool::new(false),
+            google_hit: AtomicBool::new(false),
             on_switch,
         }
     }
@@ -105,12 +114,16 @@ impl TranslateEngine for AutoSwitchEngine {
     ) -> Result<String, TranslateError> {
         let sl = source.code();
         if let Some(hit) = self.cache.lookup(GOOGLE_CACHE_KEY, sl, target, text) {
+            self.google_hit.store(true, Ordering::SeqCst);
+            self.last_via_secondary.store(false, Ordering::SeqCst);
             return Ok(hit);
         }
+        self.google_hit.store(false, Ordering::SeqCst);
         if !self.google.all_cooling() {
             match self.google.translate(text, source, target).await {
                 Ok(translated) => {
                     self.announce_recovery();
+                    self.last_via_secondary.store(false, Ordering::SeqCst);
                     self.cache
                         .store(GOOGLE_CACHE_KEY, sl, target, text, translated.clone());
                     return Ok(translated);
@@ -135,6 +148,7 @@ impl TranslateEngine for AutoSwitchEngine {
                 badge: self.secondary_badge(),
             });
         }
+        self.last_via_secondary.store(true, Ordering::SeqCst);
         self.secondary.translate(text, source, target).await
     }
 
@@ -152,12 +166,16 @@ impl TranslateEngine for AutoSwitchEngine {
     ) -> Result<String, TranslateError> {
         let sl = source.code();
         if let Some(hit) = self.cache.lookup(GOOGLE_CACHE_KEY, sl, target, text) {
+            self.google_hit.store(true, Ordering::SeqCst);
+            self.last_via_secondary.store(false, Ordering::SeqCst);
             return Ok(hit);
         }
+        self.google_hit.store(false, Ordering::SeqCst);
         if !self.google.all_cooling() {
             match self.google.translate_guided(text, source, target, guidance).await {
                 Ok(translated) => {
                     self.announce_recovery();
+                    self.last_via_secondary.store(false, Ordering::SeqCst);
                     self.cache
                         .store(GOOGLE_CACHE_KEY, sl, target, text, translated.clone());
                     return Ok(translated);
@@ -178,6 +196,7 @@ impl TranslateEngine for AutoSwitchEngine {
                 badge: self.secondary_badge(),
             });
         }
+        self.last_via_secondary.store(true, Ordering::SeqCst);
         self.secondary
             .translate_guided(text, source, target, guidance)
             .await
@@ -192,6 +211,17 @@ impl TranslateEngine for AutoSwitchEngine {
 
     fn is_cloud(&self) -> bool {
         true
+    }
+
+    /// A google-side answer's provenance is this wrapper's own flag (it
+    /// IS the google cache); a secondary-side answer delegates to the
+    /// secondary's cache wrapper.
+    fn last_answer_cached(&self) -> bool {
+        if self.last_via_secondary.load(Ordering::SeqCst) {
+            self.secondary.last_answer_cached()
+        } else {
+            self.google_hit.load(Ordering::SeqCst)
+        }
     }
 }
 

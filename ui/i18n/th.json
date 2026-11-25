@@ -80,6 +80,7 @@
   "debug.reason.suppressed": "ระงับ — ข้อความเดียวกันแสดงอยู่แล้ว",
   "debug.reason.translated_cached": "แปลแล้ว · ใช้ผลอ่านเดิม (รอบนี้ไม่ได้ทำ OCR)",
   "debug.reason.translated_engine": "แปลแล้ว · เอนจิน",
+  "debug.reason.translated_engine_cached": "แปลแล้ว · จากแคช (ไม่มีการเรียก API)",
   "debug.reason.translated_fused": "แปลแล้ว · อ่านแบบผสาน",
   "debug.reason.translated_glossary": "แปลแล้ว · อภิธานศัพท์",
   "debug.reason.unchanged": "ไม่เปลี่ยน — พิกเซลตรงกับที่แสดงอยู่",
