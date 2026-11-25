@@ -232,7 +232,6 @@
               <option value="gemini" data-i18n="settings.engines.engine.gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
               <option value="azure" data-i18n="settings.engines.engine.azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
               <option value="openai" data-i18n="settings.engines.engine.openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
-              <option value="deepl" data-i18n="settings.engines.engine.deepl">DeepL — free tier, 1M chars total</option>
             </select>
           </label>
         </div>
@@ -345,25 +344,6 @@
             </div>
           </div>
         </div>
-        <div class="engine-card" data-engine="deepl">
-          <div class="engine-title">
-            <strong data-i18n="settings.card.deepl.title">DeepL</strong>
-            <span class="chip privacy" data-i18n-title="settings.card.deepl.cloud_title" title="Screen text is sent to DeepL's translation service" data-i18n="common.cloud_chip">☁ cloud</span>
-          </div>
-          <div class="engine-body">
-            <p class="hint" data-i18n="settings.card.deepl.hint">
-              The DeepL API free plan (1M chars total, Thai supported). Sign
-              up with the link and paste the key — free keys end with ":fx",
-              which picks the right API host.
-            </p>
-            <div class="row glossary-add">
-              <input id="engines-deepl-key" type="password" data-i18n-placeholder="settings.card.deepl.key_placeholder" placeholder="DeepL API key (free keys end with :fx)" spellcheck="false" autocomplete="off" />
-            </div>
-            <div class="row">
-              <button id="engines-deepl-link" class="btn small" data-i18n="settings.card.deepl.signup_btn">Sign up for a free key…</button>
-            </div>
-          </div>
-        </div>
         <div class="settings-section">
         <h3 data-i18n="settings.prompts.title" data-i18n-title="settings.prompts.tooltip">Prompts (advanced)</h3>
         <!-- Ticket 54: Genderless Mode moved here from General — it shapes
@@ -427,7 +407,6 @@
             <option value="openai" data-i18n="settings.engines.fallback.openai">OpenAI-compatible</option>
             <option value="lmstudio" data-i18n="settings.engines.fallback.lmstudio">LM Studio (local)</option>
             <option value="azure" data-i18n="settings.engines.fallback.azure">Azure AI Translator</option>
-            <option value="deepl" data-i18n="settings.engines.fallback.deepl">DeepL</option>
           </select>
         </label>
         <!-- The Translation Cache (ADR-0006): the clear is instant and
@@ -549,7 +528,6 @@
                 <option value="gemini" data-i18n="settings.profiles.engine.gemini">Gemini</option>
                 <option value="azure" data-i18n="settings.profiles.engine.azure">Azure AI Translator</option>
                 <option value="openai" data-i18n="settings.profiles.engine.openai">OpenAI-compatible</option>
-                <option value="deepl" data-i18n="settings.profiles.engine.deepl">DeepL</option>
               </select>
             </label>
             <label class="form-row">

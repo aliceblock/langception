@@ -156,7 +156,6 @@ document.getElementById("wizard-skip").addEventListener("click", finishWizard);
 // shares this loader so its action can merge with the already-saved values.
 
 const AZURE_CREATE_KEY_URL = "https://portal.azure.com";
-const DEEPL_API_URL = "https://www.deepl.com/en/pro-api";
 const GEMINI_CREATE_KEY_URL = "https://aistudio.google.com/apikey";
 
 const enginesDefault = document.getElementById("engines-default");
@@ -166,7 +165,6 @@ const enginesReading = document.getElementById("engines-reading");
 const enginesReadingWarning = document.getElementById("engines-reading-warning");
 const enginesAzureKey = document.getElementById("engines-azure-key");
 const enginesAzureRegion = document.getElementById("engines-azure-region");
-const enginesDeeplKey = document.getElementById("engines-deepl-key");
 const enginesOpenAiBaseUrl = document.getElementById("engines-openai-base-url");
 const enginesOpenAiKey = document.getElementById("engines-openai-key");
 const enginesOpenAiModel = document.getElementById("engines-openai-model");
@@ -248,7 +246,6 @@ async function loadEngines() {
     enginesFallback.value = savedEngines.rateLimitFallback || "none";
     const fallbackComplete = {
       azure: !!savedEngines.azure?.key?.trim(),
-      deepl: !!savedEngines.deepl?.key?.trim(),
       openai:
         !!savedEngines.openai?.baseUrl?.trim() && !!savedEngines.openai?.model?.trim(),
       lmstudio:
@@ -265,7 +262,6 @@ async function loadEngines() {
     expandSelectedEngineCard();
     enginesAzureKey.value = savedEngines.azure.key;
     enginesAzureRegion.value = savedEngines.azure.region;
-    enginesDeeplKey.value = savedEngines.deepl.key;
     enginesOpenAiBaseUrl.value = savedEngines.openai.baseUrl;
     enginesOpenAiKey.value = savedEngines.openai.apiKey;
     enginesOpenAiModel.value = savedEngines.openai.model;
@@ -571,9 +567,6 @@ function collectEngines(defaultEngine) {
       key: enginesAzureKey.value.trim(),
       region: enginesAzureRegion.value.trim(),
     },
-    deepl: {
-      key: enginesDeeplKey.value.trim(),
-    },
     openai: {
       baseUrl: enginesOpenAiBaseUrl.value.trim(),
       apiKey: enginesOpenAiKey.value.trim(),
@@ -765,7 +758,6 @@ document.getElementById("engines-clear-cache").addEventListener("click", async (
 for (const [buttonId, url] of [
   ["engines-azure-link", AZURE_CREATE_KEY_URL],
   ["wizard-azure-link", AZURE_CREATE_KEY_URL],
-  ["engines-deepl-link", DEEPL_API_URL],
   ["engines-gemini-link", GEMINI_CREATE_KEY_URL],
 ]) {
   document.getElementById(buttonId).addEventListener("click", () => {
@@ -788,7 +780,6 @@ document.getElementById("wizard-azure-use").addEventListener("click", async () =
         defaultEngine: "azure",
         reading: savedEngines?.reading || "ocr",
         azure: { key, region: wizardAzureRegion.value.trim() },
-        deepl: { key: savedEngines?.deepl?.key || "" },
         openai: savedEngines?.openai || { baseUrl: "", apiKey: "", model: "", temperature: 0.2 },
         lmstudio: savedEngines?.lmstudio || { baseUrl: "", model: "", temperature: 0.2 },
         gemini: savedEngines?.gemini || { apiKey: "", model: "", temperature: 0.2 },
@@ -1946,7 +1937,6 @@ const TRACKED_ENGINES = [
   enginesReading,
   enginesAzureKey,
   enginesAzureRegion,
-  enginesDeeplKey,
   enginesOpenAiBaseUrl,
   enginesOpenAiKey,
   enginesOpenAiModel,

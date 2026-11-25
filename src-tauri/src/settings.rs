@@ -401,7 +401,7 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
     let rate_limit_fallback = engines.rate_limit_fallback.trim().to_lowercase();
     if rate_limit_fallback != "none" {
         if rate_limit_fallback == "google" {
-            return Err("The auto-switch fallback cannot be Google — Google is the engine that cools down; pick azure, deepl, openai, lmstudio, or gemini".into());
+            return Err("The auto-switch fallback cannot be Google — Google is the engine that cools down; pick azure, openai, lmstudio, or gemini".into());
         }
         if !langception_core::config::TRANSLATE_ENGINES.contains(&rate_limit_fallback.as_str()) {
             return Err(format!(
@@ -554,9 +554,8 @@ pub(crate) async fn test_engine(app: AppHandle, engine: String) -> Result<String
 /// webview window must never become a general URL opener.
 #[tauri::command]
 pub(crate) fn open_engine_link(url: String) -> Result<(), String> {
-    const ALLOWED: [&str; 6] = [
+    const ALLOWED: [&str; 5] = [
         "https://portal.azure.com",
-        "https://www.deepl.com/en/pro-api",
         "https://aistudio.google.com/apikey",
         // The developer's own pages (About tab).
         "https://intception.app",
