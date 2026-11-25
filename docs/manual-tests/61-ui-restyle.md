@@ -228,3 +228,13 @@ server, not this bug.
   both, and the state survives restart (the same two config flags,
   written together by `set_windows_on_top`). A General save (e.g.
   changing Cadence) must never alter the pin state.
+
+## Addendum 4 — live UI-Language switch reaches every window (67bce44)
+
+1. Launch the app, open Settings and keep the Results window visible.
+2. Settings → General → UI Language: switch English → ไทย, Save.
+3. Expect: the Settings page flips to Thai immediately (as before), AND the Results window flips the same moment — status pill, Start/Pause labels, config bar, zone cards, history toolbar, footer — no reopen, no restart.
+4. Switch back ไทย → English: both windows flip back.
+5. Debug Log and the overlays follow too: open the Debug Log while Settings saves a language change — its static labels are already in the new language.
+6. Reverse direction: change the translation pair in the Results titlebar while Settings is open — the Settings General tab's Source language select follows immediately (unless you have an unsaved edit in it; your edit wins).
+7. Pin interplay: click the Results titlebar pin, then change any General field and Save — the pin state survives the save (the saved on-top values track the pin's broadcast).

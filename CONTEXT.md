@@ -70,6 +70,10 @@ _Avoid_: live translate, realtime mode
 A pluggable component that turns a captured image region into text blocks with positions.
 _Avoid_: reader, recognizer
 
+**Model Tier**:
+The size grade of the bundled OCR Engine — Tiny (fastest, weakest on small text), Small (the default balance), or Medium (most accurate, slowest). Chosen as part of the OCR Engine selection itself — the engine dropdown lists the tiers as separate options — not as a separate setting.
+_Avoid_: model size, model version, quality level
+
 **Translate Engine**:
 A pluggable component that translates text from a Source Language to Thai.
 _Avoid_: translator, backend
