@@ -1,0 +1,9 @@
+{
+  "status": 200,
+  "translateResponse": {
+    "translateText": "Supondo que os associados de Rishushu na Companhia Comercial Baert estejam de posse do mesmo documento, suspeito que o próximo ataque à nossa caravana de suprimentos ocorrerá bem ali, no Sudário Central, a sudoeste do Portão do Lobo Branco.",
+    "detectedSourceLanguage": "en",
+    "outputLanguage": "pt-BR",
+    "sourceText": "Assuming that Rishushu's associates at the Baert Trading Company are in possession of the same document, I suspect that the next attack on our supply caravan will strike right there─in the Central Shroud, due southwest from the White Wolf Gate."
+  }
+}
