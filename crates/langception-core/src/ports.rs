@@ -355,7 +355,7 @@ mod tests {
         }
     }
 
-    /// A keyed/MT engine (Google, Azure, DeepL) as the port models it: it
+    /// A keyed/MT engine (Google, Azure) as the port models it: it
     /// implements only `translate` and keeps the default `translate_guided`.
     struct BareEngine {
         seen: std::sync::Mutex<Vec<String>>,

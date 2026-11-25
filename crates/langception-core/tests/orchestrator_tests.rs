@@ -2381,8 +2381,8 @@ async fn glossary_and_genderless_guidance_compose_for_llm_engines() {
 // in LoopConfig like the language: the classic path hands the translation
 // override to every per-block guidance, the fused path hands the
 // screen-reading override to the fused engine's guidance. Non-LLM engines
-// discard the guidance wholesale (the port's default), so Google, Azure and
-// DeepL never see a custom prompt.
+// discard the guidance wholesale (the port's default), so Google and Azure
+// never see a custom prompt.
 
 #[tokio::test]
 async fn the_translation_prompt_override_rides_in_the_engine_guidance() {

@@ -1,5 +1,7 @@
 # Unofficial Google endpoint as the default translate engine
 
+_Amended by [ADR-0007](0007-remove-deepl-engine.md): DeepL, listed below among the additional keyed options, has been removed — its free tier's 1M-character lifetime cap makes it unusable in practice. The default-engine decision and the visibility contract below stand._
+
 Langception must be usable with zero configuration on first launch. Among free EN/JA/ZH/KO→Thai options, only the unofficial Google Translate endpoint needs no account or key; Azure AI Translator's F0 tier (2M chars/month, permanent free) is the reliable but keyed alternative. We decided the default engine is the unofficial Google endpoint, with a first-run/settings prompt offering an Azure F0 key as the recommended upgrade. DeepL, Gemini, OpenAI-compatible APIs, and LM Studio are additional keyed/local options.
 
 ## Consequences

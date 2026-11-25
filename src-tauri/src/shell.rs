@@ -14,7 +14,6 @@ use langception_core::config::{
     AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextAlignment,
     TextVAlignment, TextStyle, UiLanguage, WindowSettings,
 };
-use langception_core::deepl::DeepLTranslateEngine;
 use langception_core::fused::{GeminiFusedEngine, OpenAiFusedEngine};
 use langception_core::gemini::GeminiEngine;
 use langception_core::glossary::Glossary;
@@ -650,13 +649,31 @@ pub fn run() {
             let config_path = state.config_path.clone();
             let loaded = load_config(&config_path);
             match &loaded {
-                Ok(_) => crate::logging::log("config", format!("loaded {}", config_path.display())),
+                Ok((_, changes)) => {
+                    crate::logging::log("config", format!("loaded {}", config_path.display()));
+                    if !changes.is_empty() {
+                        // The removed-engine migration announced through the
+                        // same channels as engine errors (ADR-0007): the
+                        // Results Window banner + the app log. It fires once
+                        // per user because the rewrite above cleaned the
+                        // file — the next launch migrates nothing.
+                        push_warning(
+                            &state,
+                            format!(
+                                "The DeepL engine was removed (its free tier is capped at \
+                                 1M characters, lifetime) — your config was migrated: {}",
+                                changes.join("; ")
+                            ),
+                        );
+                    }
+                }
                 Err(message) => crate::logging::log(
                     "config",
                     format!("BROKEN {}: {message}", config_path.display()),
                 ),
             }
-            *state.config.lock().unwrap_or_else(|p| p.into_inner()) = Some(loaded);
+            *state.config.lock().unwrap_or_else(|p| p.into_inner()) =
+                Some(loaded.map(|(config, _)| config));
 
             build_tray(&handle)?;
             install_hotkeys(&handle)?;
@@ -703,9 +720,13 @@ fn config_file_path() -> PathBuf {
 }
 
 /// Reads the config file, writing the annotated default template on first
-/// launch. Errors are returned as display strings — a broken config is a
-/// visible condition, never a silent one.
-fn load_config(path: &Path) -> Result<AppConfig, String> {
+/// launch, and migrates removed-engine references (ADR-0007) before
+/// validation: a config that still names DeepL loads on the values the app
+/// would serve anyway, and its file is rewritten clean — so the one-time
+/// notice (the returned change lines, empty = nothing named a removed
+/// engine) genuinely happens once. Errors are returned as display strings —
+/// a broken config is a visible condition, never a silent one.
+fn load_config(path: &Path) -> Result<(AppConfig, Vec<String>), String> {
     if !path.exists() {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -716,19 +737,27 @@ fn load_config(path: &Path) -> Result<AppConfig, String> {
     }
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let mut config = AppConfig::from_toml_str(&text).map_err(|e| {
+    let (mut config, changes) = AppConfig::from_toml_str_migrated(&text).map_err(|e| {
         format!(
             "{} is broken — fix it, then stop/start translation:\n{e}",
             path.display()
         )
     })?;
-    // Slice-1 configs watched a single [region]; carry it over as a zone.
-    if config.migrate_legacy_region() {
+    // Both migrations persist best-effort: a failed rewrite still loads the
+    // migrated config in memory, and the next save writes it anyway.
+    let rewrite = |config: &AppConfig| {
         if let Ok(serialized) = config.to_toml_string() {
             let _ = std::fs::write(path, serialized);
         }
+    };
+    if !changes.is_empty() {
+        rewrite(&config);
     }
-    Ok(config)
+    // Slice-1 configs watched a single [region]; carry it over as a zone.
+    if config.migrate_legacy_region() {
+        rewrite(&config);
+    }
+    Ok((config, changes))
 }
 
 /// The monitor's system name, owned (`Monitor::name` borrows).
@@ -1927,7 +1956,7 @@ fn resolve_ppocrv6_from(
 /// Builds the fused vision engine (ticket 12) for the effective target's
 /// engine choice (a Profile's override wins, like the translate engine's).
 /// Only the LLM engines can read images — a classic MT engine (Google,
-/// Azure, DeepL) with fused reading selected is a start-time error naming
+/// Azure) with fused reading selected is a start-time error naming
 /// the fix, never a silent OCR fallback. The LLM engines reuse their
 /// translate settings (key, endpoint, model, temperature): the model must
 /// actually have vision capability, which is the user's pick to make.
@@ -2064,20 +2093,6 @@ pub(crate) fn build_translate_engine(
             Arc::new(
                 AzureTranslateEngine::new(key, azure.region.trim())
                     .map_err(|e| format!("failed to initialize Azure engine: {e}"))?,
-            )
-        }
-        "deepl" => {
-            let deepl = &config.engines.deepl;
-            let key = deepl.key.trim();
-            if key.is_empty() {
-                return Err(
-                    "DeepL engine selected, but no API key is set — add one in Settings → Engines"
-                        .into(),
-                );
-            }
-            Arc::new(
-                DeepLTranslateEngine::new(key)
-                    .map_err(|e| format!("failed to initialize DeepL engine: {e}"))?,
             )
         }
         "openai" => {

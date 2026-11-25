@@ -12,7 +12,7 @@ Langception อ่านข้อความบนหน้าจอของ�
 - **Two display surfaces** — เลือกแสดงผลได้ 2 แบบ คือ **In-place Overlay** (แสดงคำแปลทับลงบนตำแหน่งเดิมผ่านหน้าต่างโปร่งใสที่คลิกทะลุได้ แยกตามแต่ละ Monitor) และ **Results Window** (หน้าต่างรายการคำแปลแบบ Always-on-top ที่คลิกเพื่อ Copy ได้ทันที พร้อมแถบแจ้งเตือน Error)
 - **Auto-translate loop** — จับภาพหน้าจออย่างต่อเนื่อง คำนวณ Hash ของแต่ละ Text Block (`dHash`) และแปลใหม่เฉพาะส่วนที่มีการเปลี่ยนแปลงจริง พร้อมระบบหน่วงเวลา (Stability window) เพื่อป้องกันการแปลซ้ำระหว่างอนิเมชัน กดหยุดชั่วคราวได้ด้วย `Alt+Shift+P`
 - **Zero-config default engine** — ใช้งานได้ทันทีตั้งแต่เปิดครั้งแรกโดยไม่ต้องสมัครบัญชีหรือใส่ API Key (ใช้ Endpoint อย่างไม่เป็นทางการของ Google; ดูรายละเอียดข้อจำกัดได้ในตาราง Engine)
-- **Upgradeable engines** — รองรับ Azure AI Translator, DeepL, Gemini API, Endpoint ใดๆ ที่รองรับมาตรฐาน OpenAI-compatible และ LM Studio สำหรับการแปลแบบ Local ที่เป็นส่วนตัว 100%
+- **Upgradeable engines** — รองรับ Azure AI Translator, Gemini API, Endpoint ใดๆ ที่รองรับมาตรฐาน OpenAI-compatible และ LM Studio สำหรับการแปลแบบ Local ที่เป็นส่วนตัว 100%
 - **Two reading modes** — โหมด **Classic** (ใช้ Windows OCR อ่านข้อความแล้วส่งแปลทีละบล็อก) หรือโหมด **Fused** (ใช้ Vision-LLM อ่านและแปลทุก Text Block ในเฟรมเดียวจบ)
 - **Glossary** — ปักหมุดคำแปลภาษาไทยที่ต้องการแบบเป๊ะๆ หากตรงกับทั้งบล็อกระบบจะดึงคำแปลมาใช้ทันทีโดยไม่ผ่าน Engine แต่หากเป็นคำในประโยคจะถูกแทรกเข้าไปใน Prompt ของ LLM รองรับการ Import/Export เป็นไฟล์ JSON
 - **Genderless Mode** — ตัดคำลงท้ายและสรรพนามที่ระบุเพศในภาษาไทย (เช่น ครับ/ค่ะ, ผม/ฉัน) ออกจากผลลัพธ์ โดยสั่งผ่าน Prompt สำหรับ LLM และใช้ระบบคัดกรองตามกฎ (Rule-based scrubber) สำหรับ Engine อื่นๆ สามารถเปิด/ปิดเป็นค่าหลัก หรือตั้งค่าแยกตาม Profile ได้
@@ -78,7 +78,6 @@ OCR Engine เริ่มต้นคือ **Windows OCR** (`Windows.Media.Ocr
 | --- | --- | --- |
 | **Google** *(ค่าเริ่มต้น)* | ไม่ต้องใช้ | ใช้ Endpoint ฟรีอย่างไม่เป็นทางการ (`translate.googleapis.com`) ไม่ต้องตั้งค่าใดๆ แต่อาจทำงานช้าลงหรือใช้งานไม่ได้โดยไม่แจ้งล่วงหน้า และมีการส่งข้อความบนหน้าจอไปยัง Google |
 | **Azure AI Translator** | Key (+ Region ไม่บังคับ) | ตัวเลือกอัปเกรดที่แนะนำ: มีแพ็กเกจฟรีระดับ F0 เป็นทางการและเสถียร สร้าง Translator resource ได้ที่ [Azure portal](https://portal.azure.com) (มีลิงก์ให้ในหน้า Settings) แล้วนำ Key มาวาง หากเป็น Global resource ให้เว้นช่อง Region ว่างไว้ |
-| **DeepL** | Key | [DeepL API](https://www.deepl.com/en/pro-api) — มีแพ็กเกจฟรีให้ใช้งาน นำ Key มาวางได้เลย หากเป็น Key แบบฟรี (ลงท้ายด้วย `:fx`) ระบบจะส่งไปยัง Host ฟรีของ DeepL ให้อัตโนมัติ |
 | **Gemini** | Key | โมเดลจาก Google AI Studio รับ Key ได้ที่ [aistudio.google.com](https://aistudio.google.com/apikey) และระบุ Model ID ที่ต้องการ — แนะนำ `gemini-4-hydrogen` หรือ `gemini-3.8-flash` |
 | **OpenAI-compatible** | Key | รองรับ Server ใดๆ ที่ใช้มาตรฐาน `/chat/completions` เช่น OpenAI (`https://api.openai.com/v1`), OpenRouter หรือบริการอื่นๆ ที่ใช้ API รูปแบบเดียวกัน โดยตั้งค่า Base URL, Key และชื่อโมเดล |
 | **LM Studio** | ไม่ต้องใช้ (Local) | ทำงานแบบ Offline และเป็นส่วนตัว 100% — ดูรายละเอียดในหัวข้อถัดไป |
@@ -124,7 +123,7 @@ OCR Engine เริ่มต้นคือ **Windows OCR** (`Windows.Media.Ocr
 
 ## Privacy
 
-- ข้อความบนหน้าจอจะถูกส่งออกจากเครื่องของคุณ **เฉพาะตอนที่** ใช้งาน Cloud Engine (Google, Azure, DeepL, Gemini, OpenAI-compatible) ในการแปลเท่านั้น โดยหน้าต่าง Results Window และ Tooltip ใน Tray จะแสดงป้ายสถานะแจ้งเตือนทุกครั้งที่มีการส่งข้อมูล
+- ข้อความบนหน้าจอจะถูกส่งออกจากเครื่องของคุณ **เฉพาะตอนที่** ใช้งาน Cloud Engine (Google, Azure, Gemini, OpenAI-compatible) ในการแปลเท่านั้น โดยหน้าต่าง Results Window และ Tooltip ใน Tray จะแสดงป้ายสถานะแจ้งเตือนทุกครั้งที่มีการส่งข้อมูล
 - การแปลผ่าน LM Studio จะไม่มีการส่งข้อมูลใดๆ ออกนอกเครื่องโดยเด็ดขาด
 - แม้ว่าจะเปิดใช้งานตัวเลือก **Show Langception in screen captures** (Settings → General) ระบบวนลูปการแปลจะทำการบดบัง (Mask) หน้าต่างของ Langception เองออกจากทุกเฟรมที่ประมวลผล ทำให้โปรแกรมไม่อ่าน ไม่แปล และไม่อัปโหลดข้อความคำแปลของตัวเองซ้ำ รวมถึงตัว In-place Overlay จะไม่ปรากฏในการจับภาพประมวลผลด้วย
 - ระบบตรวจสอบอัปเดต (Optional update check) เป็นการดึงข้อมูลสถานะเวอร์ชันเท่านั้น ไม่มีการส่งข้อมูลส่วนตัวใดๆ ออกไป และไม่มีการดาวน์โหลดหรือติดตั้งอัตโนมัติ

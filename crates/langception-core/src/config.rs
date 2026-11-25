@@ -526,7 +526,7 @@ impl Default for WindowSettings {
 /// appendices (the Glossary entries, the Genderless instruction, the fused
 /// reply contract, the version tag) still attach. The LLM engines (Gemini,
 /// OpenAI-compatible, LM Studio) are the only consumers: keyed/MT engines
-/// (Google, Azure, DeepL) never see prompts, so these fields are inert for
+/// (Google, Azure) never see prompts, so these fields are inert for
 /// them. Global — a Profile may bind its own preset instead
 /// (`Profile::prompt_preset`, ticket 43), resolved by
 /// [`crate::prompt_preset::AppConfig::effective_prompt_inputs`].
@@ -580,7 +580,7 @@ impl Default for PromptSettings {
 /// The order here is only membership validation, not UI semantics: the
 /// Settings UI lists the engines in its own fixed display order
 /// (ticket 59), independent of this const.
-pub const TRANSLATE_ENGINES: [&str; 6] = ["google", "azure", "deepl", "openai", "lmstudio", "gemini"];
+pub const TRANSLATE_ENGINES: [&str; 5] = ["google", "azure", "openai", "lmstudio", "gemini"];
 
 fn default_engine() -> String {
     "google".to_string()
@@ -637,7 +637,7 @@ impl Default for OcrSettings {
 }
 
 /// API keys and endpoints for the non-default Translate Engines (ticket 09
-/// added the keyed cloud pair, ticket 10 the OpenAI-compatible pair,
+/// added the keyed cloud engine Azure, ticket 10 the OpenAI-compatible pair,
 /// ticket 11 Gemini). Config.toml is the app's only persistence surface and
 /// lives in the user's profile directory — outside any repo — so keys are
 /// kept there like everything else. Azure's `region` is the resource's
@@ -647,7 +647,7 @@ fn default_rate_limit_fallback() -> String {
 }
 
 /// API keys and endpoints for the non-default Translate Engines (ticket 09
-/// added the keyed cloud pair, ticket 10 the OpenAI-compatible pair,
+/// added the keyed cloud engine Azure, ticket 10 the OpenAI-compatible pair,
 /// ticket 11 Gemini). Config.toml is the app's only persistence surface and
 /// lives in the user's profile directory — outside any repo — so keys are
 /// kept there like everything else. Azure's `region` is the resource's
@@ -656,7 +656,6 @@ fn default_rate_limit_fallback() -> String {
 #[serde(default)]
 pub struct EnginesSettings {
     pub azure: AzureEngineSettings,
-    pub deepl: DeepLEngineSettings,
     pub openai: OpenAiEngineSettings,
     pub lmstudio: LmStudioEngineSettings,
     pub gemini: GeminiEngineSettings,
@@ -674,7 +673,6 @@ impl Default for EnginesSettings {
     fn default() -> Self {
         Self {
             azure: Default::default(),
-            deepl: Default::default(),
             openai: Default::default(),
             lmstudio: Default::default(),
             gemini: Default::default(),
@@ -690,13 +688,6 @@ pub struct AzureEngineSettings {
     /// The F0 resource's region ("global" or a region like "westus2");
     /// empty = a global resource, which must send no region header.
     pub region: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct DeepLEngineSettings {
-    /// Free-tier keys end with ":fx"; the suffix picks the API host.
-    pub key: String,
 }
 
 /// The generic OpenAI-compatible endpoint's settings (ticket 10): base URL,
@@ -829,7 +820,7 @@ pub struct AppConfig {
     /// prompt as continuity context, so consecutive dialogue keeps a
     /// consistent tone, register, and naming. 0 (the default) disables the
     /// feature entirely — nothing buffers, no prompt changes. Applies to
-    /// the LLM engines only (Google, Azure, DeepL never see prompts) and
+    /// the LLM engines only (Google, Azure never see prompts) and
     /// is global — a Profile cannot override it. Read live by the running
     /// loop: changing it applies on the next translation without a
     /// restart. Second bare key so it still serializes before any table
@@ -837,8 +828,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub context_translations: u32,
     /// The global default Translate Engine (ticket 09): one of
-    /// [`TRANSLATE_ENGINES`] — "google" (the keyless default, ADR-0002),
-    /// "azure" or "deepl" (keyed; keys under `[engines.*]`). A Profile's
+    /// [`TRANSLATE_ENGINES`] — "google" (the keyless default, ADR-0002) or
+    /// "azure" (keyed; the key under `[engines.azure]`). A Profile's
     /// `engine` choice inherits this when omitted.
     #[serde(default = "default_engine")]
     pub engine: String,
@@ -924,8 +915,67 @@ impl AppConfig {
         Ok(config)
     }
 
+    /// Parses a config document, migrates removed-engine references
+    /// (ADR-0007), and validates — the load-time chain. Returns the config
+    /// plus one line per migration applied (empty = the document named no
+    /// removed engine, so the caller neither rewrites the file nor
+    /// announces anything). The migration runs BEFORE validation, so a
+    /// config that names a removed engine loads on sane values instead of
+    /// surfacing as an unknown-engine error. The settings-save path keeps
+    /// using [`AppConfig::from_toml_str`] — no migration — so a removed
+    /// engine chosen there fails validation with its unknown-engine error,
+    /// where the user is looking.
+    pub fn from_toml_str_migrated(toml_text: &str) -> Result<(Self, Vec<String>), ConfigError> {
+        let mut config: AppConfig =
+            toml::from_str(toml_text).map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let changes = config.migrate_removed_engines();
+        config.validate()?;
+        Ok((config, changes))
+    }
+
     pub fn to_toml_string(&self) -> Result<String, ConfigError> {
         toml::to_string_pretty(self).map_err(|e| ConfigError::Parse(e.to_string()))
+    }
+
+    /// Migrates every reference to the removed DeepL Translate Engine
+    /// (ADR-0007) onto the value the app would have served anyway: a
+    /// default engine → the default engine, a rate-limit fallback →
+    /// "none", a Profile's engine → inherit (the global engine applies).
+    /// Matching mirrors each position's own validation spelling (exact for
+    /// the global engine, trimmed for the fallback, trimmed + lowercased
+    /// for a Profile's), so exactly the values that used to be accepted
+    /// migrate. A leftover `[engines.*]` settings section needs no
+    /// migration — serde ignores the unknown table and the next save drops
+    /// it. Returns one line per migration, naming what changed and to
+    /// what; empty means nothing changed.
+    fn migrate_removed_engines(&mut self) -> Vec<String> {
+        let mut changes = Vec::new();
+        if self.engine == "deepl" {
+            self.engine = default_engine();
+            changes.push(format!(
+                "default engine \"deepl\" → \"{}\"",
+                default_engine()
+            ));
+        }
+        if self.engines.rate_limit_fallback.trim() == "deepl" {
+            self.engines.rate_limit_fallback = default_rate_limit_fallback();
+            changes.push(format!(
+                "[engines] rate_limit_fallback \"deepl\" → \"{}\"",
+                default_rate_limit_fallback()
+            ));
+        }
+        for profile in &mut self.profiles {
+            if let Some(engine) = &profile.engine {
+                if engine.trim().to_lowercase() == "deepl" {
+                    let name = profile.name.clone();
+                    profile.engine = None;
+                    changes.push(format!(
+                        "profile \"{name}\" engine \"deepl\" → inherit (the global engine applies)"
+                    ));
+                }
+            }
+        }
+        changes
     }
 
     /// Slice-1 configs watched a single `[region]`. Move it into a named
@@ -969,7 +1019,7 @@ impl AppConfig {
         if fallback != "none" {
             if fallback == "google" {
                 return Err(ConfigError::Validation(
-                    "[engines] rate_limit_fallback \"google\" is the engine that cools down — pick azure, deepl, openai, lmstudio, or gemini".to_string(),
+                    "[engines] rate_limit_fallback \"google\" is the engine that cools down — pick azure, openai, lmstudio, or gemini".to_string(),
                 ));
             }
             if !TRANSLATE_ENGINES.contains(&fallback) {
@@ -1170,12 +1220,12 @@ genderless = false
 # recent successful translations ride into each LLM prompt as continuity
 # context, so consecutive dialogue keeps a consistent tone, register, and
 # naming (0 = off, the default). Applies to the LLM engines (Gemini,
-# OpenAI-compatible, LM Studio) only; Google, Azure and DeepL never see
+# OpenAI-compatible, LM Studio) only; Google and Azure never see
 # prompts. Changes apply on the very next translation — no restart.
 context_translations = 0
 
 # The default Translate Engine (Settings → Engines): "google" (the keyless
-# default, ADR-0002), "azure" or "deepl" (keyed — set the key under
+# default, ADR-0002) or "azure" (keyed — set the key under
 # [engines.*] below), "openai" (any OpenAI-compatible cloud endpoint),
 # "lmstudio" (local/offline, served by LM Studio on this machine), or
 # "gemini" (keyed LLM — an AI Studio key under [engines.gemini] below). A
@@ -1212,7 +1262,7 @@ engine = "windows"
 [engines]
 # While Google is rate-limited (its cool-down chain, ADR-0006), optionally
 # translate with another engine until Google recovers: "none" (the default —
-# never switch), or one of "azure" / "deepl" / "openai" / "lmstudio" /
+# never switch), or one of "azure" / "openai" / "lmstudio" /
 # "gemini" — its own settings below must be complete, and it must not be
 # "google" (the one that cools). Every switch announces itself in the
 # Results Window and from the tray; when Google recovers, serving flips
@@ -1225,11 +1275,6 @@ rate_limit_fallback = "none"
 # tier, e.g. "westus2" for a regional one — empty means a global resource).
 key = ""
 region = ""
-
-[engines.deepl]
-# DeepL free tier (1M chars total, Thai supported). Free keys end with
-# ":fx"; the suffix picks the right API host, so paste the whole key.
-key = ""
 
 [engines.openai]
 # Any OpenAI-compatible endpoint (OpenAI itself, OpenRouter, …). The base
@@ -1395,7 +1440,7 @@ preset = "general"
 # appends the Glossary entries, the Genderless instruction, and the prompt's
 # version tag (it names the preset, or says "custom", so a recorded request
 # shows what produced it). Only LLM engines (Gemini, OpenAI-compatible, LM
-# Studio) receive prompts; Google, Azure and DeepL ignore these keys
+# Studio) receive prompts; Google and Azure ignore these keys
 # entirely. Whitespace-only counts as empty.
 # The per-block translation instruction (classic OCR reading).
 translation = ""
@@ -1447,7 +1492,7 @@ screen_reading = ""
 # the whole window is watched. Its glossary is merged over the global one
 # above (the profile wins on conflict); genderless: "inherit" (follows
 # the genderless key above) | "on" | "off"; engine: "google" | "azure" |
-# "deepl" | "openai" | "lmstudio" | "gemini", or omit to inherit the global
+# "openai" | "lmstudio" | "gemini", or omit to inherit the global
 # engine; prompt_preset: a System Prompt Preset's name — a built-in's
 # ("general" | "game" | "novel" | "manga") or one under [[prompt_presets]]
 # — used for this app's prompts while it is active, or omit to inherit the
@@ -2647,7 +2692,6 @@ language = "en"
         assert_eq!(config.engine, "google");
         assert_eq!(config.engines.azure.key, "");
         assert_eq!(config.engines.azure.region, "");
-        assert_eq!(config.engines.deepl.key, "");
     }
 
     #[test]
@@ -2679,7 +2723,6 @@ language = "en"
         let config = AppConfig::from_toml_str(&legacy).unwrap();
         assert_eq!(config.engine, "google");
         assert_eq!(config.engines.azure.key, "");
-        assert_eq!(config.engines.deepl.key, "");
     }
 
     #[test]
@@ -2689,26 +2732,12 @@ language = "en"
             .replace(
                 "key = \"\"\nregion = \"\"",
                 "key = \"a1b2c3d4e5f60718293a4b5c6d7e8f90\"\nregion = \"global\"",
-            )
-            .replace("key = \"\"", "key = \"9f8e7d6c5b4a39281706f5e4d3c2b1a9:fx\"");
+            );
         let config = AppConfig::from_toml_str(&text).unwrap();
         assert_eq!(config.engine, "azure");
         assert_eq!(config.engines.azure.key, "a1b2c3d4e5f60718293a4b5c6d7e8f90");
         assert_eq!(config.engines.azure.region, "global");
-        assert_eq!(
-            config.engines.deepl.key,
-            "9f8e7d6c5b4a39281706f5e4d3c2b1a9:fx"
-        );
 
-        let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
-        assert_eq!(config, reparsed);
-    }
-
-    #[test]
-    fn deepl_engine_selection_roundtrips() {
-        let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"google\"", "engine = \"deepl\"");
-        let config = AppConfig::from_toml_str(&text).unwrap();
-        assert_eq!(config.engine, "deepl");
         let reparsed = AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
         assert_eq!(config, reparsed);
     }
@@ -2723,16 +2752,97 @@ language = "en"
         );
     }
 
+    // ---- Removed-engine migration (ADR-0007) ----
+    //
+    // All of these ride the load-time seam ([`AppConfig::from_toml_str_migrated`]):
+    // a config document in, the migrated + validated result out.
+
+    #[test]
+    fn every_removed_engine_position_migrates_at_load() {
+        // Default engine, rate-limit fallback, and two Profiles — all
+        // naming the removed engine in one document.
+        let text = template_with_profile()
+            .replace("engine = \"google\"", "engine = \"deepl\"")
+            .replace(
+                "rate_limit_fallback = \"none\"",
+                "rate_limit_fallback = \"deepl\"",
+            )
+            .replace(
+                "genderless = \"inherit\"",
+                "genderless = \"inherit\"\nengine = \"deepl\"\n\n[[profiles]]\nid = \"p2\"\nname = \"Second\"\nexe = \"Other.exe\"\nlanguage = \"ja\"\ngenderless = \"inherit\"\nengine = \"DeepL\"",
+            );
+        let (config, changes) = AppConfig::from_toml_str_migrated(&text).unwrap();
+        assert_eq!(config.engine, "google");
+        assert_eq!(config.engines.rate_limit_fallback, "none");
+        assert_eq!(config.profiles[0].engine, None);
+        assert_eq!(config.profiles[1].engine, None);
+        assert_eq!(changes, vec![
+            "default engine \"deepl\" → \"google\"".to_string(),
+            "[engines] rate_limit_fallback \"deepl\" → \"none\"".to_string(),
+            "profile \"Reverse: 1999\" engine \"deepl\" → inherit (the global engine applies)".to_string(),
+            "profile \"Second\" engine \"deepl\" → inherit (the global engine applies)".to_string(),
+        ]);
+        // The migrated result validates as-is (the load chain did it), and
+        // a save carries none of the removed name.
+        AppConfig::from_toml_str(&config.to_toml_string().unwrap()).unwrap();
+        assert!(!config.to_toml_string().unwrap().contains("deepl"));
+    }
+
+    #[test]
+    fn a_config_without_the_removed_engine_is_not_migrated() {
+        // The plain template (and any config that never named the engine)
+        // comes back with zero changes — nothing to rewrite, nothing to
+        // announce.
+        let (config, changes) =
+            AppConfig::from_toml_str_migrated(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert!(changes.is_empty());
+        assert_eq!(config, AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap());
+    }
+
+    #[test]
+    fn a_leftover_removed_engine_section_parses_and_drops_on_save() {
+        // A hand-edited config whose [engines.deepl] section outlived the
+        // engine: serde ignores the unknown table, validation passes, and
+        // the next save drops the section — never a "broken config".
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("[engines.azure]", "[engines.deepl]\nkey = \"stale\"\n\n[engines.azure]");
+        let (config, changes) = AppConfig::from_toml_str_migrated(&text).unwrap();
+        assert!(changes.is_empty(), "a stale section is not a migration");
+        assert!(config.engine == "google" && config.engines.rate_limit_fallback == "none");
+        let saved = config.to_toml_string().unwrap();
+        assert!(!saved.contains("deepl"), "the section must drop on save");
+        assert_eq!(config.engines.azure.key, "");
+    }
+
+    #[test]
+    fn the_removed_name_reaching_validation_is_an_unknown_engine_error() {
+        // The load migrates before validating, but the save path validates
+        // without migrating — a "deepl" chosen there (or in any hand-edited
+        // file that bypasses the load chain) surfaces as the registry's
+        // unknown-engine error, listing only the five live engines.
+        let text = AppConfig::DEFAULT_TEMPLATE.replace("engine = \"google\"", "engine = \"deepl\"");
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("engine \"deepl\" is unknown"),
+            "was: {message}"
+        );
+        assert!(
+            message.contains("engines: google, azure, openai, lmstudio, gemini"),
+            "the enumeration must be exactly the five live engines: {message}"
+        );
+    }
+
     #[test]
     fn profile_can_pick_azure_independent_of_the_global_choice() {
         let text = template_with_profile()
-            .replace("engine = \"google\"", "engine = \"deepl\"")
+            .replace("engine = \"google\"", "engine = \"openai\"")
             .replace(
                 "genderless = \"inherit\"",
                 "genderless = \"inherit\"\nengine = \"azure\"",
             );
         let config = AppConfig::from_toml_str(&text).unwrap();
-        assert_eq!(config.engine, "deepl");
+        assert_eq!(config.engine, "openai");
         assert_eq!(config.profiles[0].engine.as_deref(), Some("azure"));
     }
 

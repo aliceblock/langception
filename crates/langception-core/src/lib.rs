@@ -6,7 +6,6 @@
 pub mod autoswitch;
 pub mod azure;
 pub mod config;
-pub mod deepl;
 pub mod fused;
 pub mod gemini;
 pub mod genderless;

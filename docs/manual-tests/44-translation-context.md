@@ -43,7 +43,7 @@ change.
       lines translated in zone A never appear as context in zone B's
       prompts (and vice versa).
 - [ ] **Non-LLM engines unaffected**: switch the default engine to Google/
-      Azure/DeepL with context set to 3 — behavior identical to context 0
+      Azure with context set to 3 — behavior identical to context 0
       (those engines never see prompts; the setting is inert for them).
 - [ ] **Fused mode**: Reading mode "Vision model" + context 3 — the fused
       call's system prompt carries the same "Recent translations" section

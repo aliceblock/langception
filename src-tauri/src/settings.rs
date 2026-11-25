@@ -192,7 +192,6 @@ pub struct EnginesDto {
     #[serde(default = "default_rate_limit_fallback_dto")]
     pub rate_limit_fallback: String,
     pub azure: AzureEngineDto,
-    pub deepl: DeepLEngineDto,
     /// The generic OpenAI-compatible endpoint (ticket 10).
     pub openai: OpenAiEngineDto,
     /// LM Studio's local server (ticket 10; no key — its server needs none).
@@ -220,12 +219,6 @@ pub struct EnginesDto {
 pub struct AzureEngineDto {
     pub key: String,
     pub region: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeepLEngineDto {
-    pub key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,9 +265,6 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
             azure: AzureEngineDto {
                 key: config.engines.azure.key.clone(),
                 region: config.engines.azure.region.clone(),
-            },
-            deepl: DeepLEngineDto {
-                key: config.engines.deepl.key.clone(),
             },
             openai: OpenAiEngineDto {
                 base_url: config.engines.openai.base_url.clone(),
@@ -325,7 +315,6 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
     }
     let azure_key = engines.azure.key.trim().to_string();
     let azure_region = engines.azure.region.trim().to_string();
-    let deepl_key = engines.deepl.key.trim().to_string();
     // The reading mode (ticket 12): classic OCR or the fused vision call.
     // Whether the chosen engine can actually serve fused reads is the
     // loop start's check (a Profile's override can change the engine);
@@ -344,9 +333,6 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
     // later switch (or a Profile's override) while the default stays keyless.
     if default_engine == "azure" && azure_key.is_empty() {
         return Err("Azure needs an API key — create one with the link above, then paste it".into());
-    }
-    if default_engine == "deepl" && deepl_key.is_empty() {
-        return Err("DeepL needs an API key — create one with the link above, then paste it".into());
     }
     // Same rule for the LLM engines (ticket 10): completeness is enforced
     // only for the SELECTED default — the other engine's fields may be
@@ -426,9 +412,6 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
         if rate_limit_fallback == "azure" && azure_key.is_empty() {
             return Err("The auto-switch fallback is Azure, but no API key is set — add one in the Azure card above, or set the fallback to never switch".into());
         }
-        if rate_limit_fallback == "deepl" && deepl_key.is_empty() {
-            return Err("The auto-switch fallback is DeepL, but no API key is set — add one in the DeepL card above, or set the fallback to never switch".into());
-        }
         if rate_limit_fallback == "openai" && (openai_base.is_empty() || openai_model.is_empty()) {
             return Err("The auto-switch fallback is OpenAI-compatible, but its base URL or model is missing — complete the card above, or set the fallback to never switch".into());
         }
@@ -449,7 +432,6 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
             config.engines.rate_limit_fallback = rate_limit_fallback.clone();
             config.engines.azure.key = azure_key.clone();
             config.engines.azure.region = azure_region.clone();
-            config.engines.deepl.key = deepl_key.clone();
             config.engines.openai.base_url = openai_base.clone();
             config.engines.openai.api_key = openai_key.clone();
             config.engines.openai.model = openai_model.clone();

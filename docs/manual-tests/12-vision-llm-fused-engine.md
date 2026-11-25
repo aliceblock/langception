@@ -30,7 +30,7 @@ round-trip. Run once on a real machine.
       one call" reveals the latency/cost warning; saving persists
       `reading = "fused"` in config.toml; reopening the tab prefills it.
 - [ ] **Non-LLM engine rejected at start**: default engine = Google (or
-      Azure/DeepL) with reading = fused, Start → a visible error naming the
+      Azure) with reading = fused, Start → a visible error naming the
       fix ("Fused reading needs an engine that can read images…"); no loop.
 - [ ] **Missing key/model rejected**: reading = fused with the chosen LLM
       engine's key or model emptied, Start → the usual settings-surface
