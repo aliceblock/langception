@@ -250,7 +250,7 @@
   "settings.engines.engine_tooltip": "Per-app Profiles can override this (Settings → Profiles). Cloud engines send screen text to their service — the ☁ badge shows when one is active.",
   "settings.engines.fallback.azure": "Azure AI Translator",
   "settings.engines.fallback.gemini": "Gemini",
-  "settings.engines.fallback.label": "While Google is rate-limited, translate with",
+  "settings.engines.fallback.label": "Fallback translation",
   "settings.engines.fallback.lmstudio": "LM Studio (local)",
   "settings.engines.fallback.none": "Never switch (default)",
   "settings.engines.fallback.openai": "OpenAI-compatible",

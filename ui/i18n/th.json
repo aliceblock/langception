@@ -250,7 +250,7 @@
   "settings.engines.engine_tooltip": "โปรไฟล์ต่อแอปสามารถแทนที่ค่านี้ได้ (Settings → Profiles) เอนจินคลาวด์ส่งข้อความบนหน้าจอไปที่บริการของตน — ป้าย ☁ จะขึ้นเมื่อมีเอนจินดังกล่าวทำงาน",
   "settings.engines.fallback.azure": "Azure AI Translator",
   "settings.engines.fallback.gemini": "Gemini",
-  "settings.engines.fallback.label": "ระหว่างที่ Google ติดลิมิต ให้แปลด้วย",
+  "settings.engines.fallback.label": "การแปลสำรอง",
   "settings.engines.fallback.lmstudio": "LM Studio (ในเครื่อง)",
   "settings.engines.fallback.none": "ไม่สลับ (ค่าเริ่มต้น)",
   "settings.engines.fallback.openai": "OpenAI-compatible",

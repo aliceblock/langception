@@ -234,6 +234,19 @@
               <option value="openai" data-i18n="settings.engines.engine.openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
             </select>
           </label>
+          <!-- The auto-switch secondary (ADR-0006, ticket 03): engages
+               only while the Google engine is cooling down; engines with
+               incomplete settings are disabled here and rejected on save. -->
+          <label class="form-row">
+            <span data-i18n="settings.engines.fallback.label" data-i18n-title="settings.engines.fallback.tooltip">Fallback translation</span>
+            <select id="engines-fallback">
+              <option value="none" data-i18n="settings.engines.fallback.none">Never switch (default)</option>
+              <option value="gemini" data-i18n="settings.engines.fallback.gemini">Gemini</option>
+              <option value="openai" data-i18n="settings.engines.fallback.openai">OpenAI-compatible</option>
+              <option value="lmstudio" data-i18n="settings.engines.fallback.lmstudio">LM Studio (local)</option>
+              <option value="azure" data-i18n="settings.engines.fallback.azure">Azure AI Translator</option>
+            </select>
+          </label>
         </div>
         <p id="engines-reading-warning" class="hint hidden" data-i18n-html="settings.engines.fused_warning_html">
           Sends every captured frame to the engine as an image — read and
@@ -242,6 +255,12 @@
           engine's card below, e.g. <code>gemini-4-hydrogen</code>). Use it
           for stylized fonts the OCR engines cannot read.
         </p>
+        <!-- The Translation Cache (ADR-0006): the clear is instant and
+             silent-safe — the store and its file empty together. -->
+        <div class="row">
+          <button id="engines-clear-cache" class="btn small ghost" data-i18n="settings.engines.clear_cache_btn">Clear translation cache</button>
+          <span id="engines-cache-note" class="hint"></span>
+        </div>
         </div>
         <div class="engine-card" data-engine="google">
           <div class="engine-title">
@@ -395,25 +414,6 @@
         <div class="row">
           <button id="engines-test" class="btn small" data-i18n="settings.engines.test_btn">Test translation engine</button>
           <span id="engines-note" class="hint"></span>
-        </div>
-        <!-- The auto-switch secondary (ADR-0006, ticket 03): engages
-             only while the Google engine is cooling down; engines with
-             incomplete settings are disabled here and rejected on save. -->
-        <label class="form-row">
-          <span data-i18n="settings.engines.fallback.label" data-i18n-title="settings.engines.fallback.tooltip">While Google is rate-limited, translate with</span>
-          <select id="engines-fallback">
-            <option value="none" data-i18n="settings.engines.fallback.none">Never switch (default)</option>
-            <option value="gemini" data-i18n="settings.engines.fallback.gemini">Gemini</option>
-            <option value="openai" data-i18n="settings.engines.fallback.openai">OpenAI-compatible</option>
-            <option value="lmstudio" data-i18n="settings.engines.fallback.lmstudio">LM Studio (local)</option>
-            <option value="azure" data-i18n="settings.engines.fallback.azure">Azure AI Translator</option>
-          </select>
-        </label>
-        <!-- The Translation Cache (ADR-0006): the clear is instant and
-             silent-safe — the store and its file empty together. -->
-        <div class="row">
-          <button id="engines-clear-cache" class="btn small ghost" data-i18n="settings.engines.clear_cache_btn">Clear translation cache</button>
-          <span id="engines-cache-note" class="hint"></span>
         </div>
         </div>
         <div class="settings-section">
