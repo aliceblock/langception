@@ -245,6 +245,14 @@ pub struct GeminiEngineDto {
     pub temperature: f64,
 }
 
+/// Clears the Translation Cache (ADR-0006, ticket 01): the store empties
+/// and its file is removed, so the next identical text re-requests. The
+/// button lives in Settings → Engines, next to the engine cards.
+#[tauri::command]
+pub(crate) fn clear_translation_cache(app: AppHandle) {
+    app.state::<AppState>().translation_cache.clear();
+}
+
 #[tauri::command]
 pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
     match &*app.state::<AppState>().config.lock().unwrap_or_else(|p| p.into_inner()) {
@@ -502,7 +510,14 @@ pub(crate) async fn test_engine(app: AppHandle, engine: String) -> Result<String
     } else {
         requested
     };
-    let translate = crate::shell::build_translate_engine(&config, Some(&chosen))?;
+    // A transient store: the live check is verification, not translation —
+    // its sample phrase must never persist into the user's cache
+    // (the same neutrality the fused build-time validation keeps).
+    let translate = crate::shell::build_translate_engine(
+        &config,
+        Some(&chosen),
+        &langception_core::translate_cache::TranslationCache::transient(),
+    )?;
     translate
         .translate("Hello", SourceLanguage::En, TARGET_LANGUAGE)
         .await

@@ -1,0 +1,11 @@
+# Rate-limit policy for the free Google engine
+
+The default engine (ADR-0002) is the free unofficial Google endpoint, which throttles per IP (HTTP 429) under real screen-translation volume; a comparable product (the FFXIV plugin Echoglossian) survives on the same free access through a different quota pool and aggressive caching. We decided the Google engine gains three composed mechanisms instead of switching the default to a keyed engine: an internal endpoint chain — the gtx JSON endpoint, then the Chrome Dictionary extension endpoint, then the mobile web page — where a rate-limited endpoint cools down (60 s doubling to a 10-minute cap) and the chain serves the request from the next leg without stalling the sequential loop; the loop's existing failure contract stands unchanged — a text that fails during a cool-down retries only when its pixels change again, never proactively; and an opt-in setting routes requests to a user-configured secondary Translate Engine while every Google leg is cooling down, each switch announced through the same channels as engine errors, off by default because a mid-session engine change alters translation style. Alongside, a persistent Translation Cache (per text, language pair, and producing engine; clearable in Settings) cuts repeated requests for every classic-mode engine.
+
+## Consequences
+
+- The extension and mobile legs impersonate Google's own clients one step beyond gtx: their keys are public and Google rotates or retires them periodically. A burned key degrades the chain gracefully — that leg cools down and the error contract holds — but expect to re-order, relocate, or retire legs over the app's life.
+- No in-pass sleep: the loop is sequential, so rate-limit recovery happens across passes, never by stalling a pass.
+- A failed leg surfaces as a normal engine error only when every leg is cooling down; otherwise the request succeeds from a later leg and the user sees nothing.
+- The opt-in auto-switch stores cache entries under the engine that actually produced the translation, so a fallback translation is never served later as a Google one.
+- ADR-0002's visibility contract is unchanged and extended: fallback switches announce like engine errors (tray + Results Window), never silently.

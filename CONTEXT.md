@@ -98,6 +98,10 @@ _Avoid_: neutral mode, gender-free mode
 A named pair of base instructions (per-block translation and screen-reading) that LLM prompts are built from, selectable globally or per Profile. Built-ins: General, Game, Novel, Manga.
 _Avoid_: prompt template, style preset, persona
 
+**Translation Cache**:
+A store of earlier Translate Engine outputs, reused whenever the same text is translated again for the same language pair and engine. It applies in classic Reading Mode only, sits below the Glossary (a Glossary match always wins), survives app restarts, and can be cleared in Settings.
+_Avoid_: translation memory, history, response cache
+
 **Translation Context**:
 A translation-loop setting that appends the most recent successful translations of the same Capture Zone to the prompt, keeping consecutive text consistent in tone and naming. 0 (default) disables it.
 _Avoid_: history, memory, cache

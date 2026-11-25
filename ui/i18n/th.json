@@ -244,6 +244,8 @@
   "settings.card.openai.title": "OpenAI-compatible",
   "settings.close.discard_confirm": "ทิ้งการเปลี่ยนแปลงที่ยังไม่ได้บันทึก?",
   "settings.dialog.title": "Langception — ตั้งค่า",
+  "settings.engines.cache_cleared": "ล้างคำแปลที่บันทึกไว้แล้ว — ข้อความซ้ำจะแปลใหม่อีกครั้ง",
+  "settings.engines.clear_cache_btn": "ล้างคำแปลที่บันทึกไว้",
   "settings.engines.engine.azure": "Azure AI Translator — ระดับฟรี F0, 2 ล้านตัวอักษร/เดือน",
   "settings.engines.engine.deepl": "DeepL — ระดับฟรี, รวม 1 ล้านตัวอักษร",
   "settings.engines.engine.gemini": "Gemini — LLM แบบใช้คีย์ (Google AI Studio) มีระดับฟรี",

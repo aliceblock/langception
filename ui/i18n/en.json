@@ -244,6 +244,8 @@
   "settings.card.openai.title": "OpenAI-compatible",
   "settings.close.discard_confirm": "Discard unsaved changes?",
   "settings.dialog.title": "Langception — Settings",
+  "settings.engines.cache_cleared": "Translation cache cleared — repeats will translate fresh again.",
+  "settings.engines.clear_cache_btn": "Clear translation cache",
   "settings.engines.engine.azure": "Azure AI Translator — F0 free tier, 2M chars/month",
   "settings.engines.engine.deepl": "DeepL — free tier, 1M chars total",
   "settings.engines.engine.gemini": "Gemini — keyed LLM (Google AI Studio), free tier available",

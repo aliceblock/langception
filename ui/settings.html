@@ -416,6 +416,12 @@
           <button id="engines-test" class="btn small" data-i18n="settings.engines.test_btn">Test translation engine</button>
           <span id="engines-note" class="hint"></span>
         </div>
+        <!-- The Translation Cache (ADR-0006): the clear is instant and
+             silent-safe — the store and its file empty together. -->
+        <div class="row">
+          <button id="engines-clear-cache" class="btn small ghost" data-i18n="settings.engines.clear_cache_btn">Clear translation cache</button>
+          <span id="engines-cache-note" class="hint"></span>
+        </div>
         </div>
         <div class="settings-section">
         <div class="section-head">

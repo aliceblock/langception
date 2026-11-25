@@ -26,6 +26,7 @@ use langception_core::ports::{
 use langception_core::profile::{
     clamp_region_to_window, zone_in_window, GenderlessOverride, Profile, ProfileZone,
 };
+use langception_core::translate_cache::{CachingTranslateEngine, TranslationCache};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -403,6 +404,11 @@ pub(crate) struct AppState {
     /// The Settings page reads it on open, so a launch check that finished
     /// while the window was closed still surfaces.
     pub(crate) last_update_check: Mutex<Option<langception_core::update::UpdateCheckOutcome>>,
+    /// The Translation Cache (ADR-0006): one store for the whole process,
+    /// persisted beside the config. Every pipeline build wraps its engines
+    /// with this same `Arc`, so a loop restart keeps the cache warm and
+    /// only an app restart starts from the file.
+    pub(crate) translation_cache: Arc<TranslationCache>,
 }
 
 pub fn run() {
@@ -423,6 +429,10 @@ pub fn run() {
     // the template: the setup wizard shows exactly once.
     let config_path = config_file_path();
     let first_run = !config_path.exists();
+
+    // The Translation Cache lives beside the config (ADR-0006): a missing
+    // or corrupt file boots as an empty store, never an error.
+    let translation_cache = TranslationCache::open(config_path.with_file_name("translation-cache.json"));
 
     tauri::Builder::default()
         // Single-instance MUST be the first registered plugin: a second
@@ -515,6 +525,7 @@ pub fn run() {
             active_window: Mutex::new(None),
             engine_notify: Mutex::new(None),
             last_update_check: Mutex::new(None),
+            translation_cache,
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
@@ -547,6 +558,7 @@ pub fn run() {
             crate::settings::set_engines,
             crate::settings::check_lmstudio,
             crate::settings::test_engine,
+            crate::settings::clear_translation_cache,
             crate::settings::open_engine_link,
             crate::settings::list_prompt_presets,
             crate::settings::default_prompt_texts,
@@ -1742,7 +1754,11 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
         )),
         ocr,
         ocr_name,
-        translate: build_translate_engine(config, target.engine.as_deref())?,
+        translate: build_translate_engine(
+            config,
+            target.engine.as_deref(),
+            &app.state::<AppState>().translation_cache,
+        )?,
         fused,
         prompts,
     })
@@ -1913,8 +1929,10 @@ fn build_fused_engine(
     }
     // The same completeness checks as a plain engine switch (key, model,
     // endpoint): a fused pipeline with half-filled settings fails at start
-    // with the settings-surface error, before any capture happens.
-    build_translate_engine(config, Some(chosen))?;
+    // with the settings-surface error, before any capture happens. The
+    // cache wrapper is irrelevant here — a transient store just lets the
+    // same constructor run.
+    build_translate_engine(config, Some(chosen), &TranslationCache::transient())?;
     match chosen {
         "gemini" => {
             let gemini = &config.engines.gemini;
@@ -1962,19 +1980,25 @@ fn build_fused_engine(
 /// loudly rather than falling back. Keyed engines need their key and the
 /// LLM engines their endpoint+model: an empty one is a start-time error
 /// naming the settings surface, never a silent no-op.
+///
+/// Every engine is wrapped in the Translation Cache (ADR-0006), keyed by
+/// its config name so engines never serve each other's answers; the
+/// wrapper delegates `name`/`is_cloud`, so the privacy badge keeps naming
+/// the engine that actually translates.
 pub(crate) fn build_translate_engine(
     config: &AppConfig,
     engine: Option<&str>,
+    cache: &Arc<TranslationCache>,
 ) -> Result<Arc<dyn TranslateEngine>, String> {
     let chosen = engine
         .map(str::trim)
         .filter(|engine| !engine.is_empty())
         .unwrap_or(config.engine.trim());
-    match chosen {
-        "google" => Ok(Arc::new(
+    let inner: Arc<dyn TranslateEngine> = match chosen {
+        "google" => Arc::new(
             GoogleTranslateEngine::new()
                 .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
-        )),
+        ),
         "azure" => {
             let azure = &config.engines.azure;
             let key = azure.key.trim();
@@ -1984,10 +2008,10 @@ pub(crate) fn build_translate_engine(
                         .into(),
                 );
             }
-            Ok(Arc::new(
+            Arc::new(
                 AzureTranslateEngine::new(key, azure.region.trim())
                     .map_err(|e| format!("failed to initialize Azure engine: {e}"))?,
-            ))
+            )
         }
         "deepl" => {
             let deepl = &config.engines.deepl;
@@ -1998,10 +2022,10 @@ pub(crate) fn build_translate_engine(
                         .into(),
                 );
             }
-            Ok(Arc::new(
+            Arc::new(
                 DeepLTranslateEngine::new(key)
                     .map_err(|e| format!("failed to initialize DeepL engine: {e}"))?,
-            ))
+            )
         }
         "openai" => {
             let openai = &config.engines.openai;
@@ -2019,7 +2043,7 @@ pub(crate) fn build_translate_engine(
                         .into(),
                 );
             }
-            Ok(Arc::new(
+            Arc::new(
                 OpenAiCompatibleEngine::new(
                     base_url,
                     openai.api_key.trim(),
@@ -2028,7 +2052,7 @@ pub(crate) fn build_translate_engine(
                     GENERIC_LABEL,
                 )
                 .map_err(|e| format!("failed to initialize OpenAI-compatible engine: {e}"))?,
-            ))
+            )
         }
         "lmstudio" => {
             let lmstudio = &config.engines.lmstudio;
@@ -2046,7 +2070,7 @@ pub(crate) fn build_translate_engine(
                         .into(),
                 );
             }
-            Ok(Arc::new(
+            Arc::new(
                 OpenAiCompatibleEngine::new(
                     base_url,
                     "",
@@ -2055,7 +2079,7 @@ pub(crate) fn build_translate_engine(
                     LM_STUDIO_LABEL,
                 )
                 .map_err(|e| format!("failed to initialize LM Studio engine: {e}"))?,
-            ))
+            )
         }
         "gemini" => {
             let gemini = &config.engines.gemini;
@@ -2073,13 +2097,18 @@ pub(crate) fn build_translate_engine(
                         .into(),
                 );
             }
-            Ok(Arc::new(
+            Arc::new(
                 GeminiEngine::new(key, model, gemini.temperature)
                     .map_err(|e| format!("failed to initialize Gemini engine: {e}"))?,
-            ))
+            )
         }
-        other => Err(format!("unknown engine \"{other}\"")),
-    }
+        other => return Err(format!("unknown engine \"{other}\"")),
+    };
+    Ok(Arc::new(CachingTranslateEngine::new(
+        inner,
+        chosen,
+        Arc::clone(cache),
+    )))
 }
 
 /// Bridges orchestrator events to the display layer: the Results Window

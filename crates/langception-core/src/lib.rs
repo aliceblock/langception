@@ -20,6 +20,7 @@ pub mod ppocr;
 pub mod profile;
 pub mod sample;
 pub mod sidecar;
+pub mod translate_cache;
 pub mod prompt;
 pub mod prompt_preset;
 pub mod update;

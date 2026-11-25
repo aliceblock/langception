@@ -724,6 +724,23 @@ document.getElementById("engines-test").addEventListener("click", async () => {
   }
 });
 
+// The Translation Cache (ADR-0006): clearing makes every repeat translate
+// fresh — the store and its file are emptied together, no confirmation
+// (nothing is lost that cannot be re-requested).
+document.getElementById("engines-clear-cache").addEventListener("click", async () => {
+  const btn = document.getElementById("engines-clear-cache");
+  btn.disabled = true;
+  document.getElementById("engines-cache-note").textContent = "";
+  try {
+    await invoke("clear_translation_cache");
+    document.getElementById("engines-cache-note").textContent = t("settings.engines.cache_cleared");
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 for (const [buttonId, url] of [
   ["engines-azure-link", AZURE_CREATE_KEY_URL],
   ["wizard-azure-link", AZURE_CREATE_KEY_URL],
