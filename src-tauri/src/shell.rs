@@ -44,12 +44,12 @@ use tokio::sync::{mpsc, watch};
 
 /// The tray-first main window (always-on-top translations list). Lives here because the tray,
 /// the single-instance handoff, and close-to-tray all show/hide it by label.
-const RESULTS_LABEL: &str = "results";
+pub const RESULTS_LABEL: &str = "results";
 const PICKER_LABEL: &str = "zone-picker";
 /// The Debug Log window (ticket 47): live per-pass stage timings, a
 /// support tool opened from the tray. Created on demand, closed like any
 /// ordinary window — the loop never knows it existed.
-const DEBUG_LABEL: &str = "debug";
+pub const DEBUG_LABEL: &str = "debug";
 /// Drags smaller than this (CSS px) count as a click: the session cancels.
 const MIN_DRAG_CSS_PX: i32 = 8;
 
@@ -2226,42 +2226,45 @@ fn spawn_forwarder(
             }
             // The overlay handles its own events; the Results Window is a
             // history log and does not care about removals.
-            if matches!(
-                event,
-                LoopEvent::Translated { .. } | LoopEvent::Error { .. }
-            ) {
-                emit_loop_event(&bridge_app, RESULTS_LABEL, &event);
-            }
-            // The Debug Log window (ticket 47) renders timings with the
-            // errors it shows alongside them, and — since ticket 70's
-            // redesign — the Translated events too: the mock's
-            // translated-output quote block needs the words each fired
-            // read produced, which the Timing event's trace does not
-            // carry. The window correlates them onto the next Timing from
-            // the same origin (translated events are emitted mid-pass, so
-            // they always precede their pass's Timing — see debug.js).
-            // Window closed → dropped right
-            // here: nothing serializes, nothing emits, and the loop's only
-            // timing cost stays the orchestrator's clock reads. Never
-            // awaited, never blocking — open/closing the window cannot
-            // touch the loop.
-            if matches!(
-                event,
-                LoopEvent::Timing { .. } | LoopEvent::Error { .. } | LoopEvent::Translated { .. }
-            ) {
-                emit_loop_event(&bridge_app, DEBUG_LABEL, &event);
-            }
+            emit_loop_event(&bridge_app, &event);
         }
     })
 }
 
-/// Forwards one loop event to the listening window with `label`, if it
-/// exists right now: a hidden or closed window is skipped — nothing
-/// serializes, nothing emits, and the loop carries on (the forwarder never
-/// blocks on a missing window).
-fn emit_loop_event(app: &AppHandle, label: &str, event: &LoopEvent) {
-    if let Some(window) = app.get_webview_window(label) {
-        let _ = window.emit("loop-event", event);
+/// Forwards one loop event to the windows that consume it: the Results
+/// Window (translations + errors — the history log, one entry per received
+/// event) and the Debug Log window (timings + errors + translations —
+/// ticket 47, with the translated-output quote block of ticket 70's
+/// redesign; the window correlates Translated events onto the next Timing
+/// from the same origin, which always works because translated events are
+/// emitted mid-pass and precede their pass's Timing — see debug.js).
+///
+/// The per-window interests here are EXISTENCE CHECKS, not channels: the
+/// forward emits at most one app-wide broadcast per event. Tauri v2's
+/// `Emitter::emit` sends to all targets no matter which receiver it is
+/// called on, and every listener hears every broadcast — emitting once per
+/// interested window (the old shape) delivered each Translated event twice
+/// as soon as the Debug Log window existed, and the history log showed 3
+/// translations as 6 entries.
+///
+/// A hidden Results Window still exists and still receives (its entries
+/// wait for the user); a closed Debug Log window is dropped right here:
+/// nothing serializes, nothing emits, and the loop's only timing cost
+/// stays the orchestrator's clock reads. Never awaited, never blocking —
+/// open/closing a window cannot touch the loop.
+pub fn emit_loop_event<R: tauri::Runtime>(app: &AppHandle<R>, event: &LoopEvent) {
+    let to_results = matches!(
+        event,
+        LoopEvent::Translated { .. } | LoopEvent::Error { .. }
+    );
+    let to_debug = matches!(
+        event,
+        LoopEvent::Timing { .. } | LoopEvent::Error { .. } | LoopEvent::Translated { .. }
+    );
+    let results_open = app.get_webview_window(RESULTS_LABEL).is_some();
+    let debug_open = app.get_webview_window(DEBUG_LABEL).is_some();
+    if (to_results && results_open) || (to_debug && debug_open) {
+        let _ = app.emit("loop-event", event);
     }
 }
 
@@ -4515,4 +4518,19 @@ mod tests {
             );
         }
     }
+}
+
+/// The loop-event forward seam, exposed (doc-hidden) for the integration
+/// regression test `tests/loop_event_forward.rs`, which drives the mock
+/// runtime. The test lives outside the lib on purpose: keeping the mock
+/// runtime's window machinery alive in the unit-test binary links muda's
+/// Common-Controls v6 menu code, whose comctl32 v6 imports
+/// (TaskDialogIndirect) need the app manifest — carried by tauri's
+/// resource, which rides `rustc-link-arg-tests` (integration test exes
+/// only; the unit-test binary would need the unscoped form, and that
+/// links the resource into the app exe a second time: CVT1100 duplicate
+/// VERSION).
+#[doc(hidden)]
+pub mod forward_test_seam {
+    pub use super::{DEBUG_LABEL, RESULTS_LABEL, emit_loop_event};
 }

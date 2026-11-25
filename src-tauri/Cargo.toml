@@ -30,6 +30,12 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 chrono = "0.4"
 dirs = "6"
 
+# The loop-event forward's regression test runs against the mock runtime
+# (mock_app + mock webview windows): the forward's broadcast behavior is
+# observable without a real display.
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
     "Foundation",
