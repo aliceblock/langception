@@ -8,6 +8,7 @@
 //! single-instance behavior, and the cloud-engine privacy badge (ticket
 //! 06). Thin adapter — exercised by the manual smoke checklist.
 
+use langception_core::autoswitch::{AutoSwitchEngine, SwitchNotify};
 use langception_core::azure::AzureTranslateEngine;
 use langception_core::config::{
     AppConfig, CaptureMode, HotkeySettings, Placement, ReadingMode, TextAlignment,
@@ -1719,6 +1720,22 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
         })
     };
     let (ocr, ocr_name) = build_ocr_engine(app, config, target, notify)?;
+    // The auto-switch announcements (ADR-0006, ticket 03) use the same
+    // surfaces the loop's engine errors use (ticket 09): the privacy
+    // badge follows the engine actually serving, the Results Window
+    // banner + the app log carry the message, and the tray notifies (its
+    // own repeat throttle applies).
+    let cache = app.state::<AppState>().translation_cache.clone();
+    let on_switch: SwitchNotify = {
+        let app = app.clone();
+        Arc::new(move |event| {
+            let state = app.state::<AppState>();
+            *state.cloud_engine.lock().unwrap_or_else(|p| p.into_inner()) = event.badge;
+            push_warning(&state, event.message.clone());
+            crate::logging::log("translate", &event.message);
+            notify_engine_error(&app, &event.message);
+        })
+    };
     // The prompt inputs in force (tickets 37 + 42 + 43): the active
     // Profile's preset binding replaces both texts wholesale when set —
     // the bound preset's wording, tagged with its name — and inherit
@@ -1757,7 +1774,8 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
         translate: build_translate_engine(
             config,
             target.engine.as_deref(),
-            &app.state::<AppState>().translation_cache,
+            &cache,
+            Some(on_switch),
         )?,
         fused,
         prompts,
@@ -1932,7 +1950,7 @@ fn build_fused_engine(
     // with the settings-surface error, before any capture happens. The
     // cache wrapper is irrelevant here — a transient store just lets the
     // same constructor run.
-    build_translate_engine(config, Some(chosen), &TranslationCache::transient())?;
+    build_translate_engine(config, Some(chosen), &TranslationCache::transient(), None)?;
     match chosen {
         "gemini" => {
             let gemini = &config.engines.gemini;
@@ -1984,21 +2002,56 @@ fn build_fused_engine(
 /// Every engine is wrapped in the Translation Cache (ADR-0006), keyed by
 /// its config name so engines never serve each other's answers; the
 /// wrapper delegates `name`/`is_cloud`, so the privacy badge keeps naming
-/// the engine that actually translates.
+/// the engine that actually translates. With the auto-switch engaged
+/// (ticket 03: `[engines] rate_limit_fallback` set AND an announcement
+/// port supplied — validation builds pass none), the Google chain is
+/// wrapped in the auto-switch wrapper over a secondary built through this
+/// same constructor, so the secondary's completeness error surfaces like
+/// any engine's.
 pub(crate) fn build_translate_engine(
     config: &AppConfig,
     engine: Option<&str>,
     cache: &Arc<TranslationCache>,
+    on_switch: Option<SwitchNotify>,
 ) -> Result<Arc<dyn TranslateEngine>, String> {
     let chosen = engine
         .map(str::trim)
         .filter(|engine| !engine.is_empty())
         .unwrap_or(config.engine.trim());
     let inner: Arc<dyn TranslateEngine> = match chosen {
-        "google" => Arc::new(
-            GoogleTranslateEngine::new()
-                .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
-        ),
+        "google" => {
+            let google = Arc::new(
+                GoogleTranslateEngine::new()
+                    .map_err(|e| format!("failed to initialize Google engine: {e}"))?,
+            );
+            let fallback = config.engines.rate_limit_fallback.trim();
+            // EARLY RETURN — the tail wrapper below must not re-wrap these:
+            // the auto-switch wrapper owns the google side of the cache (it
+            // consults + stores under "google", and a secondary answer is
+            // cached under the SECONDARY's name by its own wrapper — a tail
+            // CachingTranslateEngine here would store every answer,
+            // secondary ones included, as "google", contradicting ADR-0006).
+            // "google" and unknown fallback names cannot reach here —
+            // config validation rejects them.
+            return match on_switch {
+                Some(on_switch) if fallback != "none" && !fallback.is_empty() => {
+                    // The secondary comes through this same constructor so
+                    // its completeness error surfaces like any engine's.
+                    let secondary = build_translate_engine(config, Some(fallback), cache, None)?;
+                    Ok(Arc::new(AutoSwitchEngine::new(
+                        google,
+                        secondary,
+                        Arc::clone(cache),
+                        on_switch,
+                    )))
+                }
+                _ => Ok(Arc::new(CachingTranslateEngine::new(
+                    google as Arc<dyn TranslateEngine>,
+                    chosen,
+                    Arc::clone(cache),
+                ))),
+            };
+        }
         "azure" => {
             let azure = &config.engines.azure;
             let key = azure.key.trim();

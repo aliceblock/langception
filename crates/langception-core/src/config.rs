@@ -642,7 +642,17 @@ impl Default for OcrSettings {
 /// lives in the user's profile directory — outside any repo — so keys are
 /// kept there like everything else. Azure's `region` is the resource's
 /// region; empty means a global resource, which takes no region header.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+fn default_rate_limit_fallback() -> String {
+    "none".to_string()
+}
+
+/// API keys and endpoints for the non-default Translate Engines (ticket 09
+/// added the keyed cloud pair, ticket 10 the OpenAI-compatible pair,
+/// ticket 11 Gemini). Config.toml is the app's only persistence surface and
+/// lives in the user's profile directory — outside any repo — so keys are
+/// kept there like everything else. Azure's `region` is the resource's
+/// region; empty means a global resource, which takes no region header.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EnginesSettings {
     pub azure: AzureEngineSettings,
@@ -650,6 +660,27 @@ pub struct EnginesSettings {
     pub openai: OpenAiEngineSettings,
     pub lmstudio: LmStudioEngineSettings,
     pub gemini: GeminiEngineSettings,
+    /// The auto-switch secondary (ADR-0006, ticket 03): while every Google
+    /// leg is cooling down, requests route to this engine. "none" (the
+    /// default) never switches; anything else must be a keyed/local
+    /// engine — never "google", which is the one that cools. The switch
+    /// announces through the engine-error channels; recovery flips back
+    /// on its own.
+    #[serde(default = "default_rate_limit_fallback")]
+    pub rate_limit_fallback: String,
+}
+
+impl Default for EnginesSettings {
+    fn default() -> Self {
+        Self {
+            azure: Default::default(),
+            deepl: Default::default(),
+            openai: Default::default(),
+            lmstudio: Default::default(),
+            gemini: Default::default(),
+            rate_limit_fallback: default_rate_limit_fallback(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -934,6 +965,21 @@ impl AppConfig {
                 list = OCR_ENGINES.join(", ")
             )));
         }
+        let fallback = self.engines.rate_limit_fallback.trim();
+        if fallback != "none" {
+            if fallback == "google" {
+                return Err(ConfigError::Validation(
+                    "[engines] rate_limit_fallback \"google\" is the engine that cools down — pick azure, deepl, openai, lmstudio, or gemini".to_string(),
+                ));
+            }
+            if !TRANSLATE_ENGINES.contains(&fallback) {
+                return Err(ConfigError::Validation(format!(
+                    "[engines] rate_limit_fallback \"{fallback}\" is unknown — \"none\" or: {list}",
+                    fallback = fallback,
+                    list = TRANSLATE_ENGINES.join(", ")
+                )));
+            }
+        }
         // The LLM engines' endpoint settings are structural (valid even
         // while another engine is the default, because a Profile may pick
         // them): temperature range + a schemed base URL, always checked.
@@ -1162,6 +1208,16 @@ reading = "ocr"
 # Windows OCR automatically and a notice says so. Read when the loop
 # starts; switching applies without an app restart.
 engine = "windows"
+
+[engines]
+# While Google is rate-limited (its cool-down chain, ADR-0006), optionally
+# translate with another engine until Google recovers: "none" (the default —
+# never switch), or one of "azure" / "deepl" / "openai" / "lmstudio" /
+# "gemini" — its own settings below must be complete, and it must not be
+# "google" (the one that cools). Every switch announces itself in the
+# Results Window and from the tray; when Google recovers, serving flips
+# back on its own. Read when the loop starts.
+rate_limit_fallback = "none"
 
 [engines.azure]
 # Azure AI Translator, F0 free tier (2M chars/month). Paste the resource's
@@ -3342,5 +3398,39 @@ language = "en"
                 .unwrap_or_else(|| panic!("must be rejected: {text}"));
             assert!(err.to_string().contains(expected), "was: {err}");
         }
+    }
+
+    #[test]
+    fn a_missing_rate_limit_fallback_parses_as_none() {
+        let config = AppConfig::from_toml_str(AppConfig::DEFAULT_TEMPLATE).unwrap();
+        assert_eq!(config.engines.rate_limit_fallback, "none");
+    }
+
+    #[test]
+    fn a_valid_rate_limit_fallback_parses() {
+        let text = AppConfig::DEFAULT_TEMPLATE
+            .replace("rate_limit_fallback = \"none\"", "rate_limit_fallback = \"gemini\"");
+        let config = AppConfig::from_toml_str(&text).unwrap();
+        assert_eq!(config.engines.rate_limit_fallback, "gemini");
+    }
+
+    #[test]
+    fn an_unknown_rate_limit_fallback_is_a_validation_error() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace(
+            "rate_limit_fallback = \"none\"",
+            "rate_limit_fallback = \"chatgpt\"",
+        );
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("rate_limit_fallback"));
+    }
+
+    #[test]
+    fn a_google_rate_limit_fallback_is_a_validation_error() {
+        let text = AppConfig::DEFAULT_TEMPLATE.replace(
+            "rate_limit_fallback = \"none\"",
+            "rate_limit_fallback = \"google\"",
+        );
+        let err = AppConfig::from_toml_str(&text).unwrap_err();
+        assert!(err.to_string().contains("cools down"));
     }
 }

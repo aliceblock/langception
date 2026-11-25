@@ -156,6 +156,10 @@ pub(crate) fn get_about(app: AppHandle) -> About {
 
 /// Matches the config's OCR default for a page that (somehow) sends no
 /// ocrEngine field — always the config-side default, never an error.
+fn default_rate_limit_fallback_dto() -> String {
+    "none".to_string()
+}
+
 fn default_ocr_engine_dto() -> String {
     langception_core::config::DEFAULT_OCR_ENGINE.to_string()
 }
@@ -183,6 +187,10 @@ pub struct EnginesDto {
     pub ocr_engine: String,
     /// "ocr" | "fused" (ticket 12).
     pub reading: String,
+    /// The auto-switch secondary (ADR-0006, ticket 03): "none" or an
+    /// engine name — spelling and completeness validated on save.
+    #[serde(default = "default_rate_limit_fallback_dto")]
+    pub rate_limit_fallback: String,
     pub azure: AzureEngineDto,
     pub deepl: DeepLEngineDto,
     /// The generic OpenAI-compatible endpoint (ticket 10).
@@ -260,6 +268,7 @@ pub(crate) fn get_engines(app: AppHandle) -> Result<EnginesDto, String> {
             default_engine: config.engine.clone(),
             ocr_engine: config.ocr.engine.clone(),
             reading: config.reading.code().to_string(),
+            rate_limit_fallback: config.engines.rate_limit_fallback.clone(),
             azure: AzureEngineDto {
                 key: config.engines.azure.key.clone(),
                 region: config.engines.azure.region.clone(),
@@ -398,6 +407,38 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
             return Err("Gemini engine needs a model — type one above".into());
         }
     }
+    // The auto-switch secondary (ADR-0006, ticket 03): spelling here, and
+    // its completeness too — a fallback without its key would fail the
+    // loop at start, so catch it where the user is looking. It engages
+    // only while the Google engine is the one cooling down, so "google"
+    // itself is not a valid fallback.
+    let rate_limit_fallback = engines.rate_limit_fallback.trim().to_lowercase();
+    if rate_limit_fallback != "none" {
+        if rate_limit_fallback == "google" {
+            return Err("The auto-switch fallback cannot be Google — Google is the engine that cools down; pick azure, deepl, openai, lmstudio, or gemini".into());
+        }
+        if !langception_core::config::TRANSLATE_ENGINES.contains(&rate_limit_fallback.as_str()) {
+            return Err(format!(
+                "unknown auto-switch fallback \"{rate_limit_fallback}\" — \"none\", or: {}",
+                langception_core::config::TRANSLATE_ENGINES.join(", ")
+            ));
+        }
+        if rate_limit_fallback == "azure" && azure_key.is_empty() {
+            return Err("The auto-switch fallback is Azure, but no API key is set — add one in the Azure card above, or set the fallback to never switch".into());
+        }
+        if rate_limit_fallback == "deepl" && deepl_key.is_empty() {
+            return Err("The auto-switch fallback is DeepL, but no API key is set — add one in the DeepL card above, or set the fallback to never switch".into());
+        }
+        if rate_limit_fallback == "openai" && (openai_base.is_empty() || openai_model.is_empty()) {
+            return Err("The auto-switch fallback is OpenAI-compatible, but its base URL or model is missing — complete the card above, or set the fallback to never switch".into());
+        }
+        if rate_limit_fallback == "lmstudio" && (lmstudio_base.is_empty() || lmstudio_model.is_empty()) {
+            return Err("The auto-switch fallback is LM Studio, but its server URL or model is missing — complete the card above, or set the fallback to never switch".into());
+        }
+        if rate_limit_fallback == "gemini" && (gemini_key.is_empty() || gemini_model.is_empty()) {
+            return Err("The auto-switch fallback is Gemini, but its API key or model is missing — complete the card above, or set the fallback to never switch".into());
+        }
+    }
     run_off_main(app, move |app| {
         let active_preset = with_config_mut(app, |config| {
             config.engine = default_engine.clone();
@@ -405,6 +446,7 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
             // below applies a switch live (ticket 31) — no app restart.
             config.ocr.engine = ocr_engine.clone();
             config.reading = reading;
+            config.engines.rate_limit_fallback = rate_limit_fallback.clone();
             config.engines.azure.key = azure_key.clone();
             config.engines.azure.region = azure_region.clone();
             config.engines.deepl.key = deepl_key.clone();
@@ -517,6 +559,7 @@ pub(crate) async fn test_engine(app: AppHandle, engine: String) -> Result<String
         &config,
         Some(&chosen),
         &langception_core::translate_cache::TranslationCache::transient(),
+        None,
     )?;
     translate
         .translate("Hello", SourceLanguage::En, TARGET_LANGUAGE)

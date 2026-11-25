@@ -160,6 +160,7 @@ const DEEPL_API_URL = "https://www.deepl.com/en/pro-api";
 const GEMINI_CREATE_KEY_URL = "https://aistudio.google.com/apikey";
 
 const enginesDefault = document.getElementById("engines-default");
+const enginesFallback = document.getElementById("engines-fallback");
 const enginesOcr = document.getElementById("engines-ocr");
 const enginesReading = document.getElementById("engines-reading");
 const enginesReadingWarning = document.getElementById("engines-reading-warning");
@@ -241,6 +242,25 @@ async function loadEngines() {
     enginesOcr.value = savedOcr === "paddle" ? "pp-ocrv6-small" : savedOcr;
     enginesReading.value = savedEngines.reading || "ocr";
     enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
+    // The auto-switch secondary (ADR-0006, ticket 03): an engine whose own
+    // settings are incomplete is disabled here — the save would reject it
+    // anyway (the tooltip says why).
+    enginesFallback.value = savedEngines.rateLimitFallback || "none";
+    const fallbackComplete = {
+      azure: !!savedEngines.azure?.key?.trim(),
+      deepl: !!savedEngines.deepl?.key?.trim(),
+      openai:
+        !!savedEngines.openai?.baseUrl?.trim() && !!savedEngines.openai?.model?.trim(),
+      lmstudio:
+        !!savedEngines.lmstudio?.baseUrl?.trim() && !!savedEngines.lmstudio?.model?.trim(),
+      gemini:
+        !!savedEngines.gemini?.apiKey?.trim() && !!savedEngines.gemini?.model?.trim(),
+    };
+    for (const [value, ok] of Object.entries(fallbackComplete)) {
+      const option = enginesFallback.querySelector(`option[value="${value}"]`);
+      if (option) option.disabled = !ok;
+      if (!ok && enginesFallback.value === value) enginesFallback.value = "none";
+    }
     // Ticket 54: the saved engine's card is the expanded one.
     expandSelectedEngineCard();
     enginesAzureKey.value = savedEngines.azure.key;
@@ -546,6 +566,7 @@ function collectEngines(defaultEngine) {
     defaultEngine,
     ocrEngine: enginesOcr.value,
     reading: enginesReading.value,
+    rateLimitFallback: enginesFallback.value,
     azure: {
       key: enginesAzureKey.value.trim(),
       region: enginesAzureRegion.value.trim(),
