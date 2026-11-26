@@ -451,3 +451,404 @@ async fn korean_and_the_other_pairings_are_honored_without_a_notice() {
         "honored pairings fire no notice: {notices:?}"
     );
 }
+
+// ---- The not-ready gate (deferred-model-packs ticket 02) ----
+//
+// A tier whose Model Pack is not on disk yet is a NORMAL state of the
+// deferred-packs feature: the pass reports loading, no sidecar spawns,
+// and — once the pack's files land — the NEXT pass on the same engine
+// spawns into the active models directory (no app restart). The stub
+// binary stands in for the sidecar; a manifest built over the same fake
+// files ticket 01's module tests pin drives the real gate. CI needs no
+// real models and no network.
+
+use langception_core::model_packs::{file_sha256, ReadinessGate};
+
+/// Writes the ten fake model files into `bundle` and the manifest
+/// pinning them (the JSON shape ticket 05's packaging must emit), and
+/// creates the empty active models directory beside it.
+fn gate_fixture(root: &Path) -> (PathBuf, PathBuf) {
+    let bundle = root.join("bundle");
+    let active = root.join("active");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&active).unwrap();
+    let files: &[&str] = &[
+        "pp-ocrv6_tiny_det.onnx",
+        "pp-ocrv6_tiny_rec.onnx",
+        "ppocrv6_tiny_dict.txt",
+        "pp-ocrv6_small_det.onnx",
+        "pp-ocrv6_small_rec.onnx",
+        "ppocrv6_dict.txt",
+        "pp-ocrv6_medium_det.onnx",
+        "pp-ocrv6_medium_rec.onnx",
+        "korean_pp-ocrv5_mobile_rec.onnx",
+        "ppocrv5_korean_dict.txt",
+    ];
+    for (i, name) in files.iter().enumerate() {
+        fs::write(bundle.join(name), format!("{name}-v{i}")).unwrap();
+    }
+    let pin = |name: &str| {
+        format!(
+            "{{\"name\": \"{name}\", \"sha256\": \"{}\", \"size\": {}}}",
+            file_sha256(&bundle.join(name)).unwrap(),
+            fs::metadata(bundle.join(name)).unwrap().len(),
+        )
+    };
+    let set = |names: &[&str]| names.iter().map(|n| pin(n)).collect::<Vec<_>>().join(", ");
+    let tiny = set(&["pp-ocrv6_tiny_det.onnx", "pp-ocrv6_tiny_rec.onnx", "ppocrv6_tiny_dict.txt"]);
+    let small = set(&["pp-ocrv6_small_det.onnx", "pp-ocrv6_small_rec.onnx", "ppocrv6_dict.txt"]);
+    let medium = set(&["pp-ocrv6_medium_det.onnx", "pp-ocrv6_medium_rec.onnx", "ppocrv6_dict.txt"]);
+    let korean = set(&["korean_pp-ocrv5_mobile_rec.onnx", "ppocrv5_korean_dict.txt"]);
+    let manifest = format!(
+        r#"{{"manifest_version": 1,
+            "bundled": {{"files": [{tiny}]}},
+            "packs": {{
+                "small": {{"version": "1", "urls": ["https://example.invalid/small.zip"], "files": [{small}]}},
+                "medium": {{"version": "1", "urls": ["https://example.invalid/medium.zip"], "files": [{medium}]}},
+                "korean": {{"version": "1", "urls": ["https://example.invalid/korean.zip"], "files": [{korean}]}}
+            }}}}"#
+    );
+    fs::write(bundle.join("models-manifest.json"), manifest).unwrap();
+    (bundle, active)
+}
+
+/// Copies one pinned file from the bundle into the active models
+/// directory — the bytes a verified download would have landed there.
+fn land_pack_file(bundle: &Path, active: &Path, name: &str) {
+    fs::copy(bundle.join(name), active.join(name)).unwrap();
+}
+
+type GateNotices = std::sync::Arc<std::sync::Mutex<Vec<&'static str>>>;
+
+/// The engine under test: launch target = the ACTIVE models directory,
+/// gate = the real ReadinessGate over (bundle, active), loading notice =
+/// recorded as "loading" (Some) / "ready" (None).
+fn gated_engine(
+    tier: ModelTier,
+    bundle: &Path,
+    active: &Path,
+    notices: &GateNotices,
+) -> PpOcrv6Engine {
+    let notices = notices.clone();
+    fast_engine(stub_exe(), active.to_path_buf(), tier)
+        .with_readiness_gate(std::sync::Arc::new(ReadinessGate::new(bundle, active)))
+        .with_not_ready_notice(std::sync::Arc::new(move |not_ready| {
+            let mut notices = notices.lock().unwrap();
+            match not_ready {
+                Some(_) => notices.push("loading"),
+                None => notices.push("ready"),
+            }
+        }))
+}
+
+#[tokio::test]
+async fn a_selection_whose_pack_is_missing_reports_loading_and_never_spawns() {
+    let dir = scratch_dir("gate-not-ready");
+    let (bundle, active) = gate_fixture(&dir);
+    let notices: GateNotices = Default::default();
+
+    let engine = gated_engine(ModelTier::Small, &bundle, &active, &notices);
+    let first = engine
+        .recognize(&tiny_image(), SourceLanguage::En)
+        .await
+        .unwrap_err();
+    let second = engine
+        .recognize(&tiny_image(), SourceLanguage::En)
+        .await
+        .unwrap_err();
+
+    assert!(
+        first.not_ready && second.not_ready,
+        "both passes report the not-ready state, not a plain failure"
+    );
+    assert!(
+        first.message.contains("PP-OCRv6-small"),
+        "the per-pass line names the selected tier: {}",
+        first.message
+    );
+    assert!(
+        first.message.contains("Small set") && first.message.contains("pp-ocrv6_small_det.onnx"),
+        "the line names the missing pack and a missing file: {}",
+        first.message
+    );
+    assert_eq!(
+        spawn_count(&active, "en", "small"),
+        0,
+        "a not-ready pass must never attempt a spawn"
+    );
+    assert_eq!(
+        notices.lock().unwrap().len(),
+        1,
+        "one loading notice per incident, not per pass: {:?}",
+        notices.lock().unwrap()
+    );
+    // First engine use populated the active directory's bundled baseline
+    // (assembly ran even though the pass was blocked).
+    assert!(active.join("ppocrv6_tiny_dict.txt").is_file());
+}
+
+#[tokio::test]
+async fn the_gate_transitions_not_ready_notice_ready_spawn_without_restart() {
+    let dir = scratch_dir("gate-transitions");
+    let (bundle, active) = gate_fixture(&dir);
+    let notices: GateNotices = Default::default();
+
+    let engine = gated_engine(ModelTier::Small, &bundle, &active, &notices);
+    let blocked = engine
+        .recognize(&tiny_image(), SourceLanguage::En)
+        .await
+        .unwrap_err();
+    assert!(blocked.not_ready, "the pack is missing: loading, not failure");
+
+    // The pack lands (ticket 03's downloader writes the same verified
+    // bytes into the active directory) — nothing restarts, nothing
+    // rebuilds the engine.
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_det.onnx");
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_rec.onnx");
+    land_pack_file(&bundle, &active, "ppocrv6_dict.txt");
+    fs::write(
+        active.join("stub-en-small.txt"),
+        format!("OK\n{}", ok_reply("active-dir text")),
+    )
+    .unwrap();
+
+    let blocks = engine
+        .recognize(&tiny_image(), SourceLanguage::En)
+        .await
+        .unwrap();
+    assert_eq!(
+        blocks[0].text, "active-dir text",
+        "the next pass spawns into the ACTIVE models directory"
+    );
+    assert_eq!(spawn_count(&active, "en", "small"), 1);
+    assert_eq!(
+        notices.lock().unwrap().as_slice(),
+        &["loading", "ready"],
+        "the notice reports both transitions of the incident: {:?}",
+        notices.lock().unwrap()
+    );
+
+    // The loading notice re-arms once ready: a fresh incident (a file
+    // vanishing — disk cleanup, say) notices again.
+    fs::remove_file(active.join("ppocrv6_dict.txt")).unwrap();
+    let blocked_again = engine.recognize(&tiny_image(), SourceLanguage::En).await.unwrap_err();
+    assert!(blocked_again.not_ready);
+    assert_eq!(
+        notices.lock().unwrap().as_slice(),
+        &["loading", "ready", "loading"],
+        "each not-ready incident notices once: {:?}",
+        notices.lock().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn ja_with_tiny_gates_the_small_set_and_the_substitution_notice_still_fires() {
+    let dir = scratch_dir("gate-substitution");
+    let (bundle, active) = gate_fixture(&dir);
+    let loading: GateNotices = Default::default();
+    let substitution: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+
+    // Effective selection ja+tiny = the Small set: the Small pack
+    // gates the pass, the kana-less tiny model never launches, and no
+    // substitution notice fires (nothing substituted ran).
+    let substitution_for_notice = substitution.clone();
+    let engine = gated_engine(ModelTier::Tiny, &bundle, &active, &loading)
+        .with_substitution_notice(std::sync::Arc::new(move |tier| {
+            substitution_for_notice.lock().unwrap().push(tier.display_name().to_string())
+        }));
+    let blocked = engine
+        .recognize(&tiny_image(), SourceLanguage::Ja)
+        .await
+        .unwrap_err();
+    assert!(blocked.not_ready);
+    assert!(
+        blocked.message.contains("Small set"),
+        "the effective selection's pack is named: {}",
+        blocked.message
+    );
+    assert_eq!(spawn_count(&active, "ja", "tiny"), 0);
+    assert_eq!(spawn_count(&active, "ja", "small"), 0);
+    assert!(substitution.lock().unwrap().is_empty());
+
+    // The Small pack lands: the next pass launches the substituted
+    // small tier's files (per the launch contract) and the substitution
+    // notice fires — once, on the pass that actually ran it.
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_det.onnx");
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_rec.onnx");
+    land_pack_file(&bundle, &active, "ppocrv6_dict.txt");
+    fs::write(
+        active.join("stub-ja-small.txt"),
+        format!("OK\n{}", ok_reply("small-model text")),
+    )
+    .unwrap();
+    let blocks = engine.recognize(&tiny_image(), SourceLanguage::Ja).await.unwrap();
+    assert_eq!(blocks[0].text, "small-model text");
+    assert_eq!(spawn_count(&active, "ja", "small"), 1);
+    assert_eq!(
+        substitution.lock().unwrap().as_slice(),
+        &["PP-OCRv6-tiny"],
+        "the notice carries the SELECTED tier, as before: {:?}",
+        substitution.lock().unwrap()
+    );
+    assert_eq!(loading.lock().unwrap().as_slice(), &["loading", "ready"]);
+}
+
+#[tokio::test]
+async fn a_stale_pack_file_is_not_ready_too() {
+    let dir = scratch_dir("gate-stale");
+    let (bundle, active) = gate_fixture(&dir);
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_det.onnx");
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_rec.onnx");
+    land_pack_file(&bundle, &active, "ppocrv6_dict.txt");
+    let notices: GateNotices = Default::default();
+    let engine = gated_engine(ModelTier::Small, &bundle, &active, &notices);
+
+    // A wrong-size file (a truncated download the manifest's size pin
+    // catches) is stale: not-ready, never a spawn.
+    fs::write(active.join("pp-ocrv6_small_det.onnx"), b"corrupted").unwrap();
+    let stale = engine
+        .recognize(&tiny_image(), SourceLanguage::En)
+        .await
+        .unwrap_err();
+    assert!(stale.not_ready, "a stale file blocks like a missing one");
+    assert_eq!(spawn_count(&active, "en", "small"), 0);
+
+    // A same-size corrupted file fails the hash pin once the verdict is
+    // recomputed — the gate's full-hash pass catches it. The det file
+    // goes back to its pinned bytes so the rec corruption is isolated.
+    let original_det = fs::read(bundle.join("pp-ocrv6_small_det.onnx")).unwrap();
+    let mut same_size_rec = fs::read(bundle.join("pp-ocrv6_small_rec.onnx")).unwrap();
+    same_size_rec[0] ^= 0xFF;
+    fs::write(active.join("pp-ocrv6_small_rec.onnx"), &same_size_rec).unwrap();
+    fs::write(active.join("pp-ocrv6_small_det.onnx"), &original_det).unwrap();
+    let corrupted = engine
+        .recognize(&tiny_image(), SourceLanguage::En)
+        .await
+        .unwrap_err();
+    assert!(
+        corrupted.not_ready,
+        "same-size corruption still fails the hash pin: {}",
+        corrupted.message
+    );
+    assert_eq!(spawn_count(&active, "en", "small"), 0);
+}
+
+/// The rotating re-verification (one pinned file re-hashed per pass on
+/// the cache-hit path): same-size corruption of an ALREADY-READY pack
+/// changes no size, so only the rotation catches it — within one
+/// rotation window the gate flips to not-ready and the corrupted file
+/// is named (spec story 7: hash before use).
+#[tokio::test]
+async fn a_same_size_corruption_of_a_ready_pack_blocks_within_one_rotation() {
+    let dir = scratch_dir("gate-same-size");
+    let (bundle, active) = gate_fixture(&dir);
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_det.onnx");
+    land_pack_file(&bundle, &active, "pp-ocrv6_small_rec.onnx");
+    land_pack_file(&bundle, &active, "ppocrv6_dict.txt");
+    fs::write(
+        active.join("stub-en-small.txt"),
+        format!("OK\n{}", ok_reply("alpha")),
+    )
+    .unwrap();
+    let notices: GateNotices = Default::default();
+    let engine = gated_engine(ModelTier::Small, &bundle, &active, &notices);
+
+    // Ready: one spawn, the live sidecar reused by every later pass.
+    engine.recognize(&tiny_image(), SourceLanguage::En).await.unwrap();
+    assert_eq!(spawn_count(&active, "en", "small"), 1);
+
+    // Flip one byte in the small recognizer — same size, new hash.
+    let mut bytes = fs::read(active.join("pp-ocrv6_small_rec.onnx")).unwrap();
+    bytes[0] ^= 0xFF;
+    fs::write(active.join("pp-ocrv6_small_rec.onnx"), &bytes).unwrap();
+
+    // The rotation re-hashes one pinned file per pass; within one full
+    // rotation (6 pinned files here) the verdict must flip.
+    let mut blocked = None;
+    for _ in 0..7 {
+        match engine.recognize(&tiny_image(), SourceLanguage::En).await {
+            Ok(_) => {}
+            Err(e) => {
+                blocked = Some(e);
+                break;
+            }
+        }
+    }
+    let blocked = blocked.expect("same-size corruption must be caught within one rotation");
+    assert!(blocked.not_ready);
+    assert!(
+        blocked.message.contains("pp-ocrv6_small_rec.onnx"),
+        "the corrupted file is named: {}",
+        blocked.message
+    );
+    assert_eq!(
+        spawn_count(&active, "en", "small"),
+        1,
+        "the ready passes reused the live sidecar; the flip needs no respawn"
+    );
+    assert_eq!(notices.lock().unwrap().as_slice(), &["loading"]);
+
+    // The blocked state holds on later passes — and the notice does not
+    // re-fire per pass.
+    let again = engine.recognize(&tiny_image(), SourceLanguage::En).await.unwrap_err();
+    assert!(again.not_ready);
+    assert_eq!(notices.lock().unwrap().as_slice(), &["loading"]);
+}
+
+#[tokio::test]
+async fn tiny_selection_runs_off_the_assembled_baseline() {
+    let dir = scratch_dir("gate-tiny");
+    let (bundle, active) = gate_fixture(&dir);
+    let notices: GateNotices = Default::default();
+
+    // English + tiny needs no pack — the bundled baseline, copied into
+    // the active directory on first engine use, is the whole requirement.
+    let engine = gated_engine(ModelTier::Tiny, &bundle, &active, &notices);
+    fs::write(
+        active.join("stub-en-tiny.txt"),
+        format!("OK\n{}", ok_reply("tiny text")),
+    )
+    .unwrap();
+    let blocks = engine.recognize(&tiny_image(), SourceLanguage::En).await.unwrap();
+    assert_eq!(blocks[0].text, "tiny text");
+    assert_eq!(spawn_count(&active, "en", "tiny"), 1);
+    assert!(
+        active.join("pp-ocrv6_tiny_det.onnx").is_file(),
+        "the assembly populated the active directory from the bundle"
+    );
+    assert!(
+        notices.lock().unwrap().is_empty(),
+        "a ready baseline never reports loading: {:?}",
+        notices.lock().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn a_broken_manifest_is_a_plain_failure_not_loading() {
+    let dir = scratch_dir("gate-broken-manifest");
+    let (bundle, active) = gate_fixture(&dir);
+    fs::write(bundle.join("models-manifest.json"), "not json at all").unwrap();
+    let notices: GateNotices = Default::default();
+
+    let engine = gated_engine(ModelTier::Small, &bundle, &active, &notices);
+    let error = engine
+        .recognize(&tiny_image(), SourceLanguage::En)
+        .await
+        .unwrap_err();
+
+    assert!(
+        !error.not_ready,
+        "a broken manifest is not the loading state — nothing a download fixes"
+    );
+    assert!(
+        error.message.contains("models manifest"),
+        "the error names the manifest problem: {}",
+        error.message
+    );
+    assert_eq!(spawn_count(&active, "en", "small"), 0);
+    assert!(
+        notices.lock().unwrap().is_empty(),
+        "no loading notice for a broken install: {:?}",
+        notices.lock().unwrap()
+    );
+}

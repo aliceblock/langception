@@ -4,6 +4,12 @@
 //! which engine actually ran. The choice itself never silently swaps: the
 //! primary engine is retried every pass (a sidecar crash recovers by
 //! restart), so the notice marks a transition, not a permanent switch.
+//!
+//! One state never falls back (deferred-model-packs ticket 02, ADR-0008):
+//! the primary's not-ready mark — the tier's Model Pack still being
+//! downloaded. That error passes through untouched (the gate's loading
+//! notice is the report), because covering it would switch engines the
+//! user never switched; only the user changing engines changes engines.
 
 use langception_core::ports::{CapturedImage, OcrEngine, OcrError, SourceLanguage, TextBlock};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -58,6 +64,14 @@ impl OcrEngine for FallbackOcrEngine {
                 self.notified.store(false, Ordering::Relaxed);
                 Ok(blocks)
             }
+            // The not-ready state (deferred-model-packs ticket 02,
+            // ADR-0008): the tier's Model Pack is still landing — a
+            // normal state the gate already reported through the loading
+            // notice. Covering the pass with the fallback would switch
+            // engines the user never switched, so the error passes
+            // through untouched (the orchestrator emits it per pass; the
+            // loading notice dedups per incident).
+            Err(primary_error) if primary_error.not_ready => Err(primary_error),
             Err(primary_error) => {
                 let first_failure = !self.notified.swap(true, Ordering::Relaxed);
                 if first_failure {
@@ -139,6 +153,24 @@ mod tests {
         OcrError::new(format!("primary broke: {part}"))
     }
 
+    fn not_ready_error() -> OcrError {
+        OcrError::not_ready("PP-OCRv6-small is loading — Small set is missing pp-ocrv6_small_det.onnx")
+    }
+
+    /// A fallback that must never be reached — the test's tripwire.
+    struct NeverCalled;
+
+    #[async_trait::async_trait]
+    impl OcrEngine for NeverCalled {
+        async fn recognize(
+            &self,
+            _image: &CapturedImage,
+            _source: SourceLanguage,
+        ) -> Result<Vec<TextBlock>, OcrError> {
+            panic!("a not-ready pass must never be covered by the fallback");
+        }
+    }
+
     #[tokio::test]
     async fn a_primary_failure_covers_the_pass_and_notices_once() {
         let notices = Arc::new(StdMutex::new(Vec::new()));
@@ -196,5 +228,44 @@ mod tests {
         );
         let error = engine.recognize(&image(), SourceLanguage::En).await.unwrap_err();
         assert!(error.message.contains("windows broke too"));
+    }
+
+    /// ADR-0008 (deferred-model-packs ticket 02): a not-ready primary is
+    /// the tier's Model Pack still being downloaded — a normal state, not
+    /// a failure. The gate already reported loading; covering the pass
+    /// with Windows OCR would switch engines the user never switched, so
+    /// the error passes through untouched.
+    #[tokio::test]
+    async fn a_not_ready_primary_is_never_covered_by_the_fallback() {
+        let notices = Arc::new(StdMutex::new(Vec::new()));
+        let notices_for_notify = notices.clone();
+        let wrapped = FallbackOcrEngine::new(
+            Arc::new(Scripted {
+                results: StdMutex::new(vec![Err(not_ready_error()), Err(not_ready_error())]),
+            }),
+            "PP-OCRv6-small",
+            Arc::new(NeverCalled),
+            "Windows OCR",
+            Arc::new(move |message| notices_for_notify.lock().unwrap().push(message)),
+        );
+
+        let first = wrapped
+            .recognize(&image(), SourceLanguage::En)
+            .await
+            .unwrap_err();
+        let second = wrapped
+            .recognize(&image(), SourceLanguage::En)
+            .await
+            .unwrap_err();
+
+        assert!(
+            first.not_ready && second.not_ready,
+            "the not-ready mark survives the pass-through"
+        );
+        assert!(
+            notices.lock().unwrap().is_empty(),
+            "no fallback notice fires — the gate's loading notice is the report: {:?}",
+            notices.lock().unwrap()
+        );
     }
 }

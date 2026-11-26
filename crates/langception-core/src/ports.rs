@@ -115,7 +115,7 @@ pub struct TextBlock {
 }
 
 /// The language Langception expects to read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceLanguage {
     En,
@@ -149,6 +149,12 @@ pub struct CaptureError {
 #[error("{message}")]
 pub struct OcrError {
     pub message: String,
+    /// The pass could not run because the engine's model files are not
+    /// ready on disk (ADR-0008's not-ready state: the tier's Model Pack
+    /// is still downloading). The loop reports the pass as loading and
+    /// never covers it with another engine — only the user switching
+    /// engines switches engines. Every plain failure leaves this false.
+    pub not_ready: bool,
 }
 
 #[derive(Debug, Clone, Error)]
@@ -172,7 +178,27 @@ macro_rules! error_new {
         })*
     };
 }
-error_new!(CaptureError, OcrError, TranslateError, FusedError);
+// OcrError is excluded: it carries the not_ready mark, so both of its
+// constructors are spelled out below.
+error_new!(CaptureError, TranslateError, FusedError);
+
+impl OcrError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            not_ready: false,
+        }
+    }
+
+    /// The engine's model files are not on disk yet ([`OcrError`]'s
+    /// `not_ready` mark) — the pass reports loading, never a fallback.
+    pub fn not_ready(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            not_ready: true,
+        }
+    }
+}
 
 /// What the app watches: here, a fixed configured region.
 #[async_trait]

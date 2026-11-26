@@ -30,8 +30,10 @@ use tokio::process::Command;
 
 /// Name of the sidecar executable — the shell's resolver and the release
 /// packaging look for exactly this file. In the release bundle it sits
-/// beside the ten model files (the launch contract's models dir is the
-/// same flat directory); in a dev workspace it comes from the target dir.
+/// beside the models manifest and the bundled Tiny baseline (the launch
+/// contract's models dir — the active models directory since the
+/// deferred-model-packs feature — holds the same flat file layout); in a
+/// dev workspace it comes from the target dir.
 pub const SIDECAR_EXE: &str = "pp-ocrv6-sidecar.exe";
 
 /// The bundled directory name the models (and, in a release bundle, the
@@ -40,11 +42,13 @@ pub const SIDECAR_EXE: &str = "pp-ocrv6-sidecar.exe";
 /// path.
 pub const BUNDLE_DIR_NAME: &str = "pp-ocrv6";
 
-/// The Model Tier an engine value selects. All three ship in the bundle
-/// (≈ 6 / 30 / 132 MB ONNX, CPU-only); English, Japanese, and Chinese
-/// read through the selected tier, Korean through the official Korean
-/// PP-OCRv5 recognizer at every tier (inside the sidecar).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The Model Tier an engine value selects. Only Tiny ships in the bundle
+/// (≈ 6 MB ONNX, CPU-only) since the deferred-model-packs feature
+/// (ADR-0008); Small and Medium arrive as Model Packs on first use, and
+/// the Korean recognizer set is its own pack. English, Japanese, and
+/// Chinese read through the selected tier, Korean through the official
+/// Korean PP-OCRv5 recognizer at every tier (inside the sidecar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ModelTier {
     Tiny,
     Small,
@@ -158,13 +162,27 @@ pub(crate) fn effective_selection(source: SourceLanguage, tier: ModelTier) -> Mo
 /// (`effective_selection`), so the selected tier is all it needs.
 pub type SubstitutionNotice = std::sync::Arc<dyn Fn(ModelTier) + Send + Sync>;
 
+/// Fires on the gate's two transitions (deferred-model-packs ticket 02):
+/// `Some` when a pass is blocked on pack files (the not-ready state —
+/// the structured [`crate::model_packs::NotReady`] feeds the wording
+/// composed at the notices seam), and `None` when a later pass finds
+/// everything ready, so the loading notice retires the moment reading
+/// resumes. One `Some` per incident (a transition into not-ready), never
+/// one per pass.
+pub type NotReadyNotice =
+    std::sync::Arc<dyn Fn(Option<&crate::model_packs::NotReady>) + Send + Sync>;
+
 /// The PP-OCRv6 engine as an [`OcrEngine`]: a thin wrapper over the
 /// shared [`SidecarEngine`] state machine (lazy spawn, reuse across
 /// passes, respawn on death with a notice, restart on (language, tier)
-/// change), plus the unsupported-combination rule above. A pass whose
-/// request fails returns an error immediately (the shell's fallback
-/// wrapper surfaces it and covers the pass with Windows OCR); the next
-/// call spawns fresh.
+/// change), plus the unsupported-combination rule above. When a
+/// readiness gate is wired (the deferred-packs shell wiring), a pass
+/// whose pack files are missing or stale reports loading and never
+/// spawns; everything else behaves as before. A pass whose request
+/// fails returns an error immediately (the shell's fallback wrapper
+/// surfaces it and covers the pass with Windows OCR — except the
+/// not-ready state, which the wrapper passes through untouched); the
+/// next call spawns fresh.
 pub struct PpOcrv6Engine {
     tier: ModelTier,
     engine: SidecarEngine<ModelSelection>,
@@ -176,6 +194,17 @@ pub struct PpOcrv6Engine {
     /// per pass. Reset by any honored pairing, so leaving Japanese and
     /// re-entering it with tiny notices again.
     noticed_substitution: std::sync::Mutex<Option<ModelSelection>>,
+    /// The spawn gate (ADR-0008): when wired, a pass whose model files
+    /// are missing or stale in the launch directory reports the
+    /// not-ready state — loading notice, error marked `not_ready`, no
+    /// spawn. `None` keeps the ungated (bundled-era) behavior.
+    gate: Option<std::sync::Arc<crate::model_packs::ReadinessGate>>,
+    /// Observes the gate's loading/ready transitions — see
+    /// [`NotReadyNotice`].
+    on_not_ready: Option<NotReadyNotice>,
+    /// Whether a loading notice already fired for the current not-ready
+    /// incident: one per incident, re-armed by a ready pass.
+    loading_noticed: std::sync::Mutex<bool>,
 }
 
 impl PpOcrv6Engine {
@@ -212,6 +241,9 @@ impl PpOcrv6Engine {
             engine: SidecarEngine::with_timeouts("PP-OCRv6", launch, init_timeout, request_timeout),
             on_substitution: None,
             noticed_substitution: std::sync::Mutex::new(None),
+            gate: None,
+            on_not_ready: None,
+            loading_noticed: std::sync::Mutex::new(false),
         }
     }
 
@@ -233,6 +265,31 @@ impl PpOcrv6Engine {
         self.on_substitution = Some(notice);
         self
     }
+
+    /// Gates every pass on the effective selection's model files being
+    /// on disk (deferred-model-packs ticket 02, ADR-0008): a missing or
+    /// stale pack reports the loading state through
+    /// [`PpOcrv6Engine::with_not_ready_notice`] and an `OcrError` marked
+    /// `not_ready` (the fallback wrapper passes those through — the loop
+    /// never covers them with another engine), and never spawns. A ready
+    /// verdict has also assembled the launch directory, so the spawn
+    /// reads complete model files. `gate.verdict` runs per pass — cheap
+    /// by design — so a pack landing mid-session is picked up by the
+    /// next pass, no app restart.
+    pub fn with_readiness_gate(
+        mut self,
+        gate: std::sync::Arc<crate::model_packs::ReadinessGate>,
+    ) -> Self {
+        self.gate = Some(gate);
+        self
+    }
+
+    /// Observes the gate's loading/ready transitions — see
+    /// [`NotReadyNotice`]. Fired on the caller's async context, briefly.
+    pub fn with_not_ready_notice(mut self, notice: NotReadyNotice) -> Self {
+        self.on_not_ready = Some(notice);
+        self
+    }
 }
 
 #[async_trait]
@@ -245,6 +302,58 @@ impl OcrEngine for PpOcrv6Engine {
         let requested = (source, self.tier);
         let effective = effective_selection(source, self.tier);
         let substituted = effective != requested;
+        // The gate runs before anything else, so a blocked pass touches
+        // neither notice state: the pack files of the EFFECTIVE
+        // selection must be on disk before any spawn is attempted
+        // (ADR-0008 — lazy packs, never a loud spawn failure).
+        if let Some(gate) = &self.gate {
+            match gate.verdict(source, self.tier) {
+                crate::model_packs::Readiness::Ready => {
+                    // Reading resumed: a fired loading notice retires on
+                    // this transition (only on it — steady-state ready
+                    // passes stay silent), and the next not-ready
+                    // incident is a new one worth its own notice.
+                    let mut noticed = self
+                        .loading_noticed
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if *noticed {
+                        *noticed = false;
+                        if let Some(notice) = &self.on_not_ready {
+                            notice(None);
+                        }
+                    }
+                }
+                crate::model_packs::Readiness::NotReady(not_ready) => {
+                    let mut noticed = self
+                        .loading_noticed
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    if !*noticed {
+                        *noticed = true;
+                        if let Some(notice) = &self.on_not_ready {
+                            notice(Some(&not_ready));
+                        }
+                    }
+                    return Err(OcrError::not_ready(format!(
+                        "{} is loading — {}",
+                        self.tier.display_name(),
+                        not_ready.summary()
+                    )));
+                }
+                crate::model_packs::Readiness::Broken(reason) => {
+                    // A broken manifest or bundle is not the loading
+                    // state — nothing a download fixes. A plain error:
+                    // the shell's fallback wrapper names it and covers
+                    // the pass, the old broken-bundle behavior.
+                    return Err(OcrError::new(format!(
+                        "{}: cannot verify its model files — {}",
+                        self.tier.display_name(),
+                        reason
+                    )));
+                }
+            }
+        }
         if !substituted {
             // An honored pairing ran: reset so the next transition into
             // the substituted pairing is a new incident worth its own

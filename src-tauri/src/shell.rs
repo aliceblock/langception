@@ -409,6 +409,12 @@ pub(crate) struct AppState {
     /// with this same `Arc`, so a loop restart keeps the cache warm and
     /// only an app restart starts from the file.
     pub(crate) translation_cache: Arc<TranslationCache>,
+    /// The Model Pack loading notice currently in the warnings list
+    /// (deferred-model-packs ticket 02): the exact text the gate pushed,
+    /// so the ready transition can retire exactly that line (a tier
+    /// switch mid-loading rewords it, never stacks). `None` = no loading
+    /// notice live.
+    pub(crate) loading_notice: Mutex<Option<String>>,
 }
 
 pub fn run() {
@@ -526,6 +532,7 @@ pub fn run() {
             engine_notify: Mutex::new(None),
             last_update_check: Mutex::new(None),
             translation_cache,
+            loading_notice: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
@@ -1822,12 +1829,21 @@ fn build_pipeline(app: &AppHandle, config: &AppConfig, target: &EffectiveTarget)
 /// The tier engines never fail at start: a missing or broken bundle is
 /// discovered on the first pass, covered per-pass by the fallback wrapper
 /// (which names the cause in a status notice), because a packaging
-/// problem must not stop the app from reading text entirely. With no
-/// bundle found the primary is built against the bare sidecar name, so
-/// its spawn error says the file was not found instead of pointing at a
-/// wrong path. The logged name is the tier that will actually run — a
-/// legacy "paddle" config reads `ocr=pp-ocrv6-small` (the update
-/// silently improves the engine it named, spec story 5).
+/// problem must not stop the app from reading text entirely. One state
+/// the fallback never covers (deferred-model-packs ticket 02, ADR-0008):
+/// a tier whose Model Pack is not on disk yet. When the resolved bundle
+/// carries a models manifest, the engine launches into the ACTIVE models
+/// directory behind the readiness gate — a not-ready pack reports the
+/// loading state through its own notice and the pass errors with the
+/// `not_ready` mark, which the fallback wrapper passes through (the loop
+/// never switches engines on its own; reading resumes on the first pass
+/// after the pack lands, no restart). A bundle without a manifest (a
+/// legacy fetched layout) runs ungated against the bundle dir, exactly
+/// as before. With no bundle found the primary is built against the bare
+/// sidecar name, so its spawn error says the file was not found instead
+/// of pointing at a wrong path. The logged name is the tier that will
+/// actually run — a legacy "paddle" config reads `ocr=pp-ocrv6-small`
+/// (the update silently improves the engine it named, spec story 5).
 fn build_ocr_engine(
     app: &AppHandle,
     config: &AppConfig,
@@ -1835,6 +1851,11 @@ fn build_ocr_engine(
     notify: crate::ocr_fallback::Notify,
 ) -> Result<(Arc<dyn langception_core::ports::OcrEngine>, &'static str), String> {
     let engine_value = config.ocr.engine.as_str();
+    // A fresh engine reports its own state from its first pass, so a
+    // loading notice left by the previous pipeline never lingers past
+    // this rebuild (a not-ready selection re-pushes it on its first
+    // blocked pass).
+    retire_loading_notice(app);
     if engine_value == "windows" {
         return Ok((
             Arc::new(crate::ocr::WindowsOcrEngine::new(target.language)),
@@ -1866,7 +1887,62 @@ fn build_ocr_engine(
             substitution_notice_text(ui_language(&app_for_notices), tier),
         );
     });
-    let v6: Arc<dyn langception_core::ports::OcrEngine> = match resolve_ppocrv6(app) {
+    // The loading notice (deferred-model-packs ticket 02): the gate's
+    // two transitions land on the same surfaces as the fallback notice —
+    // the status warnings and the app log. The warning retires the
+    // moment a pass runs ready (`None`), so a lingering "still loading"
+    // never outlives the download; the slot keeps the exact text so the
+    // retirement removes precisely the line this notice pushed.
+    let app_for_loading = app.clone();
+    let loading_notice: langception_core::ppocr::NotReadyNotice = Arc::new(move |not_ready| {
+        let state = app_for_loading.state::<AppState>();
+        let text = not_ready
+            .map(|not_ready| not_ready_notice_text(ui_language(&app_for_loading), tier, not_ready));
+        let mut slot = state.loading_notice.lock().unwrap_or_else(|p| p.into_inner());
+        match (&text, slot.as_ref()) {
+            // Same wording already on the wall: push_warning's dedup
+            // would keep one copy anyway; nothing to do.
+            (Some(new), Some(old)) if *new == *old => {}
+            _ => {
+                if let Some(old) = slot.take() {
+                    remove_warning(&state, &old);
+                }
+                if let Some(new) = text {
+                    *slot = Some(new.clone());
+                    push_warning(&state, new);
+                }
+            }
+        }
+        apply_state(&app_for_loading);
+    });
+    let resolved = resolve_ppocrv6(app);
+    let manifest_present = resolved
+        .as_ref()
+        .is_some_and(|(_, bundle)| {
+            bundle
+                .join(langception_core::model_packs::MANIFEST_FILE_NAME)
+                .is_file()
+        });
+    let v6: Arc<dyn langception_core::ports::OcrEngine> = match resolved {
+        // The deferred-packs layout (a manifest marks it): launch into
+        // the ACTIVE models directory behind the readiness gate.
+        Some((program, bundle)) if manifest_present => {
+            let active_dir = active_models_dir();
+            let gate = Arc::new(langception_core::model_packs::ReadinessGate::new(
+                bundle,
+                active_dir.clone(),
+            ));
+            Arc::new(
+                langception_core::ppocr::PpOcrv6Engine::new(program, active_dir, tier)
+                    .with_restart_notice(notice)
+                    .with_substitution_notice(substitution_notice)
+                    .with_readiness_gate(gate)
+                    .with_not_ready_notice(loading_notice),
+            )
+        }
+        // A legacy bundle (no manifest — the pre-deferred-packs fetched
+        // layout, still the dev workspace's shape): ungated, launching
+        // into the bundle dir exactly as before.
         Some((program, models)) => Arc::new(
             langception_core::ppocr::PpOcrv6Engine::new(program, models, tier)
                 .with_restart_notice(notice)
@@ -1895,15 +1971,21 @@ fn build_ocr_engine(
     ))
 }
 
-/// Locates the bundled PP-OCRv6 sidecar: (program, models dir). The
-/// release bundle is flat — [`langception_core::ppocr::SIDECAR_EXE`]
-/// beside the ten model files (the launch contract's `-models_path` is
-/// that same directory); in a dev workspace the exe comes from the target
-/// dir beside the app's own exe while the fetched models live in the repo
-/// (both layouts are accepted in either location). Order: the
+/// Locates the bundled PP-OCRv6 sidecar: (program, bundle dir). The
+/// bundle is flat — [`langception_core::ppocr::SIDECAR_EXE`] beside the
+/// model files (since the deferred-model-packs feature, ADR-0008, the
+/// manifest + the Tiny baseline only; before that, the ten fetched
+/// files); in a dev workspace the exe comes from the target dir beside
+/// the app's own exe while the fetched models live in the repo (both
+/// layouts are accepted in either location). Order: the
 /// `LANGCEPTION_PPOCRV6_DIR` override (development/manual smoke), the
 /// installer's resource directory, then the executable's surroundings
 /// (cargo dev layout and a resources-beside-exe portable layout).
+///
+/// The bundle dir is the manifest + bundled-files SOURCE; the directory
+/// the sidecar launches into is the active models directory
+/// ([`active_models_dir`]) whenever a manifest is present
+/// ([`build_ocr_engine`] decides).
 fn resolve_ppocrv6(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
     let env_dir = std::env::var("LANGCEPTION_PPOCRV6_DIR").ok();
     let resource_dir = app.path().resource_dir().ok();
@@ -1913,8 +1995,9 @@ fn resolve_ppocrv6(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
 
 /// The resolution logic of [`resolve_ppocrv6`], decoupled from the live
 /// environment so the candidate order is unit-tested (no Tauri app
-/// needed): models dir first (a fetched layout is recognized by a
-/// dictionary file from the launch contract's ten), then the program
+/// needed): models dir first (a bundle is recognized by its manifest —
+/// the tiny-only release layout — or, in the pre-manifest fetched layout,
+/// by a dictionary file from the launch contract's ten), then the program
 /// beside the models (release) or beside the app exe (dev target dir).
 fn resolve_ppocrv6_from(
     env_dir: Option<String>,
@@ -1937,12 +2020,19 @@ fn resolve_ppocrv6_from(
         candidates.push(exe_dir.join("resources").join("pp-ocrv6"));
         candidates.push(exe_dir.join("pp-ocrv6"));
     }
-    // The models dir is the fetched ten-file layout; a dictionary file
-    // from the contract distinguishes it from an empty or half-fetched
-    // directory (a bare `pp-ocrv6` folder next to the exe, say).
+    // The bundle dir is recognized by either marker of the two layouts:
+    // the models manifest (the release bundle, ticket 05's tiny-only
+    // shape) or a shared dictionary file (the legacy fetched ten-file
+    // layout a dev workspace still carries). Either distinguishes a real
+    // bundle from an empty or half-fetched directory.
     let models_dir = candidates
         .into_iter()
-        .find(|dir| dir.join("ppocrv6_dict.txt").is_file())?;
+        .find(|dir| {
+            dir.join("ppocrv6_dict.txt").is_file()
+                || dir
+                    .join(langception_core::model_packs::MANIFEST_FILE_NAME)
+                    .is_file()
+        })?;
     let exe_name = PathBuf::from(langception_core::ppocr::SIDECAR_EXE);
     let mut programs: Vec<PathBuf> = vec![models_dir.join(&exe_name)];
     if let Some(exe_dir) = exe.as_ref().and_then(|exe| exe.parent()) {
@@ -1951,6 +2041,35 @@ fn resolve_ppocrv6_from(
     }
     let program = programs.into_iter().find(|p| p.is_file())?;
     Some((program, models_dir))
+}
+
+/// The active models directory (ADR-0008, deferred-model-packs ticket
+/// 02): one flat directory the app populates — the bundled Tiny files
+/// copied in on first engine use, Model Packs unpacked there — and the
+/// sidecar launches into via `-models_path`. Portable builds (the zip's
+/// README.txt beside the exe) keep it beside the exe, so moving the
+/// folder carries the downloaded models with it; installs keep it in the
+/// local app-data directory like any app data.
+fn active_models_dir() -> PathBuf {
+    let exe = std::env::current_exe().ok();
+    let data_local = dirs::data_local_dir();
+    active_models_dir_from(exe.as_deref(), data_local)
+}
+
+/// The resolution logic of [`active_models_dir`], decoupled from the live
+/// environment so both storage rules are unit-tested: the portable
+/// marker wins, else the local app-data dir (falling to temp when the
+/// OS gives none — the same fallback the config path takes).
+fn active_models_dir_from(exe: Option<&Path>, data_local_dir: Option<PathBuf>) -> PathBuf {
+    if let Some(exe_dir) = exe.and_then(|exe| exe.parent()) {
+        if exe_dir.join("README.txt").is_file() {
+            return exe_dir.join("models");
+        }
+    }
+    data_local_dir
+        .unwrap_or_else(std::env::temp_dir)
+        .join("langception")
+        .join("models")
 }
 
 /// Builds the fused vision engine (ticket 12) for the effective target's
@@ -2548,6 +2667,62 @@ fn substitution_notice_text(lang: UiLanguage, selected: langception_core::ppocr:
             langception_core::ppocr::ModelTier::Small.display_name(),
         ),
     }
+}
+
+/// The Model Pack loading notice's wording (deferred-model-packs ticket
+/// 02, through the same notices seam): the selected tier's pack is not
+/// ready on disk yet, so passes report loading — and, per ADR-0008,
+/// never fall back to Windows OCR on their own; reading starts by
+/// itself once the download lands. `not_ready` names the packs (the
+/// EFFECTIVE selection's — Japanese + tiny loads the Small set), so the
+/// wording only adds the promise.
+fn not_ready_notice_text(
+    lang: UiLanguage,
+    tier: langception_core::ppocr::ModelTier,
+    not_ready: &langception_core::model_packs::NotReady,
+) -> String {
+    let packs = not_ready.pack_names().join(", ");
+    match lang {
+        UiLanguage::En => format!(
+            "{} is loading — its model pack ({}) is not ready yet. Passes wait for the download \
+             instead of using Windows OCR; reading starts automatically once it lands.",
+            tier.display_name(),
+            packs,
+        ),
+        // The tier and pack names are brand-like engine names and stay
+        // Latin, the same convention as the substitution notice.
+        UiLanguage::Th => format!(
+            "{} กำลังโหลด — ชุดโมเดล ({}) ยังไม่พร้อมใช้ ทุก pass จะรอการดาวน์โหลดแทนที่จะสลับไป \
+             Windows OCR และจะเริ่มอ่านเองเมื่อดาวน์โหลดเสร็จ",
+            tier.display_name(),
+            packs,
+        ),
+    }
+}
+
+/// Retires any Model Pack loading notice a previous pipeline left behind
+/// (deferred-model-packs ticket 02): a freshly built engine reports its
+/// own state from its first pass, so whatever the old one was loading
+/// must not linger past a loop restart — the same-tier restart re-pushes
+/// the identical warning on its first blocked pass.
+fn retire_loading_notice(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let mut slot = state.loading_notice.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(old) = slot.take() {
+        drop(slot);
+        remove_warning(&state, &old);
+    }
+}
+
+/// Removes one exact line from the status warnings — the retirement half
+/// of the loading-notice lifecycle (both retirements remove precisely
+/// the line the notice pushed).
+fn remove_warning(state: &AppState, line: &str) {
+    state
+        .warnings
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .retain(|w| *w != line);
 }
 
 /// Whether a warnings line is the watching-nothing notice in ANY language.
@@ -4363,6 +4538,148 @@ mod tests {
             th, text,
             "the Thai arm carries Thai wording, not the English one"
         );
+    }
+
+    /// The loading notice (deferred-model-packs ticket 02) names the
+    /// selected tier and the EFFECTIVE selection's packs, and carries
+    /// the ADR-0008 promise in both languages: passes wait instead of
+    /// switching engines, reading starts by itself.
+    #[test]
+    fn the_loading_notice_names_the_tier_and_packs_with_the_promise() {
+        use langception_core::model_packs::{NotReady, PackId, PackStatus};
+        use langception_core::ppocr::ModelTier;
+        let not_ready = NotReady {
+            packs: vec![(
+                PackId::Small,
+                PackStatus::Missing {
+                    files: vec!["pp-ocrv6_small_det.onnx".to_string()],
+                },
+            )],
+        };
+        let text = not_ready_notice_text(UiLanguage::En, ModelTier::Small, &not_ready);
+        assert!(text.contains("PP-OCRv6-small"), "names the selection: {text}");
+        assert!(text.contains("Small set"), "names the pack: {text}");
+        assert!(
+            text.contains("Windows OCR"),
+            "names what the loop refuses to switch to: {text}"
+        );
+        let th = not_ready_notice_text(UiLanguage::Th, ModelTier::Small, &not_ready);
+        assert!(th.contains("PP-OCRv6-small"), "tier names stay Latin in Thai: {th}");
+        assert!(th.contains("Small set"), "pack names stay Latin in Thai: {th}");
+        assert_ne!(
+            th, text,
+            "the Thai arm carries Thai wording, not the English one"
+        );
+        // Two packs (Korean at medium: the tier's set + the recognizer
+        // set) both make the list.
+        let two_packs = NotReady {
+            packs: vec![
+                (
+                    PackId::Medium,
+                    PackStatus::Missing {
+                        files: vec!["pp-ocrv6_medium_det.onnx".to_string()],
+                    },
+                ),
+                (
+                    PackId::Korean,
+                    PackStatus::Stale {
+                        files: vec!["korean_pp-ocrv5_mobile_rec.onnx".to_string()],
+                    },
+                ),
+            ],
+        };
+        let two = not_ready_notice_text(UiLanguage::En, ModelTier::Medium, &two_packs);
+        assert!(two.contains("Medium set"), "both packs are listed: {two}");
+        assert!(
+            two.contains("Korean recognizer set"),
+            "both packs are listed: {two}"
+        );
+    }
+
+    /// The active models directory (deferred-model-packs ticket 02,
+    /// ADR-0008): a portable build — the zip's README.txt beside the exe
+    /// — keeps it beside the exe (moving the folder carries the models);
+    /// an install keeps it in the local app-data dir like any app data;
+    /// no OS data dir falls to temp, the same fallback the config path
+    /// takes.
+    #[test]
+    fn the_active_models_dir_follows_the_portable_marker() {
+        let root = std::env::temp_dir().join(format!("active-models-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let exe_dir = root.join("app");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let data_local = root.join("local");
+
+        // No marker: installed layout — the local app-data dir.
+        let installed = active_models_dir_from(
+            Some(&exe_dir.join("Langception.exe")),
+            Some(data_local.clone()),
+        );
+        assert_eq!(installed, data_local.join("langception").join("models"));
+
+        // The portable marker beside the exe: models beside the exe.
+        std::fs::write(exe_dir.join("README.txt"), "portable").unwrap();
+        let portable = active_models_dir_from(
+            Some(&exe_dir.join("Langception.exe")),
+            Some(data_local.clone()),
+        );
+        assert_eq!(portable, exe_dir.join("models"));
+
+        // No exe known (or no data dir from the OS): the temp fallback.
+        assert_eq!(
+            active_models_dir_from(None, Some(data_local.clone())),
+            data_local.join("langception").join("models")
+        );
+        assert_eq!(
+            active_models_dir_from(None, None),
+            std::env::temp_dir().join("langception").join("models")
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The resolver accepts the tiny-only release bundle (deferred-
+    /// model-packs ticket 05's shape): the manifest file marks it, no
+    /// shared dictionary present. A directory with neither marker still
+    /// never resolves.
+    #[test]
+    fn the_manifest_alone_marks_the_release_bundle() {
+        let root =
+            std::env::temp_dir().join(format!("ppocrv6-resolver-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let bundle = root.join("resources").join("pp-ocrv6");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::write(
+            bundle.join(langception_core::model_packs::MANIFEST_FILE_NAME),
+            "{\"manifest_version\": 1}",
+        )
+        .unwrap();
+        std::fs::write(bundle.join(langception_core::ppocr::SIDECAR_EXE), "stub").unwrap();
+
+        let resolved = resolve_ppocrv6_from(
+            None,
+            Some(root.clone()),
+            Some(root.join("Langception.exe")),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.1, bundle,
+            "the manifest-marked bundle dir resolves without the legacy dict"
+        );
+        assert_eq!(resolved.0, bundle.join(langception_core::ppocr::SIDECAR_EXE));
+        // A bare exe folder with no manifest and no dictionary is still
+        // not a bundle (the env override is the only candidate here, so
+        // the assertion probes exactly that dir).
+        let bare = std::env::temp_dir().join(format!(
+            "ppocrv6-resolver-manifest-bare-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&bare).unwrap();
+        std::fs::write(bare.join(langception_core::ppocr::SIDECAR_EXE), "stub").unwrap();
+        assert!(
+            resolve_ppocrv6_from(Some(bare.display().to_string()), None, None).is_none(),
+        );
+        std::fs::remove_dir_all(&bare).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// Both dictionaries parse as flat string maps (keys never nest) and

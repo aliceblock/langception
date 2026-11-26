@@ -1007,6 +1007,220 @@ fn strip_prefix_dir(name: &str, prefix: Option<&str>) -> String {
     }
 }
 
+// ---- The spawn gate (ADR-0008, deferred-model-packs ticket 02) ----
+
+/// Why a pass cannot run its OCR engine right now. `NotReady` is the
+/// deferred-pack feature's normal waiting state — the pack's files are
+/// missing or stale and a download heals it; `Broken` is a broken
+/// manifest or bundle, which no download fixes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Readiness {
+    /// Every file the effective selection needs is present and
+    /// hash-valid in the active models directory; the sidecar can spawn.
+    Ready,
+    /// The not-ready state: report loading, never spawn, never fall back
+    /// to another engine (only the user switching engines switches).
+    NotReady(NotReady),
+    /// The manifest or the bundled baseline is broken — the old
+    /// loud-failure path applies instead.
+    Broken(String),
+}
+
+/// What a not-ready pass reports: the packs whose files are missing or
+/// stale, with their statuses — structured so the user-facing wording
+/// composes at the notices seam in the UI language, and the per-pass
+/// error line composes from [`NotReady::summary`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotReady {
+    pub packs: Vec<(PackId, PackStatus)>,
+}
+
+impl NotReady {
+    /// The distinct pack names, in the verdict's order — the list the
+    /// notices seam interpolates.
+    pub fn pack_names(&self) -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = Vec::new();
+        for (id, _) in &self.packs {
+            let name = id.display_name();
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
+    /// The one-line English summary for per-pass error lines and the app
+    /// log: every offending pack with its reason and representative
+    /// files. User-facing notices compose their own wording from the
+    /// structured fields instead.
+    pub fn summary(&self) -> String {
+        let parts: Vec<String> = self
+            .packs
+            .iter()
+            .map(|(id, status)| match status {
+                PackStatus::Ready => format!("{} is ready", id.display_name()),
+                PackStatus::Missing { files } => {
+                    format!("{} is missing {}", id.display_name(), files.join(", "))
+                }
+                PackStatus::Stale { files } => format!(
+                    "{} fails verification {}",
+                    id.display_name(),
+                    files.join(", ")
+                ),
+            })
+            .collect();
+        parts.join("; ")
+    }
+}
+
+/// The cached verdict for one selection, valid while every pinned file's
+/// on-disk size still matches what the verdict observed — and while the
+/// rotating re-verification (one pinned file re-hashed per pass) hasn't
+/// contradicted it. The size scan is what makes a per-pass gate cheap:
+/// a pass costs one stat per pinned file plus ONE file hash, never tens
+/// of MB of SHA-256.
+#[derive(Debug)]
+struct CachedVerdict {
+    profile: Vec<(String, Option<u64>)>,
+    verdict: Readiness,
+    /// The next pinned file the cache-hit path re-hashes, rotating
+    /// through the set.
+    next_check: usize,
+}
+
+/// The OCR Engine's spawn gate: decides, per pass and per EFFECTIVE
+/// selection, whether the sidecar may spawn into the active models
+/// directory. A `Ready` verdict has also populated the directory (the
+/// bundled baseline is assembled on first engine use — ADR-0008), so the
+/// gate is the only thing the launch waits on; once a pack's files land,
+/// the next pass's stat scan changes and the recomputed verdict spawns
+/// without any app restart.
+///
+/// Between recomputes a cached verdict is guarded by a size scan over
+/// every pinned file plus a rotating re-hash of ONE file per pass — so
+/// a same-size corruption is caught within one rotation (spec story 7:
+/// a corrupted or tampered download never feeds the OCR engine) while a
+/// pass never re-hashes the whole set.
+///
+/// The manifest is read once per gate (a release's manifest is the
+/// release's truth — it cannot change under a running app); an unreadable
+/// or malformed one is a `Broken` verdict, the same loud path a mutated
+/// bundle takes through [`install_bundled_files`]'s named errors.
+pub struct ReadinessGate {
+    bundle_dir: PathBuf,
+    active_dir: PathBuf,
+    cached: std::sync::Mutex<GateCache>,
+}
+
+#[derive(Default)]
+struct GateCache {
+    manifest: Option<Result<Manifest, String>>,
+    verdicts: BTreeMap<(SourceLanguage, ModelTier), CachedVerdict>,
+}
+
+impl ReadinessGate {
+    pub fn new(bundle_dir: impl Into<PathBuf>, active_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            bundle_dir: bundle_dir.into(),
+            active_dir: active_dir.into(),
+            cached: std::sync::Mutex::new(GateCache::default()),
+        }
+    }
+
+    /// The verdict for one (literal) selection; the pack requirement
+    /// derives from the effective selection (Japanese + tiny needs the
+    /// Small set — [`required_packs`]).
+    pub fn verdict(&self, source: SourceLanguage, tier: ModelTier) -> Readiness {
+        let key = (source, tier);
+        let mut cache = self.cached.lock().unwrap_or_else(|p| p.into_inner());
+        // The manifest reads once per gate (a release's manifest cannot
+        // change under a running app); the small struct is cloned out so
+        // the cache lock borrows stay field-local.
+        let manifest = match cache.manifest.get_or_insert_with(|| {
+            Manifest::load_from_bundle(&self.bundle_dir).map_err(|e| e.to_string())
+        }) {
+            Ok(manifest) => manifest.clone(),
+            Err(reason) => {
+                return Readiness::Broken(reason.clone());
+            }
+        };
+
+        // The profile this verdict keys on: every pinned file the
+        // selection can need, with the on-disk size observed now. A
+        // cached verdict whose profile still matches is returned as-is.
+        let mut files: Vec<&PackFile> = manifest.bundled().iter().collect();
+        for id in required_packs(source, tier) {
+            files.extend(manifest.pack(*id).files.iter());
+        }
+        let profile: Vec<(String, Option<u64>)> = files
+            .iter()
+            .map(|file| {
+                let size = fs::metadata(self.active_dir.join(&file.name))
+                    .ok()
+                    .map(|meta| meta.len());
+                (file.name.clone(), size)
+            })
+            .collect();
+        // The cache-hit path still re-hashes ONE pinned file per pass,
+        // rotating through the set: sizes never change under same-size
+        // corruption, so the size scan alone would trust a Ready verdict
+        // forever and feed the engine bytes its pins reject (spec story
+        // 7 — hash before use). A check that contradicts the cached
+        // verdict — a file gone bad, or a healed file under a stale
+        // NotReady — falls through to the full recompute below.
+        let mut rotation: Option<usize> = None;
+        if let Some(cached) = cache.verdicts.get_mut(&key) {
+            if cached.profile == profile {
+                let idx = cached.next_check % files.len();
+                let checked = files[idx];
+                let checked_ready = file_state(&self.active_dir, checked) == FileState::Ready;
+                if checked_ready && cached.verdict == Readiness::Ready {
+                    cached.next_check = (idx + 1) % files.len();
+                    return cached.verdict.clone();
+                }
+                rotation = Some(idx);
+            }
+        }
+
+        // Recompute: assemble the bundled baseline first (first engine
+        // use, or a stale file to refresh — both verify before anything
+        // lands), then the required packs' statuses.
+        let verdict = match install_bundled_files(&self.bundle_dir, &manifest, &self.active_dir) {
+            Err(e) => Readiness::Broken(e.to_string()),
+            Ok(_) => {
+                let mut not_ready = Vec::new();
+                for id in required_packs(source, tier) {
+                    match pack_status(manifest.pack(*id), &self.active_dir) {
+                        PackStatus::Ready => {}
+                        status => not_ready.push((*id, status)),
+                    }
+                }
+                if not_ready.is_empty() {
+                    Readiness::Ready
+                } else {
+                    Readiness::NotReady(NotReady { packs: not_ready })
+                }
+            }
+        };
+        cache.verdicts.insert(
+            key,
+            CachedVerdict {
+                profile,
+                verdict: verdict.clone(),
+                // A cache-hit fall-through continues its rotation from
+                // where it stopped, so the steady-state cost stays one
+                // hash per pass; a fresh verdict starts the rotation
+                // over (the recompute itself re-hashed everything).
+                next_check: match rotation {
+                    Some(idx) => (idx + 1) % files.len(),
+                    None => 0,
+                },
+            },
+        );
+        verdict
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

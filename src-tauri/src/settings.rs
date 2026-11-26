@@ -304,8 +304,12 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
         ));
     }
     // The OCR engine (ticket 31): the config spelling is enforced here;
-    // whether the bundled sidecar actually runs is the loop's business
-    // (its Windows-OCR fallback covers a broken bundle per pass).
+    // whether the engine actually runs is the loop's business — a broken
+    // bundle is covered per-pass by the Windows-OCR fallback, and a
+    // Model Pack still downloading (deferred-model-packs, ADR-0008)
+    // reports loading without ever falling back. The selection saves
+    // immediately either way, so the engine that starts when the pack
+    // lands is exactly the one saved (spec story 19).
     let ocr_engine = engines.ocr_engine.trim().to_lowercase();
     if !langception_core::config::OCR_ENGINES.contains(&ocr_engine.as_str()) {
         return Err(format!(
