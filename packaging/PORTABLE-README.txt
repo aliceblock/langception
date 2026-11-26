@@ -18,10 +18,13 @@ Requirements
   your source language (English, Japanese, Chinese, or Korean) — without
   it nothing is read. Settings > Engines shows what is installed, with a
   jump to Windows' language settings. If you cannot install packs,
-  switch to one of the bundled PP-OCRv6 tiers there (tiny, small, or
-  medium): they work out of the box, fully offline, and live in the
+  switch to PP-OCRv6 tiny there: it ships with the app (in the
   "resources" folder next to Langception.exe — keep the two together
-  when moving the folder. See the project README.
+  when moving the folder) and works fully offline with no language
+  packs. The larger tiers (small, medium) and the Korean recognizer are
+  Model Packs: selecting one downloads it on first use, with progress
+  shown in Settings > Engines. See the project README and the section
+  below.
 
 Where settings live
 -------------------
@@ -29,6 +32,19 @@ Where settings live
   (paste that path into Explorer's address bar; the tray menu's
   "Open Config Folder" opens it too)
 - Keys and glossaries are stored only in that file on your machine.
+
+Downloaded OCR models
+---------------------
+Selecting a PP-OCRv6 tier that does not ship with the app downloads its
+Model Pack on first use — nothing downloads unless you select it. In
+the portable build the download creates a "models" folder next to
+Langception.exe and keeps the packs there, so the models travel with
+the app: keep that folder together with the exe when moving or copying
+Langception's folder. Nothing deletes a pack on its own either —
+Settings > Engines has a "Delete unused packs" button when you want
+the disk space back, and deleting the "models" folder yourself is safe
+(the app rebuilds what ships with the app and re-downloads a pack when
+you select its tier again).
 
 First steps
 -----------

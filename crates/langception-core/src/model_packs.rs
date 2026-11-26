@@ -1448,11 +1448,15 @@ mod tests {
     const HEX_A: &str = "1111111111111111111111111111111111111111111111111111111111111111";
     const HEX_B: &str = "2222222222222222222222222222222222222222222222222222222222222222";
 
-    /// The manifest JSON packaging must emit — the real hash pins from
-    /// fetch-pp-ocrv6.ps1 over the launch contract's ten files. Ticket 05
-    /// generates this file; this fixture pins the exact shape it must
-    /// produce (sizes here are placeholders; the generator writes the
-    /// real byte sizes).
+    /// The manifest JSON packaging emits — the exact output shape of
+    /// fetch-pp-ocrv6.ps1 (deferred-model-packs ticket 05): the real
+    /// hash pins over the launch contract's ten files, the release asset
+    /// URL first per pack (the tag in it is the app version at packaging
+    /// time; this fixture carries the version it was pinned at), then
+    /// each file's pinned upstream URL. Sizes here are placeholders; the
+    /// generator writes the real byte sizes. If this fixture and the
+    /// generator drift apart, the ignored `the_real_fetched_manifest_
+    /// parses` test catches it on a machine with a fetched bundle.
     fn realistic_manifest_json() -> String {
         let tiny_det = "193bab7a04fca699a6c82e6abb5b81bdb28177f0abd4062552b04908dafb19f8";
         let tiny_rec = "9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6";
@@ -1477,8 +1481,9 @@ mod tests {
                     json_pack(
                         "1",
                         &[
-                            "https://github.com/intception/langception/releases/download/v0.3.0/pp-ocrv6-small.zip",
+                            "https://github.com/intception-app/langception/releases/download/v0.2.1/pp-ocrv6-small.zip",
                             "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx",
+                            "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx",
                             "https://www.modelscope.cn/api/v1/models/greatv/oar-ocr/repo?Revision=master&FilePath=ppocrv6_dict.txt",
                         ],
                         &[
@@ -1492,7 +1497,12 @@ mod tests {
                     "medium",
                     json_pack(
                         "1",
-                        &["https://github.com/intception/langception/releases/download/v0.3.0/pp-ocrv6-medium.zip"],
+                        &[
+                            "https://github.com/intception-app/langception/releases/download/v0.2.1/pp-ocrv6-medium.zip",
+                            "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/resolve/main/inference.onnx",
+                            "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/main/inference.onnx",
+                            "https://www.modelscope.cn/api/v1/models/greatv/oar-ocr/repo?Revision=master&FilePath=ppocrv6_dict.txt",
+                        ],
                         &[
                             json_file("pp-ocrv6_medium_det.onnx", medium_det, 44_444_444),
                             json_file("pp-ocrv6_medium_rec.onnx", medium_rec, 55_555_555),
@@ -1505,7 +1515,7 @@ mod tests {
                     json_pack(
                         "1",
                         &[
-                            "https://github.com/intception/langception/releases/download/v0.3.0/pp-ocrv6-korean.zip",
+                            "https://github.com/intception-app/langception/releases/download/v0.2.1/pp-ocrv6-korean.zip",
                             "https://huggingface.co/PaddlePaddle/korean_PP-OCRv5_mobile_rec_onnx/resolve/main/inference.onnx",
                             "https://www.modelscope.cn/api/v1/models/greatv/oar-ocr/repo?Revision=master&FilePath=ppocrv5_korean_dict.txt",
                         ],
@@ -2391,7 +2401,8 @@ mod tests {
         .unwrap();
         let manifest = Manifest::load_from_bundle(&bundle).unwrap();
         assert_eq!(manifest.bundled().len(), 3);
-        assert_eq!(manifest.pack(PackId::Small).urls.len(), 3);
+        // The release asset plus the pack's three pinned upstream URLs.
+        assert_eq!(manifest.pack(PackId::Small).urls.len(), 4);
     }
 
     #[test]
@@ -2405,5 +2416,48 @@ mod tests {
             "{err}"
         );
         assert!(err.to_string().contains("cannot read the models manifest"), "{err}");
+    }
+
+    /// The manifest the packaging fetch script actually generated into
+    /// the repo's bundle, parsed by the real reader — the fixture above
+    /// pins the shape, this catches the two drifting apart. Opt-in like
+    /// the capture smoke (`--ignored`): the bundle is a git-ignored
+    /// fetched artifact, so CI — which never fetches models — skips this
+    /// via the attribute, and the guard below skips a checkout whose
+    /// bundle simply has not been fetched yet.
+    #[test]
+    #[ignore = "needs the fetched bundle; run with --ignored after packaging/fetch-pp-ocrv6.ps1"]
+    fn the_real_fetched_manifest_parses() {
+        let bundle = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src-tauri/resources/pp-ocrv6");
+        let manifest_path = bundle.join(MANIFEST_FILE_NAME);
+        if !manifest_path.is_file() {
+            println!("no fetched bundle manifest at {} - skipped", manifest_path.display());
+            return;
+        }
+        let manifest = Manifest::load_from_bundle(&bundle).unwrap();
+        // The tiny-only release layout: the bundled baseline is exactly
+        // the three Tiny files, and every pack's primary URL is this
+        // repo's release asset. (That the parse succeeded also proves
+        // the generator's cross-pack pins agree — a conflicting shared
+        // dictionary would be a named error.)
+        let bundled_names: Vec<&str> =
+            manifest.bundled().iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(
+            bundled_names,
+            [
+                "pp-ocrv6_tiny_det.onnx",
+                "pp-ocrv6_tiny_rec.onnx",
+                "ppocrv6_tiny_dict.txt"
+            ],
+        );
+        for id in PackId::ALL {
+            let pack = manifest.pack(id);
+            assert!(
+                pack.urls[0].starts_with("https://github.com/intception-app/langception/releases/"),
+                "{id:?} primary URL must be this repo's release asset, got {}",
+                pack.urls[0]
+            );
+        }
     }
 }

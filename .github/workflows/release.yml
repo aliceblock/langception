@@ -1,10 +1,11 @@
 name: Release
 
-# A tag push vX.Y.Z builds the two release artifacts — the NSIS installer
-# and the portable zip — and publishes them to a GitHub Release for the
-# tag. Cutting a release is therefore: bump the version in
-# src-tauri/tauri.conf.json + both Cargo.toml files, tag, push the tag.
-# See docs/releasing.md.
+# A tag push vX.Y.Z builds the release artifacts — the NSIS installer,
+# the portable zip, and the three Model Pack archives (ADR-0008: the
+# bundle is tiny-only, so the larger tiers download from the release) —
+# and publishes them to a GitHub Release for the tag. Cutting a release
+# is therefore: bump the version in src-tauri/tauri.conf.json + both
+# Cargo.toml files, tag, push the tag. See docs/releasing.md.
 
 on:
   push:
@@ -47,11 +48,14 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-      # The PP-OCRv6 bundle (pp-ocrv6-sidecar tickets 03/04): the models
-      # are fetched first (SHA-256-verified, into the layout the sidecar's
-      # launch contract fixes), then the sidecar exe we build is copied in
-      # beside them — the flat resources/pp-ocrv6/ layout the app resolves
-      # and `tauri build` bundles (resources glob in tauri.conf.json).
+      # The PP-OCRv6 packaging (deferred-model-packs ticket 05): one
+      # script produces everything packaging ships for the models — the
+      # tiny-only bundle (three Tiny files + the generated models
+      # manifest, SHA-256-verified, into the layout the shell resolves),
+      # and the three Model Pack archives the manifest's primary URLs
+      # point at. The sidecar exe we build is copied in beside them; the
+      # flat resources/pp-ocrv6/ layout is what `tauri build` bundles
+      # (resources glob in tauri.conf.json).
       - name: Fetch the PP-OCRv6 models
         shell: pwsh
         run: packaging/fetch-pp-ocrv6.ps1
@@ -79,8 +83,10 @@ jobs:
       # The portable zip is the bare exe (frontend assets are embedded) —
       # no bundler target for this, so it is assembled by hand. The exe is
       # renamed to the product name for the user-facing archive, and the
-      # OCR engine folder is laid out beside it exactly as the installer
-      # does (the app resolves `resources/pp-ocrv6` next to the exe too).
+      # tiny-only OCR engine folder (Tiny baseline + models manifest) is
+      # laid out beside it exactly as the installer does (the app resolves
+      # `resources/pp-ocrv6` next to the exe too; downloaded packs land in
+      # models/ beside it — PORTABLE-README.txt tells the user).
       - name: Assemble the portable zip
         shell: pwsh
         env:
@@ -113,6 +119,9 @@ jobs:
           Write-Host "built $zip"
           Get-Item $zip, "target/release/bundle/nsis/*.exe" | Select-Object Name, Length
 
+      # The three Model Pack archives ride the same release — they are
+      # the assets the shipped manifest's primary URLs point at (the
+      # fetch step embeds this tag's version in those URLs).
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
@@ -120,3 +129,6 @@ jobs:
           files: |
             target/release/bundle/nsis/Langception_*_x64-setup.exe
             packaging/Langception_*_x64-portable.zip
+            packaging/pp-ocrv6-small.zip
+            packaging/pp-ocrv6-medium.zip
+            packaging/pp-ocrv6-korean.zip

@@ -97,13 +97,20 @@ A release is a tag push; CI does the rest
    The tag must be `v` + the config version — the release workflow checks
    this first and fails fast on a mismatch.
 
-4. Watch the **Release** workflow run: tests → `cargo tauri build` →
-   portable zip assembly → publish. When green, the tag's GitHub Release
-   has both artifacts:
+4. Watch the **Release** workflow run: tests → model packaging →
+   `cargo tauri build` → portable zip assembly → publish. When green,
+   the tag's GitHub Release has five artifacts:
 
    - `Langception_X.Y.Z_x64-setup.exe` — NSIS installer (currentUser
      install; downloads WebView2 at install time when missing)
    - `Langception_X.Y.Z_x64-portable.zip` — bare exe + README + LICENSE
+     + the tiny-only OCR engine folder
+   - `pp-ocrv6-small.zip` / `pp-ocrv6-medium.zip` / `pp-ocrv6-korean.zip`
+     — the Model Pack archives (ADR-0008): the bundle is tiny-only, so
+     these are what the app downloads when a selection needs them, from
+     the primary URLs the shipped models manifest pins (the packaging
+     fetch script embeds this tag's version in those URLs; the
+     workflow's tag/version check keeps them pointing at this release)
 
    Release notes are auto-generated from commits since the previous tag.
 
@@ -115,6 +122,7 @@ A release is a tag push; CI does the rest
 | `installMode: currentUser` | `bundle.windows.nsis` | No admin prompt; installs under `%LOCALAPPDATA%\Programs\Langception` — appropriate for a per-user tool. |
 | Installer languages `["English", "Thai"]` | `bundle.windows.nsis` | The NSIS UI follows the OS language; Thai users get a Thai installer shell. Tauri logs "Custom tauri messages for Thai are not translated" — the untranslated strings (install-mode chooser, language-selector dialog) never render under `currentUser` + no selector, so no `customLanguageFiles` needed. |
 | Portable zip assembled by hand | release.yml | Tauri has no portable target; the exe embeds `ui/` (static frontendDist), so the bare exe is the portable app. |
+| Model Pack archives on the release | release.yml + packaging/fetch-pp-ocrv6.ps1 | ADR-0008: the bundle is tiny-only, so the three archives are release assets the shipped models manifest's primary URLs name. One script run generates the manifest and builds the archives from the same verified bytes — bundle contents, archives, and hash pins come from one discipline. |
 
 ## Post-release manual checks
 

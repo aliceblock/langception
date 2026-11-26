@@ -4,7 +4,7 @@ The new engine's lifecycle (lazy spawn, reuse, restart on model change,
 crash recovery, timeouts) is covered offline by `cargo test` against the
 scripted stub (`ppocr_sidecar_tests`); this checklist exercises the REAL
 sidecar and the packaging — everything that needs a live desktop and the
-~190 MB fetched bundle (the installer/portable artifact checks live in
+fetched models (the installer/portable artifact checks live in
 `31-bundle-verification.md`).
 
 ## Setup
@@ -12,7 +12,14 @@ sidecar and the packaging — everything that needs a live desktop and the
 1. The bundle (git-ignored) must be in place at
    `src-tauri/resources/pp-ocrv6/`:
    `powershell -File packaging/fetch-pp-ocrv6.ps1` fetches and
-   SHA-256-verifies the ten model files. The sidecar exe comes from
+   SHA-256-verifies all ten model files (into a work dir under
+   `packaging/stage/`), stages the tiny-only bundle — the three Tiny
+   files plus the generated `models-manifest.json` — into the bundle
+   dir, and builds the three Model Pack archives into `packaging/`.
+   (Since the deferred-model-packs feature the bundle is tiny-only:
+   selecting small/medium downloads its pack on first use — this
+   checklist's full download-state pass is that feature's ticket 06.)
+   The sidecar exe comes from
    `cargo build -p pp-ocrv6-sidecar` (the workspace target dir is one of
    the app's resolution candidates in dev).
    Optional headless check (live desktop needed):

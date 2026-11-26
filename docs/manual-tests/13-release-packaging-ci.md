@@ -24,9 +24,12 @@ Windows 10** VM without WebView2 (worst case) and a **Windows 11** machine
 
 - [ ] Pushing a `vX.Y.Z` tag (matching `tauri.conf.json`'s version) starts
       the **Release** workflow on windows-latest and it goes green.
-- [ ] The Release page for the tag carries both artifacts:
-      `Langception_X.Y.Z_x64-setup.exe` and
-      `Langception_X.Y.Z_x64-portable.zip`, plus auto-generated notes.
+- [ ] The Release page for the tag carries the five artifacts:
+      `Langception_X.Y.Z_x64-setup.exe`,
+      `Langception_X.Y.Z_x64-portable.zip`, and the three Model Pack
+      archives `pp-ocrv6-small.zip` / `pp-ocrv6-medium.zip` /
+      `pp-ocrv6-korean.zip` (the assets the shipped models manifest's
+      primary URLs point at), plus auto-generated notes.
 - [ ] A tag that does NOT match the config version (e.g. `v9.9.9`) fails
       fast in the tag/version check step, before any build.
 - [ ] CI (`.github/workflows/ci.yml`) runs clippy + tests green on pushes
@@ -51,8 +54,9 @@ Windows 10** VM without WebView2 (worst case) and a **Windows 11** machine
 ### Portable zip
 
 - [ ] The zip extracts to a `Langception/` folder containing
-      `Langception.exe`, `README.txt`, `LICENSE.txt` — nothing else, no
-      installer.
+      `Langception.exe`, `README.txt`, `LICENSE.txt`, and the
+      `resources/pp-ocrv6/` folder (the tiny-only engine: three Tiny
+      files + the models manifest + the sidecar exe) — no installer.
 - [ ] Extracted to a different location, `Langception.exe` launches to
       tray + Results Window on the WebView2-equipped machine.
 - [ ] Running it a second time shows the single-instance behavior (focus
@@ -77,8 +81,8 @@ Windows 10** VM without WebView2 (worst case) and a **Windows 11** machine
       lists the gap and the jump button opens Windows' Language & region
       page. A fresh config defaults to Windows OCR (ticket 55) —
       Settings → Engines shows it selected — and the README's
-      pack-less escape hatch (switch to a bundled PP-OCRv6 tier) actually
-      reads text on this machine.
+      pack-less escape hatch (switch to PP-OCRv6 tiny, which ships with
+      the app) actually reads text on this machine.
 - [ ] Engine key setup: each engine's Settings card has the same signup
       link the README lists; pasting a key + Test works for one keyed
       engine.
