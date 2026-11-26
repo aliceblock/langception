@@ -75,8 +75,12 @@ A pluggable component that turns a captured image region into text blocks with p
 _Avoid_: reader, recognizer
 
 **Model Tier**:
-The size grade of the bundled OCR Engine — Tiny (fastest, weakest on small text), Small (the default balance), or Medium (most accurate, slowest). Chosen as part of the OCR Engine selection itself — the engine dropdown lists the tiers as separate options — not as a separate setting.
+The size grade of the offline OCR Engine — Tiny (fastest, weakest on small text), Small (the default balance), or Medium (most accurate, slowest). Tiny ships with the app; Small and Medium arrive as Model Packs on first use. Chosen as part of the OCR Engine selection itself — the engine dropdown lists the tiers as separate options — not as a separate setting.
 _Avoid_: model size, model version, quality level
+
+**Model Pack**:
+One downloadable unit of model files for the offline OCR Engine: the Small set, the Medium set, or the Korean recognizer set. A selection downloads every pack it needs; each pack is verified by hash before use; Tiny needs no pack.
+_Avoid_: model download, model bundle, model set
 
 **Translate Engine**:
 A pluggable component that translates text from a Source Language to Thai.

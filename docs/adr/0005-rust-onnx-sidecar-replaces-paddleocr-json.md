@@ -16,4 +16,5 @@ The bundled offline OCR engine — hiroi-sora's PaddleOCR-json v1.4.1 — has pu
 - Korean is a documented exception: PP-OCRv6's vocabulary contains no hangul (verified against the official dictionaries), so the Korean Source Language reads through the official Korean PP-OCRv5 recognition model while detection stays v6. This is why a v5 model ships in a v6 feature.
 - The sidecar is pure Rust + ONNX Runtime with no Windows-only engine artifact, removing the main engine-side blocker for the later macOS/Linux builds.
 - Model sourcing moves to the official PP-OCRv6 Hugging Face repos; the packaging fetch script is reworked to fetch models from there, keeping the packaging-time (not first-run) download discipline and its hash checks.
+  *Amended by ADR-0008: only the Tiny tier's files keep that packaging-time discipline; Small, Medium and the Korean recognizer set arrive as first-use Model Pack downloads, carrying the same pinned URLs and hash checks to download time.*
 - No config migration: the default engine stays Windows OCR (ticket 55), and existing installs that explicitly select the bundled engine keep working and land on the Small tier.
