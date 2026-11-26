@@ -88,6 +88,32 @@ for (const tab of document.querySelectorAll(".tab")) {
   });
 }
 
+// The mock's titlebar filter (redesign 2): a client-side text match over
+// the cards — anything without the query hides until the box clears. The
+// class is filter-hidden, NOT .hidden: state-owned panels (the pack
+// sub-card) keep their own visibility, and the two must never fight.
+const settingsSearch = document.getElementById("settings-search");
+
+function applySettingsFilter() {
+  const needle = settingsSearch.value.trim().toLowerCase();
+  for (const card of document.querySelectorAll(".searchable-card")) {
+    card.classList.toggle(
+      "filter-hidden",
+      Boolean(needle) && !card.textContent.toLowerCase().includes(needle)
+    );
+  }
+}
+settingsSearch.addEventListener("input", applySettingsFilter);
+// The mock's one shortcut: Ctrl+K focuses the box (select-all so a new
+// query replaces the old). Registered on window so it works from any focus.
+window.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    settingsSearch.focus();
+    settingsSearch.select();
+  }
+});
+
 // OCR language packs (wizard step 1 + Engines tab) ----------------------------
 
 function packRow(status) {
@@ -293,6 +319,7 @@ async function loadEngines() {
     // The saved tier is now known — re-render the pack rows against it
     // (a pure re-render; the states themselves came from the tab's query).
     renderPackStates();
+    updateActivePill();
   } catch (e) {
     toast(String(e), "error");
   }
@@ -712,6 +739,41 @@ enginesDefault.addEventListener("change", expandSelectedEngineCard);
 // loadEngines re-syncs it to the saved value before the tab is used.
 expandSelectedEngineCard();
 
+// The page head's live pipeline pill (redesign 2): what the SAVED
+// selection runs. It reads the dirty tracker's SNAPSHOT — the values the
+// config holds — never the live selects, so an unsaved edit (or any
+// re-render that touches the selects, like a UI-language switch) can
+// never make the pill pretend an edit is active; the save bar owns that
+// signal.
+const enginesActivePill = document.getElementById("engines-active-pill");
+const enginesActivePillText = document.getElementById("engines-active-pill-text");
+
+// The option's short name from its data-short attribute (Latin in both UI
+// languages) — the label prose may be rewritten freely without touching
+// the pill.
+function shortOptionLabel(select, value) {
+  const option = [...select.options].find((o) => o.value === value);
+  return option?.dataset.short || "";
+}
+
+function updateActivePill() {
+  if (!enginesLoaded) return; // stays hidden until the engines truth lands
+  enginesActivePillText.textContent = t("settings.engines.active_pill", {
+    ocr: shortOptionLabel(enginesOcr, savedSnapshot.get(enginesOcr) ?? enginesOcr.value),
+    engine: shortOptionLabel(enginesDefault, savedSnapshot.get(enginesDefault) ?? enginesDefault.value),
+  });
+  enginesActivePill.classList.remove("hidden");
+}
+
+// The engines tab's derived-UI re-sync, shared by the two restore paths
+// (a rejected save's revert and Discard): the fused-reading warning, the
+// card expansion, and the pill all follow the restored selects.
+function resyncEnginesView() {
+  enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
+  expandSelectedEngineCard();
+  updateActivePill();
+}
+
 // Model Packs (deferred-model-packs ticket 04) -------------------------------
 // The OCR tier options' live state and the download controls. The shell
 // owns the downloads (ADR-0008: the lifecycle is core-owned — closing this
@@ -1129,6 +1191,9 @@ async function applyUiLanguage(lang, status) {
   // I18n.init's applyStatic reset the tier options to their base labels;
   // the pack states' suffixes compose again on top (a pure re-render).
   renderPackStates();
+  // The pill's sentence re-bakes in the new language too (its words come
+  // from the re-composed option labels).
+  updateActivePill();
 }
 
 // Ticket 39: the per-tab button's handler, extracted so the sticky footer's
@@ -2303,8 +2368,7 @@ function restoreFields(fields) {
 // restored engine, the footer follows the restored fields.
 function revertEnginesFields() {
   restoreFields(TRACKED_ENGINES);
-  enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
-  expandSelectedEngineCard();
+  resyncEnginesView();
   updateSaveFooter();
 }
 
@@ -2361,6 +2425,9 @@ async function saveAll() {
     if (!fieldsDirty(fields)) continue;
     if (await save()) snapshotFields(fields);
   }
+  // The snapshots are the pill's source — re-bake after the saves moved
+  // them (the pill names what the saved selection now runs).
+  updateActivePill();
   updateSaveFooter();
 }
 document.getElementById("save-all").addEventListener("click", saveAll);
@@ -2378,8 +2445,7 @@ function discardAll() {
   restoreFields(TRACKED_PROFILE);
   restoreFields(TRACKED_HOTKEYS);
   restoreFields(TRACKED_STYLE);
-  enginesReadingWarning.classList.toggle("hidden", enginesReading.value !== "fused");
-  expandSelectedEngineCard();
+  resyncEnginesView();
   profileExe.dataset.chosen = savedSnapshot.get(profileExe) ?? "";
   renderExeOptions();
   styleColor.disabled = styleAutoColors.checked;
@@ -2533,6 +2599,15 @@ async function loadAbout() {
     document.getElementById("about-target").textContent = about.targetLanguage;
     document.getElementById("about-config-path").textContent = about.configPath;
     document.getElementById("about-logs-path").textContent = about.logsPath;
+    // Redesign 2: the About hero and the sidebar's version chip read the
+    // same truth this grid does. The chip stays hidden until the real
+    // version lands (no "—" badge on the nav row).
+    document.getElementById("about-hero-name").textContent = about.productName;
+    const version = about.version.startsWith("v") ? about.version : `v${about.version}`;
+    document.getElementById("about-hero-version").textContent = version;
+    const chip = document.getElementById("sidebar-version");
+    chip.textContent = version;
+    chip.classList.remove("hidden");
   } catch (e) {
     toast(String(e), "error");
   }

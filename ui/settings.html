@@ -27,6 +27,16 @@
           <svg class="header-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-tauri-drag-region><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg>
           <span id="config-error-chip" class="chip error hidden" data-tauri-drag-region data-i18n-title="settings.header.config_error_chip.title" title="config.toml is broken — see the Results Window" data-i18n="settings.header.config_error_chip">config error</span>
         </div>
+        <!-- The redesign mock's center filter (Ctrl+K): a client-side text
+             match that hides the cards it does not match (settings.js). The
+             input opts out of the drag region by simply not carrying the
+             attribute — Tauri starts a drag only on the exact target. The
+             kbd hint is literal keycap text, like the hotkey values. -->
+        <div class="settings-search">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+          <input id="settings-search" type="text" spellcheck="false" data-i18n-placeholder="settings.search.placeholder" placeholder="Filter settings, engines, keys..." data-i18n-title="settings.search.title" title="Filter the settings cards — Ctrl+K focuses this box" />
+          <kbd>Ctrl K</kbd>
+        </div>
         <div class="titlebar-buttons"></div>
       </div>
     </header>
@@ -115,6 +125,8 @@
          would otherwise wipe an icon sitting beside them. -->
     <div id="settings-body" class="settings-body">
       <nav id="tabs" class="tabs hidden">
+        <!-- The redesign mock's group label over the nav items. -->
+        <div class="tabs-group" data-i18n="settings.sidebar.group">Preferences</div>
         <button class="tab active" data-tab="general">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>
           <span data-i18n="settings.tab.general">General</span>
@@ -142,15 +154,25 @@
         <button class="tab about" data-tab="about">
           <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
           <span data-i18n="settings.tab.about">About</span>
+          <!-- The mock's version chip on the About row: filled by
+               settings.js once get_about resolves (hidden until then). -->
+          <span id="sidebar-version" class="tab-version mono hidden">—</span>
         </button>
       </nav>
 
       <main id="tab-pages" class="pages hidden">
       <section id="tab-general" class="page active">
-        <h2 data-i18n="settings.general.title">General</h2>
+        <!-- The mock's page head: title + one-line lede over a hairline.
+             Every page wears the same shape (Engines adds the live pill). -->
+        <div class="page-head">
+          <div class="page-head-text">
+            <h2 data-i18n="settings.general.title">General</h2>
+            <p class="lede" data-i18n="settings.general.lede">App-wide defaults — languages, capture cadence, and startup.</p>
+          </div>
+        </div>
         <!-- Ticket 41: one concern (the global settings) — the whole body
              lives in a single section card. -->
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <div class="form-grid">
           <label class="form-row">
             <span data-i18n="settings.general.source_language">Source language</span>
@@ -197,18 +219,42 @@
       </section>
 
       <section id="tab-engines" class="page">
-        <h2 data-i18n="settings.engines.title">Engines</h2>
-        <!-- Ticket 41: three concern groups — the engine choice, the
-             per-engine cards (their own cards), and prompts + OCR packs. -->
-        <div class="settings-section">
-        <h3 data-i18n="settings.engines.translation_h3">Translation</h3>
-        <!-- The mock's one-line lede; the ☁ / Profiles-override details
-             moved into the Translation-engine label's tooltip. -->
-        <p class="hint" data-i18n="settings.engines.lede">
-          Configure the OCR reader and the active translation provider.
-        </p>
+        <!-- The mock's page head with the LIVE pipeline pill: what the saved
+             selection actually runs (settings.js fills it once the engines
+             truth lands; it never guesses from unsaved edits). -->
+        <div class="page-head">
+          <div class="page-head-text">
+            <h2 data-i18n="settings.engines.title">Engines &amp; OCR</h2>
+            <p class="lede" data-i18n="settings.engines.lede">Manage the OCR reader, translation providers, and their offline model packs.</p>
+          </div>
+          <span id="engines-active-pill" class="status-pill ok hidden">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <span id="engines-active-pill-text"></span>
+          </span>
+        </div>
+        <!-- The mock's primary card: the whole pipeline choice in one card,
+             the mini flow (OCR → Translator → Fallback) as its head's
+             breadcrumb. The flow's words reuse the three row labels' keys,
+             so the breadcrumb and the form never drift apart. -->
+        <div class="settings-section pipeline-card searchable-card">
+        <div class="pipeline-head">
+          <div class="pipeline-title">
+            <svg class="sec-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/></svg>
+            <div>
+              <h3 data-i18n="settings.engines.pipeline.title">Translation Pipeline</h3>
+              <p class="lede" data-i18n="settings.engines.pipeline.lede">Configure how screen text is captured, recognized, and translated in sequence.</p>
+            </div>
+          </div>
+          <div class="pipeline-flow" aria-hidden="true">
+            <span class="flow-step accent"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" x2="17" y1="12" y2="12"/></svg><span data-i18n="settings.engines.ocr_engine">OCR engine</span></span>
+            <svg class="flow-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            <span class="flow-step info"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg><span data-i18n="settings.engines.translate_engine">Translation engine</span></span>
+            <svg class="flow-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            <span class="flow-step"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1 1 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg><span data-i18n="settings.engines.fallback.label">Fallback translation</span></span>
+          </div>
+        </div>
         <div class="form-grid">
-          <label class="form-row">
+          <label class="form-row" data-i18n-title="settings.engines.processing_tooltip" title="Classic reads text locally with OCR first, then translates the text. Vision sends the captured image straight to a multimodal model — read and translated in one call.">
             <span data-i18n="settings.engines.processing">Processing</span>
             <select id="engines-reading">
               <option value="ocr" data-i18n="settings.engines.reading.ocr">Classic — OCR engine reads, then the engine translates (default)</option>
@@ -218,20 +264,23 @@
           <label class="form-row">
             <span data-i18n="settings.engines.ocr_engine" data-i18n-title="settings.engines.ocr_tooltip">OCR engine</span>
             <select id="engines-ocr">
-              <option value="windows" data-i18n="settings.engines.ocr.windows">Windows OCR — default, needs an installed language pack</option>
-              <option value="pp-ocrv6-tiny" data-i18n="settings.engines.ocr.tiny">PP-OCRv6 tiny — bundled, offline, fastest tier (best for English &amp; Chinese)</option>
-              <option value="pp-ocrv6-small" data-i18n="settings.engines.ocr.small">PP-OCRv6 small — bundled, offline, balanced tier, full language coverage</option>
-              <option value="pp-ocrv6-medium" data-i18n="settings.engines.ocr.medium">PP-OCRv6 medium — bundled, offline, most accurate tier, heavier per pass</option>
+              <!-- data-short: the pill's short name (Latin in both UI
+                   languages) — the label's prose may be rewritten freely
+                   without touching the head pill. -->
+              <option value="windows" data-short="Windows OCR" data-i18n="settings.engines.ocr.windows">Windows OCR — default, needs an installed language pack</option>
+              <option value="pp-ocrv6-tiny" data-short="PP-OCRv6 tiny" data-i18n="settings.engines.ocr.tiny">PP-OCRv6 tiny — ships with the app, offline, fastest tier (best for English &amp; Chinese)</option>
+              <option value="pp-ocrv6-small" data-short="PP-OCRv6 small" data-i18n="settings.engines.ocr.small">PP-OCRv6 small — offline, balanced tier, full language coverage</option>
+              <option value="pp-ocrv6-medium" data-short="PP-OCRv6 medium" data-i18n="settings.engines.ocr.medium">PP-OCRv6 medium — offline, most accurate tier, heavier per pass</option>
             </select>
           </label>
           <label class="form-row">
             <span data-i18n="settings.engines.translate_engine" data-i18n-title="settings.engines.engine_tooltip">Translation engine</span>
             <select id="engines-default">
-              <option value="google" data-i18n="settings.engines.engine.google">Google Translate (unofficial) — free, no key</option>
-              <option value="lmstudio" data-i18n="settings.engines.engine.lmstudio">LM Studio — local & offline, no key</option>
-              <option value="gemini" data-i18n="settings.engines.engine.gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
-              <option value="azure" data-i18n="settings.engines.engine.azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
-              <option value="openai" data-i18n="settings.engines.engine.openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
+              <option value="google" data-short="Google Translate (unofficial)" data-i18n="settings.engines.engine.google">Google Translate (unofficial) — free, no key</option>
+              <option value="lmstudio" data-short="LM Studio" data-i18n="settings.engines.engine.lmstudio">LM Studio — local &amp; offline, no key</option>
+              <option value="gemini" data-short="Gemini" data-i18n="settings.engines.engine.gemini">Gemini — keyed LLM (Google AI Studio), free tier available</option>
+              <option value="azure" data-short="Azure AI Translator" data-i18n="settings.engines.engine.azure">Azure AI Translator — F0 free tier, 2M chars/month</option>
+              <option value="openai" data-short="OpenAI-compatible" data-i18n="settings.engines.engine.openai">OpenAI-compatible — OpenAI / OpenRouter / any compatible API</option>
             </select>
           </label>
           <!-- The auto-switch secondary (ADR-0006, ticket 03): engages
@@ -248,27 +297,7 @@
             </select>
           </label>
         </div>
-        <!-- The Model Pack states (deferred-model-packs ticket 04): the
-             tier options' live state (settings.js rewrites the option
-             labels from the pack snapshot + pack-event pushes), the
-             selected tier's pack rows with the download controls, and the
-             delete-unused cleanup. Windows OCR and a build without a
-             models manifest hide the panel entirely. -->
-        <div id="engines-pack-panel" class="hidden">
-          <div id="engines-pack-rows"></div>
-          <div class="row">
-            <button
-              id="engines-pack-delete"
-              class="btn small ghost"
-              data-i18n="settings.engines.pack.delete_btn"
-              data-i18n-title="settings.engines.pack.delete_tooltip"
-              title="Removes only the packs the current selection does not use — bundled files and packs in use stay."
-            >
-              Delete unused packs
-            </button>
-            <span id="engines-pack-note" class="hint"></span>
-          </div>
-        </div>
+        <!-- The vision-reading warning follows the Processing select live. -->
         <p id="engines-reading-warning" class="hint hidden" data-i18n-html="settings.engines.fused_warning_html">
           Sends every captured frame to the engine as an image — read and
           translate in one call. Slower per pass and billed per image on
@@ -276,38 +305,93 @@
           engine's card below, e.g. <code>gemini-4-hydrogen</code>). Use it
           for stylized fonts the OCR engines cannot read.
         </p>
+        <!-- The Model Pack states (deferred-model-packs ticket 04) dressed
+             as the mock's nested sub-card: an icon head, then the per-pack
+             rows (name + size + state pill + row actions — settings.js
+             unchanged), and the mock's maintenance footer carrying
+             delete-unused. The clear-cache row stays OUTSIDE the sub-card:
+             on a build without a models manifest this whole panel hides, and
+             cache clearing must survive that. -->
+        <div id="engines-pack-panel" class="pack-subcard hidden">
+          <div class="pack-subcard-head">
+            <div class="pack-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/><path d="M12 22V12"/><path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7"/><path d="m7.5 4.27 9 5.15"/></svg>
+            </div>
+            <div class="pack-subcard-title">
+              <h4 data-i18n="settings.engines.pack.panel_title">OCR Model Packs</h4>
+              <p class="lede" data-i18n="settings.engines.pack.panel_lede">Offline model files the selected tier needs — downloaded on first use, verified by hash before use.</p>
+            </div>
+          </div>
+          <div id="engines-pack-rows"></div>
+          <div class="pack-subcard-foot">
+            <span class="foot-label" data-i18n="settings.engines.pack.maintenance">Storage &amp; cache maintenance</span>
+            <button
+              id="engines-pack-delete"
+              class="btn small ghost"
+              data-i18n-title="settings.engines.pack.delete_tooltip"
+              title="Removes only the packs the current selection does not use — bundled files and packs in use stay."
+            >
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/><path d="m9.5 10 5 5"/><path d="m14.5 10-5 5"/></svg>
+              <span data-i18n="settings.engines.pack.delete_btn">Delete unused packs</span>
+            </button>
+            <span id="engines-pack-note" class="hint"></span>
+          </div>
+        </div>
         <!-- The Translation Cache (ADR-0006): the clear is instant and
              silent-safe — the store and its file empty together. -->
         <div class="row">
-          <button id="engines-clear-cache" class="btn small ghost" data-i18n="settings.engines.clear_cache_btn">Clear translation cache</button>
+          <button id="engines-clear-cache" class="btn small ghost">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+            <span data-i18n="settings.engines.clear_cache_btn">Clear translation cache</span>
+          </button>
           <span id="engines-cache-note" class="hint"></span>
         </div>
         </div>
-        <div class="engine-card" data-engine="google">
+        <!-- The mock's Provider Configurations accordion: the per-engine
+             cards are its items — the head (title + chips + one-line desc +
+             chevron) stays visible while collapsed, the fields live in the
+             body. The expansion mechanic is ticket 54's unchanged (the
+             selected engine's card opens; a head click toggles any). Google
+             carries no data-engine and no body: it is the keyless default,
+             there is nothing to expand, so it reads as the always-open item. -->
+        <div class="providers-head">
+          <h3 data-i18n="settings.engines.providers.title">Provider Configurations</h3>
+          <span class="hint" data-i18n="settings.engines.providers.hint">Click a provider to expand settings</span>
+        </div>
+        <div class="engine-card searchable-card">
           <div class="engine-title">
-            <strong data-i18n="settings.card.google.title">Google Translate (unofficial)</strong>
-            <span class="chip privacy" data-i18n-title="settings.card.google.cloud_title" title="Screen text is sent to Google's translation endpoint" data-i18n="common.cloud_chip">☁ cloud</span>
-          </div>
-          <div class="engine-body">
-            <p class="hint" data-i18n="settings.card.google.hint">
-              Free, no key, no setup — the keyless default. Unofficial
-              endpoint, so it can rate-limit or break without notice.
-            </p>
+            <div class="engine-title-text">
+              <div class="engine-title-row">
+                <strong data-i18n="settings.card.google.title">Google Translate (unofficial)</strong>
+                <span class="chip privacy" data-i18n-title="settings.card.google.cloud_title" title="Screen text is sent to Google's translation endpoint" data-i18n="common.cloud_chip">☁ cloud</span>
+                <!-- The mock's second chip on this head: real app info —
+                     Google IS the keyless default the config starts on. -->
+                <span class="chip ok" data-i18n="settings.card.google.default_chip">Default</span>
+              </div>
+              <p class="engine-desc hint" data-i18n="settings.card.google.hint">
+                Free, no key, no setup — the keyless default. Unofficial
+                endpoint, so it can rate-limit or break without notice.
+              </p>
+            </div>
           </div>
         </div>
-        <div class="engine-card" data-engine="lmstudio">
+        <div class="engine-card searchable-card" data-engine="lmstudio">
           <div class="engine-title">
-            <strong data-i18n="settings.card.lmstudio.title">LM Studio</strong>
-            <span class="chip ok" data-i18n-title="settings.card.lmstudio.ok_chip_title" title="Runs on this machine — screen text never leaves it" data-i18n="settings.card.lmstudio.ok_chip">Local · offline</span>
+            <div class="engine-title-text">
+              <div class="engine-title-row">
+                <strong data-i18n="settings.card.lmstudio.title">LM Studio</strong>
+                <span class="chip ok" data-i18n-title="settings.card.lmstudio.ok_chip_title" title="Runs on this machine — screen text never leaves it" data-i18n="settings.card.lmstudio.ok_chip">Local · offline</span>
+              </div>
+              <p class="engine-desc hint" data-i18n-html="settings.card.lmstudio.hint_html">
+                Local and offline — screen text never leaves this machine.
+                Start LM Studio's server (Developer → Start server, default
+                port 1234), load a model, then Check server here to pick it.
+                Recommended: <code>gemma-4-e4b</code> or
+                <code>qwen3-4b-instruct</code>.
+              </p>
+            </div>
           </div>
           <div class="engine-body">
-            <p class="hint" data-i18n-html="settings.card.lmstudio.hint_html">
-              Local and offline — screen text never leaves this machine.
-              Start LM Studio's server (Developer → Start server, default
-              port 1234), load a model, then Check server here to pick it.
-              Recommended: <code>gemma-4-e4b</code> or
-              <code>qwen3-4b-instruct</code>.
-            </p>
             <div class="row glossary-add">
               <input id="engines-lmstudio-base-url" type="text" data-i18n-placeholder="settings.card.lmstudio.base_url_placeholder" placeholder="Server URL (default: http://localhost:1234/v1)" spellcheck="false" />
               <button id="engines-lmstudio-check" class="btn small" data-i18n="settings.card.lmstudio.check_btn">Check server</button>
@@ -321,17 +405,21 @@
             <span id="engines-lmstudio-note" class="hint"></span>
           </div>
         </div>
-        <div class="engine-card" data-engine="gemini">
+        <div class="engine-card searchable-card" data-engine="gemini">
           <div class="engine-title">
-            <strong data-i18n="settings.card.gemini.title">Gemini</strong>
-            <span class="chip privacy" data-i18n-title="settings.card.gemini.cloud_title" title="Screen text is sent to Google's Generative Language API" data-i18n="common.cloud_chip">☁ cloud</span>
+            <div class="engine-title-text">
+              <div class="engine-title-row">
+                <strong data-i18n="settings.card.gemini.title">Gemini</strong>
+                <span class="chip privacy" data-i18n-title="settings.card.gemini.cloud_title" title="Screen text is sent to Google's Generative Language API" data-i18n="common.cloud_chip">☁ cloud</span>
+              </div>
+              <p class="engine-desc hint" data-i18n-html="settings.card.gemini.hint_html">
+                Google's LLM API: create a free API key at AI Studio with the
+                link, paste it, and type a model id. Recommended:
+                <code>gemini-4-hydrogen</code> or <code>gemini-3.8-flash</code>.
+              </p>
+            </div>
           </div>
           <div class="engine-body">
-            <p class="hint" data-i18n-html="settings.card.gemini.hint_html">
-              Google's LLM API: create a free API key at AI Studio with the
-              link, paste it, and type a model id. Recommended:
-              <code>gemini-4-hydrogen</code> or <code>gemini-3.8-flash</code>.
-            </p>
             <div class="row glossary-add">
               <input id="engines-gemini-key" type="password" data-i18n-placeholder="settings.card.gemini.key_placeholder" placeholder="Gemini API key (AIza…)" spellcheck="false" autocomplete="off" />
               <button id="engines-gemini-link" class="btn small" data-i18n="settings.card.gemini.create_key">Create a free key…</button>
@@ -342,18 +430,22 @@
             </div>
           </div>
         </div>
-        <div class="engine-card" data-engine="azure">
+        <div class="engine-card searchable-card" data-engine="azure">
           <div class="engine-title">
-            <strong data-i18n="settings.card.azure.title">Azure AI Translator</strong>
-            <span class="chip privacy" data-i18n-title="settings.card.azure.cloud_title" title="Screen text is sent to Azure's translation service" data-i18n="common.cloud_chip">☁ cloud</span>
+            <div class="engine-title-text">
+              <div class="engine-title-row">
+                <strong data-i18n="settings.card.azure.title">Azure AI Translator</strong>
+                <span class="chip privacy" data-i18n-title="settings.card.azure.cloud_title" title="Screen text is sent to Azure's translation service" data-i18n="common.cloud_chip">☁ cloud</span>
+              </div>
+              <p class="engine-desc hint" data-i18n="settings.card.azure.hint">
+                Permanently free on the F0 tier (2M chars/month). Create a
+                Translator resource with the link (tier "Free F0", region
+                "Global") and paste its key — the region must match the
+                resource; empty means global.
+              </p>
+            </div>
           </div>
           <div class="engine-body">
-            <p class="hint" data-i18n="settings.card.azure.hint">
-              Permanently free on the F0 tier (2M chars/month). Create a
-              Translator resource with the link (tier "Free F0", region
-              "Global") and paste its key — the region must match the
-              resource; empty means global.
-            </p>
             <div class="row glossary-add">
               <input id="engines-azure-key" type="password" data-i18n-placeholder="settings.card.azure.key_placeholder" placeholder="Azure API key" spellcheck="false" autocomplete="off" />
               <input id="engines-azure-region" type="text" data-i18n-placeholder="settings.card.azure.region_placeholder" placeholder="Region (empty = global)" spellcheck="false" />
@@ -363,17 +455,21 @@
             </div>
           </div>
         </div>
-        <div class="engine-card" data-engine="openai">
+        <div class="engine-card searchable-card" data-engine="openai">
           <div class="engine-title">
-            <strong data-i18n="settings.card.openai.title">OpenAI-compatible</strong>
-            <span class="chip privacy" data-i18n-title="settings.card.openai.cloud_title" title="Screen text is sent to whatever server the base URL points at" data-i18n="settings.card.openai.cloud_chip">☁ cloud (unless your URL is local)</span>
+            <div class="engine-title-text">
+              <div class="engine-title-row">
+                <strong data-i18n="settings.card.openai.title">OpenAI-compatible</strong>
+                <span class="chip privacy" data-i18n-title="settings.card.openai.cloud_title" title="Screen text is sent to whatever server the base URL points at" data-i18n="settings.card.openai.cloud_chip">☁ cloud (unless your URL is local)</span>
+              </div>
+              <p class="engine-desc hint" data-i18n-html="settings.card.openai.hint_html">
+                Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
+                set the base URL (must include <code>/v1</code>), paste its key,
+                and type the model name (e.g. <code>gpt-4o-mini</code>).
+              </p>
+            </div>
           </div>
           <div class="engine-body">
-            <p class="hint" data-i18n-html="settings.card.openai.hint_html">
-              Works with OpenAI, OpenRouter, or any OpenAI-compatible API:
-              set the base URL (must include <code>/v1</code>), paste its key,
-              and type the model name (e.g. <code>gpt-4o-mini</code>).
-            </p>
             <div class="row glossary-add">
               <input id="engines-openai-base-url" type="text" data-i18n-placeholder="settings.card.openai.base_url_placeholder" placeholder="Base URL (e.g. https://api.openai.com/v1)" spellcheck="false" />
               <input id="engines-openai-key" type="password" data-i18n-placeholder="settings.card.openai.key_placeholder" placeholder="API key (empty = send none)" spellcheck="false" autocomplete="off" />
@@ -384,7 +480,7 @@
             </div>
           </div>
         </div>
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <h3 data-i18n="settings.prompts.title" data-i18n-title="settings.prompts.tooltip">Prompts (advanced)</h3>
         <!-- Ticket 54: Genderless Mode moved here from General — it shapes
              the same translation output these prompts produce. Same id and
@@ -437,7 +533,7 @@
           <span id="engines-note" class="hint"></span>
         </div>
         </div>
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <div class="section-head">
           <h3 data-i18n="settings.packs_section.title" data-i18n-title="settings.packs_section.hint">Windows OCR Language Packs</h3>
           <button id="engines-recheck" class="btn small" data-i18n="settings.packs_section.recheck_btn">Re-check</button>
@@ -453,16 +549,16 @@
       </section>
 
       <section id="tab-glossary" class="page">
-        <h2 data-i18n="settings.glossary.title" data-i18n-title="settings.glossary.hint">Glossary</h2>
-        <!-- The mock's one-line lede; the matching rule moved into the
-             title's tooltip. -->
-        <p class="hint" data-i18n="settings.glossary.lede">
-          Pinned translations applied across all apps and games.
-        </p>
+        <div class="page-head">
+          <div class="page-head-text">
+            <h2 data-i18n="settings.glossary.title" data-i18n-title="settings.glossary.hint">Glossary</h2>
+            <p class="lede hint" data-i18n="settings.glossary.lede">Pinned translations applied across all apps and games.</p>
+          </div>
+        </div>
         <!-- Ticket 41: the management area (add/import/export/list) in one
              section card; the Add button is a plain secondary — the sticky
              footer's Save is the page's only primary. -->
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <div class="row glossary-add">
           <input id="glossary-new-term" type="text" data-i18n-placeholder="settings.glossary.term_placeholder" placeholder="Term (e.g. Vertin)" spellcheck="false" />
           <input id="glossary-new-thai" type="text" data-i18n-placeholder="settings.glossary.thai_placeholder" placeholder="Thai (e.g. เวอร์ติน)" spellcheck="false" />
@@ -490,21 +586,18 @@
 
       <section id="tab-profiles" class="page">
         <div class="page-head">
-          <h2 data-i18n="settings.profiles.title" data-i18n-title="settings.profiles.hint">Profiles</h2>
+          <div class="page-head-text">
+            <h2 data-i18n="settings.profiles.title" data-i18n-title="settings.profiles.hint">Profiles</h2>
+            <p class="lede hint" data-i18n="settings.profiles.lede">Auto-switch engine, zones, and glossary when a specific window is focused.</p>
+          </div>
           <!-- The mock's amber "+ New Profile" in the page head. -->
           <button id="profile-new" class="btn primary small" data-i18n="settings.profiles.new_btn">+ New Profile…</button>
         </div>
-        <!-- The mock's one-line lede; the full explanation moved into the
-             title's tooltip. -->
-        <p class="hint" data-i18n="settings.profiles.lede">
-          Auto-switch engine, zones, and glossary when a specific window is
-          focused.
-        </p>
         <!-- The mock's profile selector strip: the dropdown and Delete in
              one bordered card. The select is flexed with min-width: 0 so a
              long profile name ellipsizes instead of pushing the strip past
              the window (the reported overflow). -->
-        <div class="profile-strip">
+        <div class="profile-strip searchable-card">
           <select id="profile-select" data-i18n-title="settings.profiles.select_title" title="Choose a profile"></select>
           <button id="profile-delete" class="btn danger small" data-i18n="settings.profiles.delete_btn">Delete</button>
           <span id="profile-active-chip" class="chip ok hidden" data-i18n-title="settings.profiles.active_chip_title" title="This profile's app owns the foreground window right now" data-i18n="settings.profiles.active_chip">active</span>
@@ -517,7 +610,7 @@
         <div id="profile-editor" class="hidden">
           <!-- Ticket 41: the editor's three concerns (identity, glossary
                layer, capture zones) each get a section card. -->
-          <div class="settings-section">
+          <div class="settings-section searchable-card">
           <h3 data-i18n="settings.profiles.editor.title" data-i18n-title="settings.profiles.foreground_hint">Profile</h3>
           <div class="form-grid">
             <label class="form-row">
@@ -568,7 +661,7 @@
           </div>
           </div>
 
-          <div class="settings-section">
+          <div class="settings-section searchable-card">
           <h3 data-i18n="settings.profiles.glossary.title">Glossary layer</h3>
           <p class="hint" data-i18n="settings.profiles.glossary.hint">
             Merged over the global Glossary while this profile is active —
@@ -592,7 +685,7 @@
           <div id="profile-glossary-empty" class="empty hidden" data-i18n="settings.profiles.glossary.empty">No terms in this profile's layer yet.</div>
           </div>
 
-          <div class="settings-section">
+          <div class="settings-section searchable-card">
           <h3 data-i18n="settings.profiles.zones.title">Capture Zones (inside the app's window)</h3>
           <p class="hint" data-i18n="settings.profiles.zones.hint">
             Stored relative to the app window's top-left, so they follow it
@@ -609,12 +702,16 @@
       </section>
 
       <section id="tab-text-style" class="page">
-        <h2 data-i18n="settings.style.title">Text Style</h2>
-        <p class="hint" data-i18n="settings.style.lede">How Thai text is drawn on the In-place Overlay — the preview updates live; Save applies it.</p>
+        <div class="page-head">
+          <div class="page-head-text">
+            <h2 data-i18n="settings.style.title">Text Style</h2>
+            <p class="lede hint" data-i18n="settings.style.lede">How Thai text is drawn on the In-place Overlay — the preview updates live; Save applies it.</p>
+          </div>
+        </div>
         <!-- Ticket 41: one live-style concern — one section card; per-control
              hints sit under their control (the one hint pattern app-wide).
              Ticket 56: the preview leads the tab, above every row. -->
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <!-- Exact live preview (ticket 26), the tab's first block since
              ticket 56: the pill inside is styled by the overlay's shared
              renderer (pill-style.js) against the CURRENT form values —
@@ -723,11 +820,16 @@
       </section>
 
       <section id="tab-hotkeys" class="page">
-        <h2 data-i18n="settings.hotkeys.title" data-i18n-title="settings.hotkeys.hint">Hotkeys</h2>
+        <div class="page-head">
+          <div class="page-head-text">
+            <h2 data-i18n="settings.hotkeys.title" data-i18n-title="settings.hotkeys.hint">Hotkeys</h2>
+            <p class="lede" data-i18n="settings.hotkeys.lede">Global shortcuts that work inside fullscreen games and apps.</p>
+          </div>
+        </div>
         <!-- Ticket 61 reopened: the mock's recorder — click a box, press
              the combination (settings.js captures the next keydown;
              Esc cancels). The format examples live in the tooltip. -->
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <div class="form-grid">
           <label class="form-row">
             <span data-i18n="settings.hotkeys.toggle">Toggle translation</span>
@@ -754,10 +856,20 @@
       </section>
 
       <section id="tab-about" class="page">
-        <h2 data-i18n="settings.about.title">About</h2>
+        <!-- The mock's About hero: brand tile, product name, version, one
+             line of what the app is. The name/version fill from get_about
+             (settings.js) — the same truth the info grid below reports. -->
+        <div class="about-hero searchable-card">
+          <div class="about-logo" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8h8"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>
+          </div>
+          <h2 id="about-hero-name">—</h2>
+          <div id="about-hero-version" class="mono">—</div>
+          <p class="lede hint" data-i18n="settings.about.lede">Real-time on-screen OCR and translation for games, visual novels, and everyday reading.</p>
+        </div>
         <!-- Ticket 41: info grid, folder actions and the privacy note in one
              section card, like every other single-concern tab. -->
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <div class="about-grid">
           <span data-i18n="settings.about.product">Product</span><span id="about-product">—</span>
           <span data-i18n="settings.about.version">Version</span><span id="about-version">—</span>
@@ -787,7 +899,7 @@
              unavailable), the launch toggle persists immediately, and the
              result area doubles as the launch-time check's surface (the
              outcome arrives as an event or rides the page's boot status). -->
-        <div class="settings-section">
+        <div class="settings-section searchable-card">
         <h3 data-i18n="settings.about.updates.title" data-i18n-title="settings.about.updates.check_only_hint">Updates</h3>
         <div class="row">
           <button id="about-check-updates" class="btn small" data-i18n="settings.about.updates.check_btn">Check for new version</button>

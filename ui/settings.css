@@ -7,23 +7,45 @@
    elevated-secondary button hover, and the sticky save bar in its final
    form (unsaved-changes note + pulsing dot, Discard beside Save, amber
    top edge). Ticket 61 reopened: the mock's COMPACT type scale everywhere
-   (12px labels/controls, 16px page titles) replaces the earlier 16–18px
-   pass — the reporter asked for mock fidelity and the scale was the
-   biggest visible divergence; the Profiles tab gains the mock's selector
-   strip (styled select + Delete in one bordered card, "+ New Profile" as
-   the amber primary in the page head), and the Glossary tab the mock's
-   filter box. Zero behavior change beyond the filter: every id and
-   JS-created class below is load-bearing (settings.js). */
+   (12px labels/controls) — kept, the window is 740px, not the mock's 1150.
+   Redesign 2 (the Engines & OCR mock): the shared chrome and the Engines
+   tab follow the new prototype — the darker obsidian surface ramp as
+   PAGE-LOCAL token overrides (the ticket-70 precedent: theme.css and the
+   other windows keep the ticket-61 ramp), the titlebar's Ctrl+K card
+   filter, a Preferences group label + version chip in the sidebar, every
+   page under the same title+lede head over a hairline (Engines adds the
+   live pipeline pill), the pipeline card with its mini flow breadcrumb
+   and the nested Model Pack sub-card, and the per-engine cards dressed as
+   the mock's Provider Configurations accordion (head with chips + desc +
+   chevron always visible, fields inside). Zero behavior change beyond the
+   filter and the pill: every id and JS-created class below is
+   load-bearing (settings.js). */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* Ticket 41 local tokens — --border-strong moved up into theme.css with
-   the ticket 61 ramp (it is shared chrome now); the radii and the footer
-   shadow reuse the app's corners and its plain black elevation. */
+/* Redesign 2 local tokens — the mock's obsidian ramp mapped onto the
+   existing token names so every rule below (and theme.css's shared
+   chrome in THIS window only) moves with it: the ticket-70 precedent of
+   a page-local ramp keeping theme.css as the other windows' truth, with
+   one difference — debug.css coined --dbg-* names, this block SHADOWS the
+   shared names, which is what lets theme.css's rules here follow the
+   mock without touching them. --titlebar and --sidebar are the mock's
+   obsidian-950 at its header/rail alphas; --accent-glow is the mock's
+   active-nav / logo glow. */
 :root {
   --radius-control: 8px;
   --radius-card: 12px;
   --shadow-footer: 0 -8px 20px rgba(0, 0, 0, 0.35);
+  --bg: #0d0e12;
+  --panel: #12141a;
+  --panel-2: #171921;
+  --panel-3: #1d202a;
+  --border: #262936;
+  --border-strong: #383e4c;
+  --titlebar: rgba(9, 10, 13, 0.9);
+  --sidebar: rgba(9, 10, 13, 0.6);
+  --inset: rgba(9, 10, 13, 0.9);
+  --accent-glow: 0 0 20px -5px rgba(245, 158, 11, 0.25);
 }
 
 html, body { height: 100%; }
@@ -38,27 +60,38 @@ body {
   overflow: hidden;
 }
 
-/* The title-bar row (chrome in theme.css) carries data-tauri-drag-region. */
+/* The title-bar row (chrome in theme.css) carries data-tauri-drag-region.
+   Redesign 2: the mock's darker obsidian-950 bar. */
 header {
   padding: 0 12px 0 16px;
   border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--titlebar);
   user-select: none;
 }
 
-/* ---- Type scale (ticket 61 reopened: the redesign mock's compact scale,
-   replacing the 16-18px pass) ---- h1 titlebar 14px/600 · h2 page title
-   16px/600 · h3 section heading 12px/600 (the redesign's section headers:
-   plain text color, no uppercase) · labels+values 12px · hints 12px muted ·
-   auxiliary buttons/chips 10-11px. */
+/* ---- Type scale ---- h1 titlebar 14px/600 · h2 page title 20px/600 (the
+   mock's 24px compressed to this 740px window) · h3 card/section heading
+   13px/600 · h4 sub-card heading 12px/600 · labels+values 12px · ledes and
+   hints 12px muted · auxiliary buttons/chips 10-11px. */
 
 h1 { font-size: 14px; font-weight: 600; color: #fff; }
-h2 { font-size: 16px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+h2 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 0; }
 h3 {
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   color: #fff;
   margin: 0 0 8px;
+}
+h4 { font-size: 12px; font-weight: 600; color: #fff; }
+
+/* The page head's one-line lede (the mock's text-sm muted line under the
+   title; pages that already styled theirs as hints add .hint for the
+   color, not for spacing). */
+.lede {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 3px;
 }
 
 .chip {
@@ -142,16 +175,48 @@ h3[data-i18n-title]::after,
 
 .hidden { display: none !important; }
 
-/* The mock's page head: title on the left, the page's primary action on
-   the right (Profiles: "+ New Profile"). */
+/* The mock's page head (redesign 2): title + lede on the left (a text
+   block, so Profiles' amber button stays the right-side slot), the
+   page's live element (status pill / primary action) on the right, and
+   the mock's hairline under the whole head. */
 .page-head {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
 }
 .page-head h2 { margin-bottom: 0; }
+
+/* The Engines head's live pipeline pill (the mock's emerald
+   "Active: …" chip): filled only from the SAVED engine selection, never
+   from unsaved edits — the save bar owns that signal. */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  flex: none;
+  max-width: 100%;
+}
+.status-pill.ok {
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.25);
+  color: var(--ok);
+}
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ok);
+  animation: save-dot-pulse 1.6s ease-in-out infinite;
+}
 
 /* ---- Section cards (ticket 41) ----
    The one grouping unit: every tab's concerns live in these. Single-concern
@@ -193,6 +258,80 @@ h3[data-i18n-title]::after,
   color: var(--muted);
   flex: none;
 }
+
+/* ---- The mock's titlebar filter (redesign 2) ---- icon nested left, the
+   Ctrl-K keycap nested right (theme.css's kbd style at its small size).
+   Hidden below ~700px: at the 620px minimum the brand + buttons already
+   fill the bar (the mock hides its search under md for the same reason). */
+.settings-search {
+  position: relative;
+  flex: 0 1 300px;
+  min-width: 0;
+}
+.settings-search .icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.settings-search input[type="text"] {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 44px 4px 30px;
+}
+.settings-search input[type="text"]:hover { border-color: var(--border-strong); }
+.settings-search input[type="text"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.settings-search kbd {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 0;
+  padding: 0 5px;
+  font-size: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+@media (max-width: 699px) {
+  .settings-search { display: none; }
+}
+
+/* The filter's half of the story: a card that does not match the query
+   gets this (a class of its own, NOT .hidden — the state-driven panels
+   like the pack sub-card own .hidden, and the two must never fight). */
+.searchable-card.filter-hidden { display: none; }
+
+/* The mock's accordion section label: tiny uppercase left, the
+   "click a provider" hint right. */
+.providers-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 2px 0;
+}
+.providers-head h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+.providers-head .hint { font-size: 11px; }
 
 /* ---- Wizard ---- */
 
@@ -281,8 +420,102 @@ h3[data-i18n-title]::after,
 .pill.dl { background: rgba(245, 158, 11, 0.16); color: var(--accent); border-color: rgba(245, 158, 11, 0.4); }
 .pill.warn { background: rgba(251, 191, 36, 0.14); color: var(--accent-2); border-color: rgba(251, 191, 36, 0.4); }
 
-/* Per-engine configuration cards — same geometry as .settings-section, so
-   the Engines tab reads as a stack of equal siblings. */
+/* ---- Pipeline card (redesign 2): the mock's primary card ---- head =
+   icon + title/lede left, the mini flow (OCR → Translator → Fallback)
+   right; the flow reuses the three row labels' keys so breadcrumb and
+   form never drift. Below ~760px of window width it hides — three steps
+   and two arrows do not fit beside the title at the 620px minimum. */
+.pipeline-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+.pipeline-title { display: flex; align-items: flex-start; gap: 10px; }
+.pipeline-title .sec-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+.pipeline-title h3 { margin-bottom: 0; }
+.pipeline-title .lede { max-width: 340px; }
+.pipeline-flow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  flex: none;
+}
+.flow-step { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.flow-step svg { width: 12px; height: 12px; }
+.flow-step.accent { color: var(--accent); }
+.flow-step.info { color: var(--info); }
+.flow-arrow { width: 12px; height: 12px; color: var(--muted); opacity: 0.6; flex: none; }
+/* The mock lays the flow BESIDE the title, but its frame is ~1150px while
+   this page's column caps at 680px — so in practice the head flex-wraps
+   and the flow rides below the title as its own row (the mock's own
+   stacked fallback). flex-wrap keeps the side-by-side shape available if
+   the column ever grows. */
+
+/* ---- Model Pack sub-card (redesign 2): the mock's nested inset —
+   icon head, the ticket-04 rows unchanged inside, the mock's maintenance
+   footer (label left, cleanup actions right) under a hairline. ---- */
+.pack-subcard {
+  margin-top: 14px;
+  background: var(--inset);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+.pack-subcard-head { display: flex; align-items: flex-start; gap: 12px; }
+.pack-icon {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  color: var(--accent);
+}
+.pack-icon svg { width: 18px; height: 18px; }
+.pack-subcard-title h4 { margin-bottom: 0; }
+.pack-subcard-title .lede { margin-top: 2px; }
+.pack-subcard #engines-pack-rows { margin-top: 12px; }
+.pack-subcard-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.foot-label { font-size: 10px; color: var(--muted); margin-right: auto; }
+
+/* Icons inside buttons survive only beside the data-i18n span (never as
+   its child text); inline-flex + gap lays the pair out. */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.btn .btn-icon { width: 13px; height: 13px; flex: none; }
+
+/* ---- The mock's Provider Configurations accordion (redesign 2) ----
+   the per-engine cards: head (title row + chips, one-line desc, chevron
+   box) always visible, fields in a hairline-separated body. The expansion
+   mechanic is ticket 54's unchanged (settings.js owns .collapsed); the
+   open card wears the mock's amber border + glow. Google carries no
+   data-engine: the keyless default renders as the always-open item. */
 .engine-card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -290,25 +523,45 @@ h3[data-i18n-title]::after,
   padding: 16px;
   margin-top: 12px;
 }
-.engine-title { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-.engine-title strong { font-size: 12px; }
+.engine-title { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 6px; }
+.engine-title strong { font-size: 13px; }
+.engine-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.engine-desc { margin-top: 4px; line-height: 1.5; }
 
-/* Collapsible engine cards (ticket 54): the Engines tab's six cards carry
-   data-engine + an .engine-body wrapper — only the SELECTED Translation
-   engine's card is expanded, the rest collapse to their title bar until
-   clicked (settings.js owns the class). The wizard's cards have neither
-   attribute nor wrapper, so they never collapse. */
-.engine-card[data-engine] > .engine-title { cursor: pointer; user-select: none; }
+.engine-card[data-engine] { padding: 0; overflow: hidden; }
+.engine-card[data-engine] > .engine-title {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+  padding: 12px 14px 12px 16px;
+}
 .engine-card[data-engine]:hover { border-color: var(--border-strong); }
+.engine-card[data-engine]:not(.collapsed) {
+  border-color: rgba(245, 158, 11, 0.35);
+  box-shadow: var(--accent-glow);
+}
 .engine-card[data-engine] > .engine-title::after {
   content: "▾";
+  flex: none;
+  width: 26px;
+  height: 26px;
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
   font-size: 11px;
+  transition: transform 0.2s ease;
 }
-.engine-card[data-engine].collapsed > .engine-title::after { transform: rotate(-90deg); }
-.engine-card[data-engine].collapsed > .engine-title { margin-bottom: 0; }
+/* The mock's orientation: closed points down, open is rotated up. */
+.engine-card[data-engine]:not(.collapsed) > .engine-title::after { transform: rotate(180deg); }
 .engine-card[data-engine].collapsed > .engine-body { display: none; }
+.engine-card[data-engine] > .engine-body {
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--border);
+}
 .engine-card[data-engine] > .engine-title:focus-visible {
   outline: 1px dashed var(--accent);
   outline-offset: 2px;
@@ -334,8 +587,17 @@ h3[data-i18n-title]::after,
   gap: 2px;
   padding: 10px;
   border-right: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--sidebar);
   user-select: none;
+}
+/* The mock's group label over the nav items. */
+.tabs-group {
+  padding: 2px 12px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
 }
 .tab {
   display: flex;
@@ -348,19 +610,31 @@ h3[data-i18n-title]::after,
   color: var(--muted);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
 }
 .tab-icon { width: 16px; height: 16px; flex: none; }
-.tab:hover { color: var(--text); background: var(--panel-2); }
+.tab:hover { color: var(--text); background: rgba(255, 255, 255, 0.04); }
 .tab.active {
-  background: rgba(245, 158, 11, 0.15);
+  background: rgba(245, 158, 11, 0.12);
   border-color: rgba(245, 158, 11, 0.3);
   color: var(--accent);
   font-weight: 600;
+  box-shadow: var(--accent-glow);
 }
 /* About at the bottom, the redesign's mt-auto block. */
 .tab.about { margin-top: auto; }
+/* The mock's version chip on the About row: tiny mono badge on the right
+   (justify via margin-left auto), filled once get_about resolves. */
+.tab-version {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 10px;
+}
 
 .pages { flex: 1; overflow-y: auto; padding: 16px 22px 24px; }
 /* One content width everywhere; centered once the window outgrows it,
@@ -756,6 +1030,35 @@ input[type="color"] {
 
 /* ---- About ---- */
 
+/* The mock's About hero (redesign 2): a centered brand card leading the
+   tab — amber logo tile, product name, version in amber mono, one line
+   of what the app is. The info grid and updates follow as usual. */
+.about-hero {
+  margin-top: 12px;
+  padding: 24px 20px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+.about-logo {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--accent);
+  box-shadow: var(--accent-glow);
+}
+.about-logo svg { width: 22px; height: 22px; }
+.about-hero h2 { margin-bottom: 2px; }
+.about-hero .mono { color: var(--accent); font-size: 11px; }
+.about-hero .lede { max-width: 420px; margin: 8px auto 0; }
+
 .about-grid {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
@@ -831,11 +1134,13 @@ input[type="color"] {
 
 /* ---- Toast ---- */
 
+/* ---- Toast (redesign 2): the mock's bottom-right corner, clearing the
+   sticky footer when it is showing ---- */
+
 .toast {
   position: fixed;
-  bottom: 56px; /* clears the sticky footer when it is showing */
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 56px;
+  right: 16px;
   background: var(--panel-2);
   border: 1px solid var(--border-strong);
   color: var(--text);
