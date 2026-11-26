@@ -13,9 +13,10 @@ this checklist exercises the SHIPPED artifacts — installer, portable zip,
 pack archives, installed-layout fallback — and the odds and ends that
 outlived ticket 31's original doc. Most items need a real desktop and a
 `cargo tauri build`. (The deferred-model-packs end-to-end pass — full
-download states, cancel/retry/delete flows, sizes recorded against the
-baseline — is that feature's own ticket 06; this doc pins the artifact
-truths.)
+download states, cancel/retry/delete flows — is that feature's half of
+`32-ppocrv6-engine-options.md`; the sizes this doc once deferred to that
+pass are recorded at the bottom, measured when that feature's ticket 06
+landed.)
 
 ## Setup
 
@@ -68,7 +69,9 @@ truths.)
       download fails with a Retry instead of silently falling back to
       Windows OCR).
 - [ ] **Corrupted bundled file is caught, not silently used**: in the
-      INSTALLED layout, flip one byte inside a bundled Tiny file in
+      INSTALLED layout on a FRESH install (no
+      `%LOCALAPPDATA%\langception\models` yet — delete it if the app
+      already ran), flip one byte inside a bundled Tiny file in
       `resources/pp-ocrv6/` (same size — e.g. overwrite one byte in
       `ppocrv6_tiny_dict.txt`), start translation — the sidecar never
       runs on the corrupt bytes: every pass reads through the Windows
@@ -77,11 +80,17 @@ truths.)
       nothing a download fixes — so unlike a still-downloading pack the
       fallback DOES cover the pass). Restore the file; the next start
       reads through the sidecar again.
-- [ ] **Installer size vs the previous release**: record the new
-      installer's size next to the last published release's — the
-      deferred-model-packs feature's ticket 06 turns this into a
-      recorded comparison against the v0.2.1 baseline (the bundle
-      shrank by the Small/Medium/Korean models, ~170 MB of ONNX).
+- [ ] **Installed first pack download lands in the local app-data
+      directory**: run the INSTALLED app, select PP-OCRv6 small, let the
+      download finish — the pack files land in
+      `%LOCALAPPDATA%\langception\models` (not beside the exe — installs
+      keep packs like any app data, so they survive app updates; the
+      NSIS uninstaller leaves them in place). The bundled baseline is
+      copied into the same directory on the first gated engine start.
+- [ ] **Installer size vs the previous release**: the bundle-shrink
+      comparison is recorded below (measured when deferred-model-packs
+      ticket 06 landed); at each later release cut, re-check the
+      installer stays tiny-only sized (tens of MB, not ~143 MB).
 - [ ] **Portable zip contains the tiny-only engine and nothing more**:
       assemble as the release workflow does (bare exe + README.txt +
       LICENSE.txt + `resources/pp-ocrv6/`), open the zip — the folder
@@ -106,3 +115,38 @@ truths.)
 - [ ] **Privacy surfaces**: with a bundled PP-OCRv6 tier running, the
       tray tooltip and Results Window show the ☁ badge only for cloud
       TRANSLATE engines — never for the OCR engine (it is fully offline).
+
+## Recorded sizes vs the v0.2.1 baseline
+
+Measured 2026-11-26 (deferred-model-packs ticket 06) from a local
+`cargo tauri build` of this branch, the portable zip assembled exactly as
+`release.yml` does it, and the pack archives from the fetch script's
+staging — all from the same verified bytes. The version string was still
+0.2.1 (the release bump happens at cut time); the v0.2.1 baseline numbers
+are the published release's asset sizes.
+
+| Artifact | This feature's build | v0.2.1 baseline | Delta |
+| --- | --- | --- | --- |
+| `Langception_*_x64-setup.exe` (NSIS installer) | 18,152,807 B (17.3 MiB) | 149,960,243 B (143.0 MiB) | −87.9% |
+| `Langception_*_x64-portable.zip` | 23,261,704 B (22.2 MiB) | 158,289,620 B (150.9 MiB) | −85.3% |
+| `pp-ocrv6-small.zip` (download size) | 26,094,836 B (24.9 MiB) | — | new asset |
+| `pp-ocrv6-medium.zip` (download size) | 100,552,327 B (95.9 MiB) | — | new asset |
+| `pp-ocrv6-korean.zip` (download size) | 8,327,624 B (7.9 MiB) | — | new asset |
+
+The installer and portable zip no longer carry the Small/Medium/Korean
+ONNX (~183 MB raw, ~131 MB compressed inside the old NSIS payload);
+instead the user downloads only the packs a selection needs. The worst
+case — every pack fetched — moves the same bytes, just not up front
+(ADR-0008's trade). The download sizes above are what the README quotes;
+ADR-0008's ~31 / ~139 / ~13.5 MB are the raw set sizes before Deflate —
+both measures are true, each doc says which one it means.
+
+Also verified on this build: the portable zip holds exactly nine entries
+(exe, README.txt, LICENSE.txt, `resources/pp-ocrv6/` with the three Tiny
+files + manifest + sidecar exe + license) and nothing named small,
+medium, korean, or paddle; the workspace test suite (695 passed / 0
+failed) and clippy are green on a side target dir; the `pp_ocrv6_smoke`
+headless check runs
+the REAL sidecar through the real Tiny bundle (spawn → handshake →
+capture → parsed blocks, pass reuse, and the Japanese pass's skip note on
+a pack-free dir).

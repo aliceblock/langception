@@ -59,15 +59,18 @@ fn capture_and_ocr_smoke() {
     }
 }
 
-/// PP-OCRv6 sidecar smoke (pp-ocrv6-sidecar feature ticket 04). The real
-/// sidecar is deliberately outside the automated suite (spec: Testing
-/// Decisions) — its lifecycle logic is stub-tested offline. Point
-/// `LANGCEPTION_PPOCRV6_DIR` at a directory containing
-/// `pp-ocrv6-sidecar.exe` beside the ten model files (the flat layout
-/// `packaging/fetch-pp-ocrv6.ps1` produces; the exe itself comes from
-/// `cargo build -p pp-ocrv6-sidecar`) to prove the whole chain through
-/// the NEW engine: spawn, handshake, PNG task, reply parse, reuse, and
-/// the (language, tier) restart. Same region handling as the other smokes.
+/// PP-OCRv6 sidecar smoke (pp-ocrv6-sidecar feature ticket 04; tiny-only
+/// since deferred-model-packs ticket 05). The real sidecar is deliberately
+/// outside the automated suite (spec: Testing Decisions) — its lifecycle
+/// logic is stub-tested offline. Point `LANGCEPTION_PPOCRV6_DIR` at the
+/// bundle `packaging/fetch-pp-ocrv6.ps1` stages
+/// (`src-tauri/resources/pp-ocrv6/`: the sidecar exe beside Tiny's three
+/// files and the models manifest — the exe itself comes from
+/// `cargo build -p pp-ocrv6-sidecar`) or at the app's active models
+/// directory (the bundle baseline plus any downloaded packs) to prove the
+/// whole chain through the NEW engine: spawn, handshake, PNG task, reply
+/// parse, reuse, and the (language, tier) restart. Same region handling as
+/// the other smokes.
 #[test]
 #[ignore]
 #[cfg(windows)]
@@ -81,7 +84,7 @@ fn pp_ocrv6_smoke() {
     });
     let models = Path::new(&dir);
     assert!(
-        models.join("ppocrv6_dict.txt").is_file(),
+        models.join("ppocrv6_tiny_dict.txt").is_file(),
         "fetched models missing: {} (run packaging/fetch-pp-ocrv6.ps1)",
         models.display()
     );
@@ -127,17 +130,21 @@ fn pp_ocrv6_smoke() {
     let ocr = langception_core::ppocr::PpOcrv6Engine::new(
         program,
         models,
-        langception_core::ppocr::ModelTier::Small,
+        langception_core::ppocr::ModelTier::Tiny,
     );
     // Pass 1 spawns (model load included), pass 2 must reuse the live
-    // sidecar (marginal inference only), pass 3 switches the Source
-    // Language — a restart on the Japanese models (also the kana read).
-    let passes = [
-        (SourceLanguage::En, "pass 1 (en, fresh spawn)"),
-        (SourceLanguage::En, "pass 2 (en, reuse)"),
-        (SourceLanguage::Ja, "pass 3 (ja, restart)"),
-    ];
-    for (language, label) in passes {
+    // sidecar (marginal inference only) — both on TINY, the tier the
+    // bundle actually ships. Pass 3 switches the Source Language to
+    // Japanese — tiny has no kana, so the substituted small set must be
+    // in the models dir (a downloaded Model Pack); this smoke never
+    // downloads, so against a fresh tiny-only bundle the pass is skipped
+    // with a note instead of failing. Point LANGCEPTION_PPOCRV6_DIR at
+    // the app's active models directory (or any dir holding the small
+    // files) to run it.
+    let small_set_present = models.join("pp-ocrv6_small_det.onnx").is_file()
+        && models.join("pp-ocrv6_small_rec.onnx").is_file()
+        && models.join("ppocrv6_dict.txt").is_file();
+    let run_pass = |label: &str, language: SourceLanguage| {
         let started = std::time::Instant::now();
         let blocks = runtime
             .block_on(ocr.recognize(&image, language))
@@ -150,6 +157,20 @@ fn pp_ocrv6_smoke() {
         for block in &blocks {
             println!("  {:?} at {},{}", block.text, block.x, block.y);
         }
+    };
+    run_pass("pass 1 (en, fresh spawn)", SourceLanguage::En);
+    run_pass("pass 2 (en, reuse)", SourceLanguage::En);
+    if small_set_present {
+        run_pass(
+            "pass 3 (ja, restart on the substituted small set)",
+            SourceLanguage::Ja,
+        );
+    } else {
+        println!(
+            "pass 3 (ja, restart) SKIPPED: {} has no small set — the substituted \
+             Japanese models are a Model Pack this smoke never downloads",
+            models.display()
+        );
     }
 }
 
