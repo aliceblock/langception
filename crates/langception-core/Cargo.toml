@@ -28,7 +28,10 @@ zip = { version = "9.8", default-features = false, features = ["deflate"] }
 # line reads and writes, init/request timeouts. "macros" is the
 # orchestrator loop's `tokio::select!` — declared here so the crate
 # compiles on its own, not only under workspace feature unification.
-tokio = { version = "1", features = ["sync", "process", "io-util", "time", "macros"] }
+# "rt" is the pack downloader's spawned download tasks (ADR-0008, ticket
+# 03): downloads are core-owned, not window-owned, so they must outlive
+# any subscriber that started them.
+tokio = { version = "1", features = ["sync", "process", "io-util", "time", "macros", "rt"] }
 
 [dev-dependencies]
 # "net" + "io-util" drive the fake HTTP engine of the prompt-seam tests

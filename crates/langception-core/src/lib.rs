@@ -16,6 +16,7 @@ pub mod merge;
 pub mod model_packs;
 pub mod openai;
 pub mod orchestrator;
+pub mod pack_downloader;
 pub mod ports;
 pub mod ppocr;
 pub mod profile;

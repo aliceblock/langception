@@ -52,7 +52,7 @@
 
 use crate::ports::SourceLanguage;
 use crate::ppocr::{effective_selection, tier_for_engine_value, ModelTier};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
@@ -71,16 +71,21 @@ pub const MANIFEST_VERSION: u32 = 1;
 pub const MANIFEST_FILE_NAME: &str = "models-manifest.json";
 
 /// The prefix naming every transient file or directory the assembly
-/// creates (staging dirs, copy temps, replacement backups). Residue
-/// names are dot-prefixed, so they can never collide with a manifest
-/// file name (both validators reject dotfiles) and the sidecar's flat
-/// directory never mistakes one for a model file; the sweep removes
-/// leftovers from a crashed install on the next one.
-const RESIDUE_PREFIX: &str = ".langception-";
+/// creates (staging dirs, copy temps, replacement backups) — and the
+/// downloader's staged archive temp, which shares the contract (and the
+/// sweep surface). Residue names are dot-prefixed, so they can never
+/// collide with a manifest file name (both validators reject dotfiles)
+/// and the sidecar's flat directory never mistakes one for a model
+/// file; the sweep removes leftovers from a crashed install on the
+/// next one.
+pub(crate) const RESIDUE_PREFIX: &str = ".langception-";
 
 /// One Model Pack (CONTEXT.md): the Small set, the Medium set, or the
-/// Korean recognizer set. The spelling is the manifest's `packs` key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Korean recognizer set. The spelling is the manifest's `packs` key —
+/// and the downloader events' wire spelling (serde lowercase), pinned
+/// equal to [`PackId::as_str`] by the pack_downloader tests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum PackId {
     Small,
     Medium,
@@ -650,6 +655,29 @@ pub fn install_bundled_files(
     Ok(to_copy.len() as u32)
 }
 
+/// The parent directory a transient artifact stages beside: the parent
+/// of the active models directory (or "." when it has none), so staging
+/// stays on the active directory's volume and out of the sidecar's flat
+/// layout.
+fn active_dir_parent(active_dir: &Path) -> PathBuf {
+    active_dir
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
+/// A [`RESIDUE_PREFIX`]-named directory beside the active models
+/// directory, pid-tagged so a concurrent assembly's sweep skips it —
+/// the one composer every staging-style artifact names through (the
+/// pack archive's staging dir, the downloader's staged download temp).
+pub(crate) fn residue_dir_sibling(active_dir: &Path, name: &str) -> PathBuf {
+    active_dir_parent(active_dir).join(format!(
+        "{RESIDUE_PREFIX}{name}-{}",
+        std::process::id()
+    ))
+}
+
 /// Removes the transient residue of a crashed install: copy temps and
 /// replacement backups inside the active directory, staging directories
 /// beside it — every one [`RESIDUE_PREFIX`]-named. Entries carrying this
@@ -666,11 +694,8 @@ fn sweep_residue(active_dir: &Path) {
             }
         }
     }
-    let parent = active_dir
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    if let Ok(entries) = fs::read_dir(parent) {
+    let parent = active_dir_parent(active_dir);
+    if let Ok(entries) = fs::read_dir(&parent) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path == active_dir {
@@ -865,14 +890,7 @@ pub fn install_pack_archive(
 /// of the active directory, so the verified-file rename stays on one
 /// volume and the sidecar's flat directory never sees staging residue.
 fn staging_dir(active_dir: &Path, pack: &str) -> PathBuf {
-    let parent = active_dir
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    parent.join(format!(
-        "{RESIDUE_PREFIX}pack-{pack}-staging-{}",
-        std::process::id()
-    ))
+    residue_dir_sibling(active_dir, &format!("pack-{pack}-staging"))
 }
 
 /// Extracts one zip entry into the staging directory under its manifest
