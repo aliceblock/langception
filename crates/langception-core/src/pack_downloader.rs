@@ -335,6 +335,14 @@ impl PackDownloader {
             .unwrap_or(PackDownloadState::NotDownloading)
     }
 
+    /// The manifest this downloader downloads against — the shell reads
+    /// the pack specs from it for the Engines tab's statuses and the
+    /// delete-unused cleanup (one manifest, one truth; the shell never
+    /// re-reads the bundle for pack work).
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+
     /// Starts downloading one pack (Missing or Stale on disk — a Ready
     /// pack is never re-downloaded) and returns immediately; the
     /// download runs on its own task and reports through

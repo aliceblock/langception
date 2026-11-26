@@ -415,6 +415,15 @@ pub(crate) struct AppState {
     /// switch mid-loading rewords it, never stacks). `None` = no loading
     /// notice live.
     pub(crate) loading_notice: Mutex<Option<String>>,
+    /// The Model Pack downloader (deferred-model-packs ticket 04), built
+    /// once at setup when the resolved bundle carries a models manifest.
+    /// ADR-0008: the download lifecycle is core-owned and independent of
+    /// any window — closing the Settings window drops nothing, and the
+    /// Engines tab re-attaches to the true state. `None` = no manifest
+    /// (the legacy dev layout runs ungated), which has nothing to
+    /// download and nothing to clean up.
+    pub(crate) pack_downloader:
+        Mutex<Option<Arc<langception_core::pack_downloader::PackDownloader>>>,
 }
 
 pub fn run() {
@@ -533,6 +542,7 @@ pub fn run() {
             last_update_check: Mutex::new(None),
             translation_cache,
             loading_notice: Mutex::new(None),
+            pack_downloader: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             start_translation,
@@ -567,6 +577,10 @@ pub fn run() {
             crate::settings::test_engine,
             crate::settings::clear_translation_cache,
             crate::settings::open_engine_link,
+            crate::settings::get_pack_states,
+            crate::settings::pack_start_download,
+            crate::settings::pack_cancel_download,
+            crate::settings::pack_delete_unused,
             crate::settings::list_prompt_presets,
             crate::settings::default_prompt_texts,
             crate::settings::save_prompt_preset,
@@ -685,6 +699,12 @@ pub fn run() {
             build_tray(&handle)?;
             install_hotkeys(&handle)?;
             spawn_profile_watcher(&handle);
+            // The Model Pack downloader + its event forward (deferred-
+            // model-packs ticket 04): built only when the resolved bundle
+            // carries a manifest — the legacy dev layout has nothing to
+            // manage. Never awaited: setup does not touch the network
+            // (ADR-0008 — downloads happen only on a selection).
+            init_pack_downloader(&handle);
 
             // The opt-in launch-time Update Check (ticket 28): spawned, not
             // awaited — startup never waits on the network; the function
@@ -2050,7 +2070,7 @@ fn resolve_ppocrv6_from(
 /// README.txt beside the exe) keep it beside the exe, so moving the
 /// folder carries the downloaded models with it; installs keep it in the
 /// local app-data directory like any app data.
-fn active_models_dir() -> PathBuf {
+pub(crate) fn active_models_dir() -> PathBuf {
     let exe = std::env::current_exe().ok();
     let data_local = dirs::data_local_dir();
     active_models_dir_from(exe.as_deref(), data_local)
@@ -2070,6 +2090,191 @@ fn active_models_dir_from(exe: Option<&Path>, data_local_dir: Option<PathBuf>) -
         .unwrap_or_else(std::env::temp_dir)
         .join("langception")
         .join("models")
+}
+
+// ---- Model Pack downloads (ADR-0008, deferred-model-packs ticket 04) ----
+
+/// Builds the process's one [`PackDownloader`] when the resolved bundle
+/// carries a models manifest, stores it on [`AppState`], and spawns the
+/// event forward. The manifest is the release's truth and cannot change
+/// under a running app, so building once at setup is final; a bundle
+/// without one (the legacy fetched layout, still the dev workspace's
+/// shape) leaves `None` — nothing manages packs there, and every pack
+/// command reports that instead of guessing. The forward task holds its
+/// own `Arc`, so the downloader outlives any state borrow and its task
+/// dies only at app exit.
+fn init_pack_downloader(app: &AppHandle) {
+    let Some((_, bundle)) = resolve_ppocrv6(app) else {
+        return;
+    };
+    if !bundle
+        .join(langception_core::model_packs::MANIFEST_FILE_NAME)
+        .is_file()
+    {
+        // The legacy fetched layout: every model already on disk, the
+        // engine runs ungated (build_ocr_engine's dev bridge) — no pack
+        // surface, no downloader.
+        return;
+    }
+    let manifest = match langception_core::model_packs::Manifest::load_from_bundle(&bundle) {
+        Ok(manifest) => Arc::new(manifest),
+        // A release ships a valid manifest; a broken one is the mutated-
+        // bundle loud path the gate already reports per pass. The pack
+        // commands will say "no downloader" the same way.
+        Err(e) => {
+            crate::logging::log(
+                "packs",
+                format!("models manifest unusable — pack downloads disabled: {e}"),
+            );
+            return;
+        }
+    };
+    let transport = match langception_core::pack_downloader::HttpPackTransport::new() {
+        Ok(transport) => Arc::new(transport),
+        Err(e) => {
+            crate::logging::log("packs", format!("download client unavailable: {e}"));
+            return;
+        }
+    };
+    let downloader = Arc::new(langception_core::pack_downloader::PackDownloader::new(
+        transport,
+        manifest,
+        active_models_dir(),
+    ));
+    *app.state::<AppState>()
+        .pack_downloader
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(downloader.clone());
+
+    // The event forward (the emit discipline's window-existence half,
+    // documented at this seam in ticket 03's module docs): one broadcast
+    // per event, only while a consuming window exists. Terminal events
+    // also land in the app log — "why is OCR not starting" (spec story
+    // 26) is answerable from the log while the Engines tab may be closed.
+    let pack_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut events = downloader.subscribe();
+        loop {
+            match events.recv().await {
+                Ok(event) => {
+                    let line = match &event {
+                        langception_core::pack_downloader::PackEvent::Started { pack, total_bytes } => {
+                            match total_bytes {
+                                Some(total) => format!(
+                                    "pack download started: {} ({} bytes)",
+                                    pack.display_name(),
+                                    total
+                                ),
+                                None => format!("pack download started: {}", pack.display_name()),
+                            }
+                        }
+                        langception_core::pack_downloader::PackEvent::Finished { pack } => {
+                            format!("pack download finished: {}", pack.display_name())
+                        }
+                        langception_core::pack_downloader::PackEvent::Failed { message, .. } => {
+                            format!("pack download failed: {message}")
+                        }
+                        langception_core::pack_downloader::PackEvent::Canceled { pack } => {
+                            format!("pack download canceled: {}", pack.display_name())
+                        }
+                        langception_core::pack_downloader::PackEvent::Progress { .. } => {
+                            // Step-gated by the downloader — never logged,
+                            // the Engines tab renders them live.
+                            emit_pack_event(&pack_app, &event);
+                            continue;
+                        }
+                    };
+                    crate::logging::log("packs", line);
+                    emit_pack_event(&pack_app, &event);
+                }
+                // A slow consumer fell behind the step-gated stream: the
+                // page's cached percents may be stale, so nudge it to
+                // re-query the true states (a synthetic marker on the
+                // same channel — no fake state survives).
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+                    crate::logging::log(
+                        "packs",
+                        format!("pack events lagged — {dropped} dropped, resyncing the UI"),
+                    );
+                    // Its own channel (not a marker inside pack-event
+                    // payloads), and the same window-existence gate as
+                    // every other emission.
+                    if pack_app
+                        .get_webview_window(crate::settings::SETTINGS_LABEL)
+                        .is_some()
+                    {
+                        let _ = pack_app.emit_to(crate::settings::SETTINGS_LABEL, "pack-resync", ());
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
+/// Forwards one Model Pack download event to the Settings window — the
+/// Engines tab is the only download surface (ADR-0008). The same emit
+/// discipline as [`emit_loop_event`] (the post-v0.2.0 loop-event rule):
+/// ONE targeted broadcast per event, sent only while a consuming window
+/// exists. A hidden Settings window still exists and still receives —
+/// the page's listener stays fed across a close-into-tray, so reopening
+/// mid-download shows live progress, never a stale guess.
+pub fn emit_pack_event<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    event: &langception_core::pack_downloader::PackEvent,
+) {
+    if app
+        .get_webview_window(crate::settings::SETTINGS_LABEL)
+        .is_some()
+    {
+        let _ = app.emit_to(
+            crate::settings::SETTINGS_LABEL,
+            "pack-event",
+            event,
+        );
+    }
+}
+
+/// Starts the downloads the just-saved selection needs (ADR-0008: a
+/// download is always a consequence of a selection, never launch work).
+/// Called after every save that can move the EFFECTIVE selection — the
+/// Engines tab's tier switch, a Source-Language change (Korean pulls the
+/// recognizer set; Japanese+tiny pulls Small) — for every required pack
+/// that is Missing or Stale. The downloader declines the rest on its own
+/// (already downloading, already ready) and those are the expected
+/// no-ops. Fire-and-forget: the Engines tab observes through the pack
+/// events, and the loading notice (ticket 02) covers the passes meanwhile.
+pub(crate) fn start_required_pack_downloads(app: &AppHandle) {
+    let Some(downloader) = crate::settings::pack_downloader_of(app) else {
+        return;
+    };
+    let Ok((engine_value, language)) = crate::settings::current_selection(app) else {
+        return;
+    };
+    let Some(required) =
+        langception_core::model_packs::required_packs_for_engine_value(&engine_value, language)
+    else {
+        // Windows OCR selected: no pack follows from this selection.
+        return;
+    };
+    for &id in required {
+        // start() spawns its task on the async runtime and hashes the
+        // pack's files (the ready check), so it runs there too — the
+        // callers sit on blocking threads (run_off_main's closures).
+        let downloader = Arc::clone(&downloader);
+        tauri::async_runtime::spawn(async move {
+            // AlreadyDownloading / AlreadyReady: the expected no-ops.
+            if downloader.start(id) == langception_core::pack_downloader::StartOutcome::Started {
+                crate::logging::log(
+                    "packs",
+                    format!(
+                        "pack download started for the current selection: {}",
+                        id.display_name()
+                    ),
+                );
+            }
+        });
+    }
 }
 
 /// Builds the fused vision engine (ticket 12) for the effective target's
@@ -3674,6 +3879,11 @@ async fn set_source_language(app: AppHandle, language: String) -> Result<(), Str
         // General tab's restart_worthy rule narrowed to this field.
         if before.source.language != language {
             restart_loop_if_running(app);
+            // The changed language moves the EFFECTIVE selection (Korean
+            // pulls the recognizer set, Japanese+tiny pulls Small —
+            // deferred-model-packs ticket 04): the downloads start with
+            // the selection, the same consequence a tier switch has.
+            start_required_pack_downloads(app);
         }
         apply_state(app);
         Ok(())
@@ -4849,5 +5059,6 @@ mod tests {
 /// VERSION).
 #[doc(hidden)]
 pub mod forward_test_seam {
-    pub use super::{DEBUG_LABEL, RESULTS_LABEL, emit_loop_event};
+    pub use super::{DEBUG_LABEL, RESULTS_LABEL, emit_loop_event, emit_pack_event};
+    pub use crate::settings::SETTINGS_LABEL;
 }

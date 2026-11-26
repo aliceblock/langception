@@ -79,6 +79,12 @@ for (const tab of document.querySelectorAll(".tab")) {
     if (tab.dataset.tab === "engines" && !enginesLoaded) {
       loadEngines();
     }
+    // The Model Pack states re-query on EVERY Engines-tab activation (the
+    // re-attach: a window reopened mid-download reads disk + downloader
+    // truth, never a replayed guess).
+    if (tab.dataset.tab === "engines") {
+      loadPackStates();
+    }
   });
 }
 
@@ -284,6 +290,9 @@ async function loadEngines() {
     // loads lazily, so the boot snapshot only covered the empty controls).
     snapshotFields(TRACKED_ENGINES);
     updateSaveFooter();
+    // The saved tier is now known — re-render the pack rows against it
+    // (a pure re-render; the states themselves came from the tab's query).
+    renderPackStates();
   } catch (e) {
     toast(String(e), "error");
   }
@@ -601,6 +610,10 @@ async function saveEngines() {
     const active = await invoke("set_engines", { engines: collectEngines(enginesDefault.value) });
     applyPromptSelection(active);
     toast(t("settings.engines.saved"));
+    // The saved tier selection may have started pack downloads (the
+    // shell's consequence-of-a-selection rule): re-query so the tab
+    // shows them immediately, no event round-trip needed.
+    loadPackStates();
     return true;
   } catch (e) {
     // Ticket 51: the save was refused, so the config still holds the old
@@ -698,6 +711,265 @@ enginesDefault.addEventListener("change", expandSelectedEngineCard);
 // The select's pre-load markup value (Google) seeds the initial expansion;
 // loadEngines re-syncs it to the saved value before the tab is used.
 expandSelectedEngineCard();
+
+// Model Packs (deferred-model-packs ticket 04) -------------------------------
+// The OCR tier options' live state and the download controls. The shell
+// owns the downloads (ADR-0008: the lifecycle is core-owned — closing this
+// window cancels nothing), so this page is an observer: one get_pack_states
+// query is the truth it re-renders (the re-attach on every Engines-tab
+// activation), each pack-event patch keeps it live while the window exists
+// (hidden included — reopening mid-download shows real progress, never a
+// fake state), and the shell's resync marker (dropped events) forces a
+// re-query so nothing stale survives. The tier options carry the state as
+// a label suffix — the four states the ticket pins: ships with the app
+// (tiny, static) / not downloaded / downloading % / failed + Retry — plus
+// ready and stale, the two quieter disk truths.
+
+const TIER_PACKS = { "pp-ocrv6-small": "small", "pp-ocrv6-medium": "medium" };
+const packPanel = document.getElementById("engines-pack-panel");
+const packRows = document.getElementById("engines-pack-rows");
+const packNote = document.getElementById("engines-pack-note");
+const packDeleteBtn = document.getElementById("engines-pack-delete");
+
+let packStates = null; // the last get_pack_states payload, patched by events
+
+function packStateOf(packId) {
+  return packStates?.packs.find((p) => p.pack === packId) || null;
+}
+
+// The word an option label / row pill carries for one pack state. The
+// percent comes from the source's declared total (the download state's
+// own totalBytes — a source that declares none stays indeterminate).
+function packStateWord(state) {
+  if (state.download.state === "downloading") {
+    const percent = packPercent(state);
+    if (percent === null) return t("settings.engines.pack.state_downloading_unknown");
+    return t("settings.engines.pack.state_downloading", { percent: `${percent}%` });
+  }
+  if (state.download.state === "failed") return t("settings.engines.pack.state_failed");
+  if (state.disk === "missing") return t("settings.engines.pack.state_not_downloaded");
+  if (state.disk === "stale") return t("settings.engines.pack.state_stale");
+  return t("settings.engines.pack.state_ready");
+}
+
+function packPercent(state) {
+  const total = state.download.totalBytes;
+  if (!total) return null;
+  return Math.min(100, Math.floor((state.download.receivedBytes / total) * 100));
+}
+
+function mbText(bytes) {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+}
+
+// The tier options' suffix (small/medium — tiny's label already says it
+// ships with the app). data-i18n owns the base label: a UI-language
+// switch re-applies it through I18n.init, and applyUiLanguage calls this
+// right after, so both languages stay composed correctly.
+function renderOcrOptionStates() {
+  for (const [engineValue, packId] of Object.entries(TIER_PACKS)) {
+    const option = enginesOcr.querySelector(`option[value="${engineValue}"]`);
+    if (!option) continue;
+    const state = packStateOf(packId);
+    const base = t(`settings.engines.ocr.${TIER_PACKS[engineValue]}`);
+    option.textContent = state ? `${base} · ${packStateWord(state)}` : base;
+  }
+}
+
+// One row per pack worth acting on: the packs the current EFFECTIVE
+// selection requires (the shell derives the set — ja+tiny needs Small,
+// ko needs the recognizer set), plus any pack with live download
+// activity, so a tier switch mid-download never strands its Cancel.
+function packRowEl(state) {
+  const li = document.createElement("li");
+  li.className = "pack-row";
+  li.dataset.pack = state.pack;
+
+  const left = document.createElement("span");
+  left.className = "pack-left";
+  const name = document.createElement("span");
+  name.className = "pack-name";
+  name.textContent = state.displayName;
+  // Pack names stay Latin in Thai (ticket 02's notices precedent).
+  const size = document.createElement("span");
+  size.className = "pack-tag";
+  size.textContent = `(${mbText(state.totalBytes)})`;
+  left.append(name, size);
+
+  const pill = document.createElement("span");
+  pill.className = "pill";
+  const actions = document.createElement("span");
+  actions.className = "pack-actions";
+
+  let bar = null;
+  if (state.download.state === "downloading") {
+    pill.classList.add("dl");
+    pill.textContent = packStateWord(state);
+    bar = document.createElement("span");
+    bar.className = "pack-progress";
+    const fill = document.createElement("span");
+    fill.className = "pack-progress-fill";
+    const percent = packPercent(state);
+    // No declared total = the amount is unknown: the fill animates
+    // instead of sitting at a fabricated width (no fake state).
+    if (percent === null) bar.classList.add("indeterminate");
+    else fill.style.width = `${percent}%`;
+    bar.append(fill);
+    const cancel = document.createElement("button");
+    cancel.className = "btn small ghost";
+    cancel.textContent = t("settings.engines.pack.cancel_btn");
+    cancel.addEventListener("click", () => runPackCommand("pack_cancel_download", state.pack));
+    actions.append(cancel);
+  } else if (state.download.state === "failed") {
+    pill.classList.add("err");
+    pill.textContent = packStateWord(state);
+    // The downloader's display-ready verdict (every source, or the pins
+    // rejected the bytes) rides the row's tooltip.
+    li.title = state.download.message;
+    const retry = document.createElement("button");
+    retry.className = "btn small ghost";
+    retry.textContent = t("settings.engines.pack.retry_btn");
+    retry.addEventListener("click", () => runPackCommand("pack_start_download", state.pack));
+    actions.append(retry);
+  } else if (state.disk !== "ready") {
+    // No activity, not ready: the disk truth speaks — missing gets a
+    // Download (the re-selection path for a canceled pack or a
+    // pre-download selection), stale gets the same refresh.
+    if (state.disk === "stale") pill.classList.add("warn");
+    pill.textContent = packStateWord(state);
+    const download = document.createElement("button");
+    download.className = "btn small ghost";
+    download.textContent = t("settings.engines.pack.download_btn");
+    download.addEventListener("click", () => runPackCommand("pack_start_download", state.pack));
+    actions.append(download);
+  } else {
+    pill.classList.add("ok");
+    pill.textContent = packStateWord(state);
+  }
+
+  if (bar) li.append(left, bar, pill, actions);
+  else li.append(left, pill, actions);
+  return li;
+}
+
+function renderPackStates() {
+  renderOcrOptionStates();
+  if (!packStates || !packStates.managed) {
+    packPanel.classList.add("hidden");
+    return;
+  }
+  const packs = packStates.packs;
+  const tierSelected = enginesOcr.value.startsWith("pp-ocrv6-");
+  const hasPresence = packs.some(
+    (p) => p.disk !== "missing" || p.download.state !== "not-downloading"
+  );
+  // Nothing to show for a Windows-OCR user with no packs on disk: the
+  // panel stays out of the way until a tier is selected or a pack exists.
+  packPanel.classList.toggle("hidden", !(tierSelected || hasPresence));
+
+  packRows.replaceChildren();
+  if (enginesOcr.value === "pp-ocrv6-tiny") {
+    const bundled = document.createElement("p");
+    bundled.className = "hint";
+    bundled.textContent = t("settings.engines.pack.bundled_note");
+    packRows.append(bundled);
+  }
+  for (const state of packs) {
+    if (
+      state.required ||
+      state.download.state === "downloading" ||
+      state.download.state === "failed"
+    ) {
+      packRows.append(packRowEl(state));
+    }
+  }
+}
+
+async function loadPackStates() {
+  try {
+    packStates = await invoke("get_pack_states");
+    renderPackStates();
+  } catch (e) {
+    // The surface stays quiet on failure — a broken config already has
+    // the error chip; the pack rows must not toast on every tab visit.
+    packPanel.classList.add("hidden");
+  }
+}
+
+async function runPackCommand(command, packId) {
+  try {
+    packStates = await invoke(command, { pack: packId });
+    renderPackStates();
+  } catch (e) {
+    toast(String(e), "error");
+  }
+}
+
+packDeleteBtn.addEventListener("click", async () => {
+  if (!packStates?.managed) return;
+  packNote.textContent = "";
+  const unused = packStates.packs.filter((p) => !p.required && p.disk !== "missing");
+  if (!unused.length) {
+    packNote.textContent = t("settings.engines.pack.delete_nothing");
+    return;
+  }
+  const names = unused.map((p) => p.displayName).join(", ");
+  let confirmed = false;
+  try {
+    confirmed = await askDialog(
+      t("settings.engines.pack.delete_confirm", { packs: names }),
+      { title: t("settings.engines.pack.delete_btn"), kind: "warning" }
+    );
+  } catch (e) {
+    toast(String(e), "error");
+    return;
+  }
+  if (!confirmed) return;
+  try {
+    const removed = await invoke("pack_delete_unused");
+    packNote.textContent = removed.length
+      ? t("settings.engines.pack.delete_done", { count: removed.length })
+      : t("settings.engines.pack.delete_nothing");
+    await loadPackStates();
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
+// The live surface (the emit discipline's window half — the shell emits
+// one broadcast per event only while this window exists): progress
+// patches render in place; terminal events re-query, so what the page
+// shows is always disk truth. A lagged shell drops old events — its
+// separate "pack-resync" ping orders the re-query that re-attaches.
+listen("pack-event", (event) => {
+  const payload = event.payload;
+  if (!packStates?.managed) {
+    loadPackStates();
+    return;
+  }
+  const state = packStateOf(payload.pack);
+  if (!state) {
+    loadPackStates();
+    return;
+  }
+  switch (payload.event) {
+    case "started":
+      state.download = { state: "downloading", receivedBytes: 0, totalBytes: payload.totalBytes ?? null };
+      renderPackStates();
+      break;
+    case "progress":
+      state.download = { state: "downloading", receivedBytes: payload.receivedBytes, totalBytes: payload.totalBytes ?? null };
+      renderPackStates();
+      break;
+    default:
+      // finished / failed / canceled: the state machine moved — re-query
+      // (the snapshot's download state carries the failed message too).
+      loadPackStates();
+  }
+}).catch((e) => toast(String(e), "error"));
+
+listen("pack-resync", () => loadPackStates()).catch((e) => toast(String(e), "error"));
 
 // LM Studio server check (ticket 10): one round-trip answers reachability
 // AND fills the model dropdown from /models. Runs against the URL as typed
@@ -854,6 +1126,9 @@ async function applyUiLanguage(lang, status) {
   renderGlossary();
   renderProfiles(status);
   if (enginesPacksLoaded) loadPacks("engines");
+  // I18n.init's applyStatic reset the tier options to their base labels;
+  // the pack states' suffixes compose again on top (a pure re-render).
+  renderPackStates();
 }
 
 // Ticket 39: the per-tab button's handler, extracted so the sticky footer's

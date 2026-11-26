@@ -13,8 +13,10 @@
 //! `shell::forward_test_seam`): the mock runtime's window machinery must
 //! stay out of the unit-test binary, whose exe carries no app manifest.
 
-use langception::forward_test_seam::{DEBUG_LABEL, RESULTS_LABEL, emit_loop_event};
+use langception::forward_test_seam::{DEBUG_LABEL, RESULTS_LABEL, emit_loop_event, emit_pack_event, SETTINGS_LABEL};
+use langception_core::model_packs::PackId;
 use langception_core::orchestrator::{EventOrigin, LoopEvent, Stage, Via};
+use langception_core::pack_downloader::PackEvent;
 use langception_core::ports::TextBlock;
 use std::sync::{Arc, Mutex};
 use tauri::{Listener, WebviewUrl, WebviewWindowBuilder};
@@ -99,5 +101,46 @@ fn error_events_forward_once_while_the_debug_log_window_is_open() {
         *deliveries.lock().unwrap(),
         1,
         "one broadcast per Error event even with both windows open"
+    );
+}
+
+/// The pack-event forward obeys the same emit discipline as the loop
+/// events (deferred-model-packs ticket 04): ONE broadcast per event, and
+/// only while a consuming window exists — the Engines tab is the only
+/// download surface, so with the Settings window closed nothing emits at
+/// all (the download continues regardless; the tab re-attaches to disk
+/// truth on its next open).
+#[test]
+fn pack_events_forward_once_and_only_while_the_settings_window_exists() {
+    let app = tauri::test::mock_app();
+    let deliveries = Arc::new(Mutex::new(0usize));
+    let counter = Arc::clone(&deliveries);
+    app.listen_any("pack-event", move |_| {
+        *counter.lock().unwrap() += 1;
+    });
+    let finished = PackEvent::Finished {
+        pack: PackId::Small,
+    };
+
+    // No Settings window: nothing emits — the window-existence half.
+    emit_pack_event(app.handle(), &finished);
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        0,
+        "no consuming window, no broadcast"
+    );
+
+    // The Settings window opens (the loop_event harness's one-listener
+    // counter stands in for the page's JS listen): each event is ONE
+    // broadcast, never one per receiver.
+    WebviewWindowBuilder::new(&app, SETTINGS_LABEL, WebviewUrl::default())
+        .build()
+        .unwrap();
+    emit_pack_event(app.handle(), &finished);
+    emit_pack_event(app.handle(), &finished);
+    assert_eq!(
+        *deliveries.lock().unwrap(),
+        2,
+        "one broadcast per pack event while the window exists"
     );
 }

@@ -249,6 +249,37 @@ h3[data-i18n-title]::after,
 }
 .pill.ok { background: rgba(52, 211, 153, 0.16); color: var(--ok); border-color: rgba(52, 211, 153, 0.4); }
 .pill.err { background: rgba(251, 113, 133, 0.16); color: var(--err); border-color: rgba(251, 113, 133, 0.45); }
+/* The Model Pack rows (deferred-model-packs ticket 04) reuse the pack-row
+   geometry: name left, pill right, actions beside the pill, and a thin
+   progress bar filling the middle while a download runs. */
+.pack-row .pack-progress {
+  flex: 1;
+  min-width: 90px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.pack-row .pack-progress .pack-progress-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+/* No declared total = the amount is unknown: a sliding segment instead
+   of a fabricated width (no fake state — deferred-model-packs ticket 04). */
+.pack-row .pack-progress.indeterminate .pack-progress-fill {
+  width: 30%;
+  animation: pack-indeterminate 1.2s ease-in-out infinite;
+}
+@keyframes pack-indeterminate {
+  0% { margin-left: -30%; }
+  100% { margin-left: 100%; }
+}
+.pack-row .pack-actions { display: inline-flex; gap: 6px; flex: none; }
+.pill.dl { background: rgba(245, 158, 11, 0.16); color: var(--accent); border-color: rgba(245, 158, 11, 0.4); }
+.pill.warn { background: rgba(251, 191, 36, 0.14); color: var(--accent-2); border-color: rgba(251, 191, 36, 0.4); }
 
 /* Per-engine configuration cards — same geometry as .settings-section, so
    the Engines tab reads as a stack of equal siblings. */

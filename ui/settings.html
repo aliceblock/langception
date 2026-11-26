@@ -248,6 +248,27 @@
             </select>
           </label>
         </div>
+        <!-- The Model Pack states (deferred-model-packs ticket 04): the
+             tier options' live state (settings.js rewrites the option
+             labels from the pack snapshot + pack-event pushes), the
+             selected tier's pack rows with the download controls, and the
+             delete-unused cleanup. Windows OCR and a build without a
+             models manifest hide the panel entirely. -->
+        <div id="engines-pack-panel" class="hidden">
+          <div id="engines-pack-rows"></div>
+          <div class="row">
+            <button
+              id="engines-pack-delete"
+              class="btn small ghost"
+              data-i18n="settings.engines.pack.delete_btn"
+              data-i18n-title="settings.engines.pack.delete_tooltip"
+              title="Removes only the packs the current selection does not use — bundled files and packs in use stay."
+            >
+              Delete unused packs
+            </button>
+            <span id="engines-pack-note" class="hint"></span>
+          </div>
+        </div>
         <p id="engines-reading-warning" class="hint hidden" data-i18n-html="settings.engines.fused_warning_html">
           Sends every captured frame to the engine as an image — read and
           translate in one call. Slower per pass and billed per image on

@@ -54,7 +54,7 @@ use crate::ports::SourceLanguage;
 use crate::ppocr::{effective_selection, tier_for_engine_value, ModelTier};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -884,6 +884,56 @@ pub fn install_pack_archive(
     settle_backups(backups);
     let _ = fs::remove_dir_all(&staging);
     move_result
+}
+
+/// Removes the pack files the `keep` selection does not use (ADR-0008:
+/// nothing deletes a pack automatically — the Engines tab's explicit
+/// delete-unused button, deferred-model-packs ticket 04, is the only
+/// caller). A file is removed only when an unkept pack pins it AND no
+/// kept pack and the bundled baseline pin the same name — the shared
+/// dictionary repeating across Small and Medium survives while either
+/// pack is kept, and the bundled Tiny files are guarded the same way
+/// even though no pack pins them today. Files already absent are fine
+/// (the pack may never have downloaded); every kept pack's files —
+/// including stale ones, which the next selection-triggered download
+/// refreshes — are in use and stay. Returns the removed names in
+/// manifest order (the tests pin them; the shell's command logs the
+/// count for the page).
+pub fn delete_unused_packs(
+    manifest: &Manifest,
+    active_dir: &Path,
+    keep: &[PackId],
+) -> Result<Vec<String>, PackError> {
+    let mut guarded: BTreeSet<&str> = manifest
+        .bundled()
+        .iter()
+        .map(|file| file.name.as_str())
+        .collect();
+    for id in keep {
+        for file in &manifest.pack(*id).files {
+            guarded.insert(file.name.as_str());
+        }
+    }
+    let mut removed = Vec::new();
+    for id in PackId::ALL {
+        if keep.contains(&id) {
+            continue;
+        }
+        for file in &manifest.pack(id).files {
+            if guarded.contains(file.name.as_str()) {
+                continue;
+            }
+            let path = active_dir.join(&file.name);
+            match fs::remove_file(&path) {
+                Ok(()) => removed.push(file.name.clone()),
+                // Never downloaded (or already reclaimed): the outcome
+                // the caller asked for holds either way.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(PackError::io(&path, e)),
+            }
+        }
+    }
+    Ok(removed)
 }
 
 /// The staging directory for one pack install: a residue-named sibling
@@ -1869,6 +1919,130 @@ mod tests {
             },
             "{status:?}"
         );
+    }
+
+    // ---- delete-unused (the Engines tab's cleanup button, ticket 04) ----
+
+    /// Copies every pinned file — bundled and all three packs — into
+    /// `active`, the everything-downloaded starting point.
+    fn populate_everything(bundle: &Path, active: &Path, manifest: &Manifest) {
+        fs::create_dir_all(active).unwrap();
+        for file in manifest.bundled() {
+            fs::copy(bundle.join(&file.name), active.join(&file.name)).unwrap();
+        }
+        for id in PackId::ALL {
+            for file in &manifest.pack(id).files {
+                fs::copy(bundle.join(&file.name), active.join(&file.name)).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn delete_unused_removes_only_files_no_kept_set_pins() {
+        let scratch = Scratch::new("delete-small-kept");
+        let active = scratch.dir("active");
+        let bundle = scratch.dir("bundle");
+        let manifest = fixture(&bundle);
+        populate_everything(&bundle, &active, &manifest);
+
+        let removed = delete_unused_packs(&manifest, &active, &[PackId::Small]).unwrap();
+        // Medium's and Korean's exclusively-owned files are gone, in
+        // manifest order.
+        assert_eq!(
+            removed,
+            vec![
+                "pp-ocrv6_medium_det.onnx".to_string(),
+                "pp-ocrv6_medium_rec.onnx".to_string(),
+                "korean_pp-ocrv5_mobile_rec.onnx".to_string(),
+                "ppocrv5_korean_dict.txt".to_string(),
+            ]
+        );
+        for name in &removed {
+            assert!(!active.join(name).exists(), "{name} must be gone");
+        }
+        // The shared dictionary repeats across Small and Medium: Small is
+        // kept, so the file it both pin survives even though the removed
+        // Medium pins it too.
+        assert!(active.join("ppocrv6_dict.txt").is_file());
+        // The kept pack's own files and the bundled baseline survive.
+        for file in &manifest.pack(PackId::Small).files {
+            assert!(active.join(&file.name).is_file(), "{} must stay", file.name);
+        }
+        for file in manifest.bundled() {
+            assert!(active.join(&file.name).is_file(), "{} must stay", file.name);
+        }
+        // The kept pack still verifies Ready after the sweep.
+        assert_eq!(pack_status(manifest.pack(PackId::Small), &active), PackStatus::Ready);
+    }
+
+    #[test]
+    fn delete_unused_with_nothing_kept_removes_every_pack_file_but_never_bundled() {
+        let scratch = Scratch::new("delete-none-kept");
+        let active = scratch.dir("active");
+        let bundle = scratch.dir("bundle");
+        let manifest = fixture(&bundle);
+        populate_everything(&bundle, &active, &manifest);
+
+        // Windows OCR selected: no pack is required, every pack file goes
+        // (the shared dictionary is one name across Small and Medium).
+        let removed = delete_unused_packs(&manifest, &active, &[]).unwrap();
+        assert_eq!(removed.len(), 7, "every non-bundled pin: {removed:?}");
+        for id in PackId::ALL {
+            for file in &manifest.pack(id).files {
+                assert!(!active.join(&file.name).exists(), "{} must be gone", file.name);
+            }
+        }
+        // The bundled Tiny baseline is never a pack's to delete.
+        for file in manifest.bundled() {
+            assert!(active.join(&file.name).is_file(), "{} must stay", file.name);
+        }
+    }
+
+    #[test]
+    fn delete_unused_keeps_a_required_packs_stale_files() {
+        let scratch = Scratch::new("delete-kept-stale");
+        let active = scratch.dir("active");
+        let bundle = scratch.dir("bundle");
+        let manifest = fixture(&bundle);
+        populate_everything(&bundle, &active, &manifest);
+        // The kept pack has a stale file — in use, the download refreshes
+        // it; the delete button must not touch it.
+        fs::write(active.join("pp-ocrv6_small_det.onnx"), b"corrupted").unwrap();
+
+        let removed = delete_unused_packs(&manifest, &active, &[PackId::Small]).unwrap();
+        assert!(!removed.contains(&"pp-ocrv6_small_det.onnx".to_string()));
+        assert!(active.join("pp-ocrv6_small_det.onnx").is_file());
+    }
+
+    #[test]
+    fn delete_unused_on_a_never_downloaded_directory_removes_nothing() {
+        let scratch = Scratch::new("delete-empty-dir");
+        let active = scratch.dir("active");
+        let bundle = scratch.dir("bundle");
+        let manifest = fixture(&bundle);
+
+        let removed = delete_unused_packs(&manifest, &active, &[PackId::Small]).unwrap();
+        assert!(removed.is_empty(), "nothing on disk, nothing removed");
+    }
+
+    #[test]
+    fn delete_unused_with_every_pack_kept_removes_nothing() {
+        let scratch = Scratch::new("delete-all-kept");
+        let active = scratch.dir("active");
+        let bundle = scratch.dir("bundle");
+        let manifest = fixture(&bundle);
+        populate_everything(&bundle, &active, &manifest);
+
+        // Korean + medium: every pack the manifest describes is required.
+        let removed =
+            delete_unused_packs(&manifest, &active, &[PackId::Small, PackId::Medium, PackId::Korean])
+                .unwrap();
+        assert!(removed.is_empty(), "kept packs pin every file: {removed:?}");
+        for id in PackId::ALL {
+            for file in &manifest.pack(id).files {
+                assert!(active.join(&file.name).is_file(), "{} must stay", file.name);
+            }
+        }
     }
 
     // ---- assembly: bundled Tiny baseline ----

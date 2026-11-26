@@ -26,6 +26,8 @@ use crate::shell::{
 };
 use langception_core::config::{AppConfig, HotkeySettings};
 use langception_core::glossary::Glossary;
+use langception_core::model_packs::{delete_unused_packs, pack_status, PackId, PackStatus};
+use langception_core::pack_downloader::PackDownloadState;
 use langception_core::ports::{SourceLanguage, TARGET_LANGUAGE};
 use langception_core::profile::{GenderlessOverride, Profile};
 use langception_core::prompt::{BuiltinPreset, PromptTexts};
@@ -126,6 +128,248 @@ pub(crate) fn open_language_pack_settings() {
     let _ = std::process::Command::new("explorer")
         .arg("ms-settings:regionlanguage")
         .spawn();
+}
+
+// ---- Model Packs (deferred-model-packs ticket 04) ----
+// The Engines tab's download surface: per-pack state (disk + download
+// activity + required-by-the-current-selection), the start/cancel/Retry
+// controls, and the delete-unused cleanup. The downloader lives on
+// [`AppState`] (shell.rs built it at setup); these commands are the
+// window's observers-and-actuators over it — closing this window drops
+// nothing (ADR-0008: the lifecycle is core-owned).
+
+/// What the pack commands answer when the resolved bundle carries no
+/// models manifest (the legacy fetched layout, still the dev workspace's
+/// shape): every model is already on disk, so there is nothing to
+/// download, cancel, or clean up — the page hides its pack surface.
+const NO_PACK_MANAGER: &str =
+    "no models manifest — this build's models are already on disk (nothing to download)";
+
+/// One pack's state as the Engines tab renders it: the on-disk half
+/// (hashed against the manifest), the downloader's activity half, and
+/// whether the CURRENT effective selection requires the pack (the delete
+/// button's keep-set is the complement). Pack names stay Latin in Thai,
+/// the same call ticket 02's notices made (`display_name` is brand-like).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackStateDto {
+    pub pack: PackId,
+    pub display_name: &'static str,
+    /// "ready" | "missing" | "stale".
+    pub disk: &'static str,
+    /// The downloader's activity state — the same wire shape its events
+    /// carry (`{"state": "not-downloading"}` / `downloading` / `failed`).
+    pub download: PackDownloadState,
+    pub required: bool,
+    /// The pinned total of the pack's files — what a download fetches,
+    /// for the reclaim-size note.
+    pub total_bytes: u64,
+}
+
+/// The Engines tab's pack snapshot. `managed: false` = no models manifest
+/// (see [`NO_PACK_MANAGER`]); the page hides its pack surface entirely.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackStatesDto {
+    pub managed: bool,
+    pub packs: Vec<PackStateDto>,
+}
+
+fn disk_code(status: &PackStatus) -> &'static str {
+    match status {
+        PackStatus::Ready => "ready",
+        PackStatus::Missing { .. } => "missing",
+        PackStatus::Stale { .. } => "stale",
+    }
+}
+
+fn parse_pack_id(pack: &str) -> Result<PackId, String> {
+    PackId::ALL.iter().copied().find(|id| id.as_str() == pack).ok_or_else(|| {
+        format!(
+            "unknown pack \"{pack}\" — packs: {}",
+            PackId::ALL
+                .iter()
+                .map(|id| id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })
+}
+
+/// The downloader the shell built at setup, cloned out of state.
+pub(crate) fn pack_downloader_of(app: &AppHandle) -> Option<std::sync::Arc<langception_core::pack_downloader::PackDownloader>> {
+    app.state::<AppState>()
+        .pack_downloader
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+/// The saved selection the pack surface renders against: the global OCR
+/// engine value + Source Language (the EFFECTIVE-selection inputs — the
+/// required-set derivation handles the Japanese substitution and the
+/// Korean recognizer themselves).
+pub(crate) fn current_selection(app: &AppHandle) -> Result<(String, SourceLanguage), String> {
+    let state = app.state::<AppState>();
+    let guard = state
+        .config
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    match &*guard {
+        Some(Ok(config)) => Ok((config.ocr.engine.clone(), config.source.language)),
+        Some(Err(message)) => Err(message.clone()),
+        None => Err("config not loaded yet".into()),
+    }
+}
+
+/// The snapshot itself, pure over its inputs so the shell tests can pin
+/// the DTO without an app. The disk half hashes every pinned file of
+/// every pack (`pack_status`), so callers keep it off the main thread.
+fn pack_states_snapshot(
+    downloader: Option<&langception_core::pack_downloader::PackDownloader>,
+    active_dir: &std::path::Path,
+    ocr_engine: &str,
+    language: SourceLanguage,
+) -> PackStatesDto {
+    let Some(downloader) = downloader else {
+        return PackStatesDto {
+            managed: false,
+            packs: Vec::new(),
+        };
+    };
+    let manifest = downloader.manifest();
+    let required =
+        langception_core::model_packs::required_packs_for_engine_value(ocr_engine, language);
+    let packs = PackId::ALL
+        .iter()
+        .map(|id| {
+            let status = pack_status(manifest.pack(*id), active_dir);
+            PackStateDto {
+                pack: *id,
+                display_name: id.display_name(),
+                disk: disk_code(&status),
+                download: downloader.state(*id),
+                required: required.is_some_and(|required| required.contains(id)),
+                total_bytes: manifest.pack(*id).files.iter().map(|f| f.size).sum(),
+            }
+        })
+        .collect();
+    PackStatesDto {
+        managed: true,
+        packs,
+    }
+}
+
+/// A fresh snapshot for a command's response, so the page re-renders from
+/// one round-trip (an actuation and its consequences in one payload).
+async fn fresh_pack_states(app: &AppHandle) -> Result<PackStatesDto, String> {
+    let downloader = pack_downloader_of(app);
+    let (engine_value, language) = current_selection(app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        pack_states_snapshot(
+            downloader.as_deref(),
+            &crate::shell::active_models_dir(),
+            &engine_value,
+            language,
+        )
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))
+}
+
+/// The Engines tab's pack states. The disk half hashes tens of MB, so it
+/// runs on the blocking pool like the OCR language-pack probe above.
+#[tauri::command]
+pub(crate) async fn get_pack_states(app: AppHandle) -> Result<PackStatesDto, String> {
+    fresh_pack_states(&app).await
+}
+
+/// Starts one pack's download — the Engines tab's Retry / Download
+/// controls, and the re-selection path for a pack canceled earlier
+/// (ADR-0008: nothing downloads on its own; the tab is the only surface).
+/// The downloader owns the honesty: a Ready pack is never re-downloaded,
+/// a second start while one runs is declined, and both land in the page's
+/// snapshot rather than as errors.
+#[tauri::command]
+pub(crate) async fn pack_start_download(app: AppHandle, pack: String) -> Result<PackStatesDto, String> {
+    let downloader = pack_downloader_of(&app).ok_or_else(|| NO_PACK_MANAGER.to_string())?;
+    let id = parse_pack_id(&pack)?;
+    let outcome = downloader.start(id);
+    crate::logging::log(
+        "packs",
+        format!(
+            "pack download requested from the Engines tab: {} — {outcome:?}",
+            id.display_name()
+        ),
+    );
+    fresh_pack_states(&app).await
+}
+
+/// Cancels one pack's in-flight download: the transfer aborts, the staged
+/// temp dies, and the pack reports not-downloaded again (zero residue —
+/// the downloader's contract). A cancel landing inside the final atomic
+/// install completes as Finished instead: verified bytes are kept, never
+/// discarded.
+#[tauri::command]
+pub(crate) async fn pack_cancel_download(app: AppHandle, pack: String) -> Result<PackStatesDto, String> {
+    let downloader = pack_downloader_of(&app).ok_or_else(|| NO_PACK_MANAGER.to_string())?;
+    let id = parse_pack_id(&pack)?;
+    let canceled = downloader.cancel(id);
+    crate::logging::log(
+        "packs",
+        if canceled {
+            format!("pack download cancel requested: {}", id.display_name())
+        } else {
+            format!("pack cancel ignored — nothing in flight: {}", id.display_name())
+        },
+    );
+    fresh_pack_states(&app).await
+}
+
+/// The cleanup button (spec story 14): removes exactly the pack files the
+/// CURRENT effective selection does not require — the shared dictionary a
+/// kept pack pins and the bundled Tiny baseline survive
+/// ([`delete_unused_packs`]'s guards), and a kept pack's stale files stay
+/// (its download refreshes them). Returns the removed file names so the
+/// page can say what was reclaimed. Nothing deletes a pack automatically;
+/// this explicit command is the only deletion path in the app.
+#[tauri::command]
+pub(crate) async fn pack_delete_unused(app: AppHandle) -> Result<Vec<String>, String> {
+    let downloader = pack_downloader_of(&app).ok_or_else(|| NO_PACK_MANAGER.to_string())?;
+    let (engine_value, language) = current_selection(&app).map_err(|e| format!("{e} — nothing is deleted"))?;
+    let mut keep = langception_core::model_packs::required_packs_for_engine_value(&engine_value, language)
+        .unwrap_or(&[])
+        .to_vec();
+    // A pack with a download in flight is as in-use as a required one:
+    // its install would re-land whatever this command deleted, and the
+    // page would report a reclaim that never happened. The Cancel button
+    // is how a downloading pack becomes deletable.
+    for id in PackId::ALL {
+        if matches!(
+            downloader.state(id),
+            langception_core::pack_downloader::PackDownloadState::Downloading { .. }
+        ) && !keep.contains(&id)
+        {
+            keep.push(id);
+        }
+    }
+    let manifest = downloader.manifest().clone();
+    let active_dir = crate::shell::active_models_dir();
+    let removed = tauri::async_runtime::spawn_blocking(move || {
+        delete_unused_packs(&manifest, &active_dir, &keep)
+    })
+    .await
+    .map_err(|e| format!("background task failed: {e}"))?
+    .map_err(|e| e.to_string())?;
+    crate::logging::log(
+        "packs",
+        if removed.is_empty() {
+            "delete-unused: nothing to remove".to_string()
+        } else {
+            format!("delete-unused removed {} file(s)", removed.len())
+        },
+    );
+    Ok(removed)
 }
 
 #[derive(Debug, Serialize)]
@@ -461,6 +705,12 @@ pub(crate) async fn set_engines(app: AppHandle, engines: EnginesDto) -> Result<S
         // The engine, its endpoint settings, and the prompts are read when
         // the loop starts: restart so the change visibly applies.
         restart_loop_if_running(app);
+        // The tier the selection just saved may need packs that are not on
+        // disk (deferred-model-packs ticket 04, ADR-0008): the download is
+        // a consequence of the selection, started the moment it saves —
+        // the Engines tab reports progress through the pack events, and
+        // the loop's passes report loading (ticket 02) meanwhile.
+        crate::shell::start_required_pack_downloads(app);
         apply_state(app);
         Ok(active_preset)
     })
@@ -879,6 +1129,14 @@ pub(crate) async fn set_general(
             || before.genderless != restart_genderless;
         if restart_worthy {
             restart_loop_if_running(app);
+        }
+        // A language change moves the EFFECTIVE selection (Korean pulls
+        // the recognizer set, Japanese+tiny pulls Small — deferred-model-
+        // packs ticket 04): the downloads are a consequence of that
+        // selection, so they start here too — gated on the change so an
+        // unrelated cadence edit never re-hashes every pack.
+        if before.source.language != restart_language {
+            crate::shell::start_required_pack_downloads(app);
         }
         apply_state(app);
         Ok(())
@@ -1624,4 +1882,231 @@ pub(crate) async fn delete_profile_zone(
         Ok(())
     })
     .await
+}
+
+// ---- Model Pack tests (deferred-model-packs ticket 04) ----
+
+#[cfg(test)]
+mod pack_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// A valid minimal manifest over the launch-contract file names (fake
+    /// hashes; the snapshot reads pins, never verifies bytes against a
+    /// real bundle).
+    fn test_manifest() -> langception_core::model_packs::Manifest {
+        let hex_a = "aa".repeat(32);
+        let file = |name: &str, size: u64| {
+            format!("{{\"name\": \"{name}\", \"sha256\": \"{hex_a}\", \"size\": {size}}}")
+        };
+        let pack = |name: &str, url: &str, files: &[String]| {
+            format!(
+                "\"{name}\": {{\"version\": \"1\", \"urls\": [\"{url}\"], \"files\": [{}]}}",
+                files.join(", ")
+            )
+        };
+        let json = format!(
+            r#"{{"manifest_version": 1,
+                "bundled": {{"files": [{}]}},
+                "packs": {{{}, {}, {}}}}}"#,
+            file("pp-ocrv6_tiny_det.onnx", 1),
+            pack(
+                "small",
+                "https://example/small.zip",
+                &[
+                    file("pp-ocrv6_small_det.onnx", 10),
+                    file("pp-ocrv6_small_rec.onnx", 20),
+                    file("ppocrv6_dict.txt", 5),
+                ],
+            ),
+            pack(
+                "medium",
+                "https://example/medium.zip",
+                &[
+                    file("pp-ocrv6_medium_det.onnx", 30),
+                    file("pp-ocrv6_medium_rec.onnx", 40),
+                    file("ppocrv6_dict.txt", 5),
+                ],
+            ),
+            pack(
+                "korean",
+                "https://example/korean.zip",
+                &[
+                    file("korean_pp-ocrv5_mobile_rec.onnx", 7),
+                    file("ppocrv5_korean_dict.txt", 4),
+                ],
+            ),
+        );
+        langception_core::model_packs::Manifest::parse(&json).unwrap()
+    }
+
+    /// A downloader over the test manifest with a transport the tests
+    /// never call (no download is started — only `state()` is read).
+    fn test_downloader(
+        active_dir: &std::path::Path,
+    ) -> std::sync::Arc<langception_core::pack_downloader::PackDownloader> {
+        struct NeverTransport;
+        #[async_trait::async_trait]
+        impl langception_core::pack_downloader::PackTransport for NeverTransport {
+            async fn fetch(
+                &self,
+                _url: &str,
+            ) -> Result<
+                langception_core::pack_downloader::PackResponse,
+                langception_core::pack_downloader::PackFetchError,
+            > {
+                unreachable!("no download runs in this test")
+            }
+        }
+        std::sync::Arc::new(langception_core::pack_downloader::PackDownloader::new(
+            std::sync::Arc::new(NeverTransport),
+            std::sync::Arc::new(test_manifest()),
+            active_dir,
+        ))
+    }
+
+    fn snapshot_for(
+        active_dir: &std::path::Path,
+        engine: &str,
+        language: SourceLanguage,
+    ) -> PackStatesDto {
+        let downloader = test_downloader(active_dir);
+        pack_states_snapshot(Some(&downloader), active_dir, engine, language)
+    }
+
+    #[test]
+    fn the_snapshot_reports_disk_required_and_totals_per_pack() {
+        let root = std::env::temp_dir().join(format!("pack-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let active = root.join("active");
+        std::fs::create_dir_all(&active).unwrap();
+
+        // Small fully present but wrong: the pins' sizes so the size
+        // check passes and the hash decides, with one file's bytes wrong
+        // — stale. The other two packs are untouched (missing).
+        std::fs::write(active.join("pp-ocrv6_small_det.onnx"), b"0123456789").unwrap();
+        std::fs::write(active.join("pp-ocrv6_small_rec.onnx"), vec![0u8; 20]).unwrap();
+        std::fs::write(active.join("ppocrv6_dict.txt"), b"12345").unwrap();
+
+        let dto = snapshot_for(&active, "pp-ocrv6-small", SourceLanguage::En);
+        assert!(dto.managed, "a downloader means managed");
+        let by_pack: std::collections::BTreeMap<String, &PackStateDto> = dto
+            .packs
+            .iter()
+            .map(|p| (p.pack.as_str().to_string(), p))
+            .collect();
+        assert_eq!(by_pack.len(), 3, "every manifest pack is reported");
+        let small = by_pack["small"];
+        assert_eq!(
+            small.disk, "stale",
+            "every file present, one hash-mismatching — missing wins only over absence"
+        );
+        let medium = by_pack["medium"];
+        assert_eq!(medium.disk, "missing");
+        assert_eq!(medium.total_bytes, 75, "the pinned total for the reclaim note");
+        assert!(small.required, "the selected tier's pack is required");
+        assert!(!medium.required);
+        assert!(
+            !by_pack["korean"].required,
+            "English never needs the recognizer set"
+        );
+        assert_eq!(
+            small.download,
+            langception_core::pack_downloader::PackDownloadState::NotDownloading,
+            "no download in flight"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_snapshot_follows_the_effective_selection() {
+        let root =
+            std::env::temp_dir().join(format!("pack-snapshot-required-{}", std::process::id()));
+        let active = root.join("active");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&active).unwrap();
+
+        let required = |engine: &str, language: SourceLanguage| {
+            let dto = snapshot_for(&active, engine, language);
+            dto.packs
+                .iter()
+                .filter(|p| p.required)
+                .map(|p| p.pack.as_str().to_string())
+                .collect::<Vec<_>>()
+        };
+        // English + tiny: the bundled baseline covers it.
+        assert!(required("pp-ocrv6-tiny", SourceLanguage::En).is_empty());
+        // Japanese + tiny: the substitution runs Small's files.
+        assert_eq!(required("pp-ocrv6-tiny", SourceLanguage::Ja), vec!["small"]);
+        // Korean + tiny: the recognizer set only (no tier detection file).
+        assert_eq!(required("pp-ocrv6-tiny", SourceLanguage::Ko), vec!["korean"]);
+        // Korean + medium: the tier's set plus the recognizer set.
+        assert_eq!(
+            required("pp-ocrv6-medium", SourceLanguage::Ko),
+            vec!["medium", "korean"]
+        );
+        // Windows OCR: nothing of this engine.
+        assert!(required("windows", SourceLanguage::Ko).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_snapshot_without_a_downloader_is_unmanaged() {
+        let dto = pack_states_snapshot(
+            None,
+            std::path::Path::new("."),
+            "pp-ocrv6-small",
+            SourceLanguage::En,
+        );
+        assert!(!dto.managed);
+        assert!(dto.packs.is_empty());
+    }
+
+    #[test]
+    fn the_snapshot_wire_shape_is_camel_case_with_kebab_download_states() {
+        let dto = pack_states_snapshot(
+            None,
+            std::path::Path::new("."),
+            "pp-ocrv6-small",
+            SourceLanguage::En,
+        );
+        let unmanaged = serde_json::to_value(&dto).unwrap();
+        assert_eq!(unmanaged, json!({ "managed": false, "packs": [] }));
+
+        let root =
+            std::env::temp_dir().join(format!("pack-snapshot-wire-{}", std::process::id()));
+        let active = root.join("active");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&active).unwrap();
+        let dto = snapshot_for(&active, "pp-ocrv6-small", SourceLanguage::En);
+        let managed = serde_json::to_value(&dto).unwrap();
+        let small = &managed["packs"][0];
+        assert_eq!(small["pack"], "small");
+        assert_eq!(small["displayName"], "Small set");
+        assert_eq!(small["disk"], "missing");
+        assert_eq!(small["download"], json!({ "state": "not-downloading" }));
+        assert_eq!(small["required"], json!(true));
+        assert_eq!(small["totalBytes"], json!(35));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn pack_ids_parse_by_manifest_spelling_and_unknown_values_are_named_errors() {
+        for id in PackId::ALL {
+            assert_eq!(parse_pack_id(id.as_str()).unwrap(), id);
+        }
+        let message = parse_pack_id("tiny").unwrap_err();
+        assert!(message.contains("unknown pack \"tiny\""), "{message}");
+        assert!(message.contains("small, medium, korean"), "{message}");
+    }
+
+    #[test]
+    fn disk_codes_map_the_three_statuses() {
+        assert_eq!(disk_code(&PackStatus::Ready), "ready");
+        assert_eq!(
+            disk_code(&PackStatus::Missing { files: vec![] }),
+            "missing"
+        );
+        assert_eq!(disk_code(&PackStatus::Stale { files: vec![] }), "stale");
+    }
 }
