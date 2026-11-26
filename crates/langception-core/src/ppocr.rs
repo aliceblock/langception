@@ -139,7 +139,10 @@ fn launch_command(
 /// thresholds). Everything else is honored as selected: English and
 /// Chinese honor tiny, and Korean's v5 recognizer is tier-independent
 /// inside the sidecar — by definition, not a fallback.
-fn effective_selection(source: SourceLanguage, tier: ModelTier) -> ModelSelection {
+/// Pub(crate) so the Model Pack resolver (the `model_packs` module,
+/// deferred-model-packs ticket 01) derives required packs from the same
+/// rule the launch path runs — one substitution decision, two consumers.
+pub(crate) fn effective_selection(source: SourceLanguage, tier: ModelTier) -> ModelSelection {
     match (source, tier) {
         (SourceLanguage::Ja, ModelTier::Tiny) => (SourceLanguage::Ja, ModelTier::Small),
         _ => (source, tier),

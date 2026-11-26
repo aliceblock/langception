@@ -17,6 +17,12 @@ serde_json = "1"
 toml = "0.9"
 thiserror = "2"
 reqwest = { version = "0.13", features = ["query"] }
+# Model Pack verification (ADR-0008, deferred-model-packs ticket 01):
+# SHA-256 per manifest file, ZIP for the pack archives the assembly
+# unpacks into the active models directory (deflate only — the packaging
+# side produces plain deflate/stored zips).
+sha2 = "0.10"
+zip = { version = "9.8", default-features = false, features = ["deflate"] }
 # "process" + "io-util" + "time" drive the OCR sidecars (ticket 31; the
 # PP-OCRv6 one since the pp-ocrv6-sidecar feature): piped stdin/stdout,
 # line reads and writes, init/request timeouts. "macros" is the

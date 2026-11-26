@@ -13,6 +13,7 @@ pub mod glossary;
 pub mod google;
 pub(crate) mod hash;
 pub mod merge;
+pub mod model_packs;
 pub mod openai;
 pub mod orchestrator;
 pub mod ports;
