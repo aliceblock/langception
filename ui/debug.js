@@ -215,15 +215,49 @@ function isPinned() {
   return window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 32;
 }
 
-// PRODUCT.md Accessibility: any motion has a reduced-motion fallback —
-// theme.css's neutralizer cannot reach JS scrolling, so "smooth" only
-// when the user allows it.
-function scrollToBottom(smooth = false) {
-  const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function scrollToBottom() {
   window.scrollTo({
     top: document.documentElement.scrollHeight,
-    behavior: smooth && !reduced ? "smooth" : "auto",
+    behavior: "auto",
   });
+}
+
+// The Auto-scroll re-engage (the toggle's ON click) must land at the LIVE
+// bottom even while passes are streaming. A single scrollTo computes its
+// target once, so a pass landing mid-glide leaves it short of a bottom
+// that has since moved — and the pin check then vetoes every later
+// append, freezing the window above the stream while the toggle still
+// reads on. Settle instead: instant jumps frame by frame until actually
+// pinned, bounded so a hot stream cannot spin it forever, and yielding —
+// a scroll-up that is not ours mid-settle is the user going back to
+// inspect, and their position wins.
+const SETTLE_SCROLL_MS = 1000;
+let settleScrollRaf = null;
+function stopSettleScroll() {
+  if (settleScrollRaf !== null) {
+    cancelAnimationFrame(settleScrollRaf);
+    settleScrollRaf = null;
+  }
+}
+function settleToBottom() {
+  stopSettleScroll();
+  const startedAt = performance.now();
+  // The scroll position we last wrote — a later reading short of it is
+  // the user's own scrolling, not a missed chase.
+  let writtenY = -1;
+  const chase = () => {
+    scrollToBottom();
+    writtenY = document.documentElement.scrollHeight - window.innerHeight;
+    settleScrollRaf = requestAnimationFrame(step);
+  };
+  const step = () => {
+    settleScrollRaf = null;
+    if (isPinned()) return;
+    if (performance.now() - startedAt > SETTLE_SCROLL_MS) return;
+    if (window.scrollY < writtenY - 4) return;
+    chase();
+  };
+  chase();
 }
 
 function trimRows() {
@@ -752,11 +786,23 @@ function entryMatches(entry) {
   );
 }
 
-// A view re-render: view ACTIONS (filter click, typing, reset) land the
-// user where they are — the mock never scrolls on those — while the live
-// path passes follow=true, which honors the same contract as appends
-// (only when auto-scroll is on AND the user is still at the bottom).
+// A view re-render: the live path (follow=true) honors the same contract
+// as appends — follow only when auto-scroll is on AND the user was still
+// at the bottom. A view ACTION (filter click, typing, reset) never
+// scrolls a user reading mid-view — the mock never scrolls on those —
+// but a PINNED user is re-landed at the bottom through any rebuild:
+// where they are when pinned IS the bottom, and leaving the landing to
+// the post-rebuild scroll position strands them the moment a rebuild
+// moves it (the Full-pipeline checkbox did exactly that on both edges:
+// every live event while it is checked re-renders, and the teardown
+// destroyed the anchor card, so the disturbed position read as "user
+// scrolled up" and vetoed the follow for good; unchecking revealed the
+// hidden runs, grew the view, and locked them out the same way).
+// Pinned is therefore captured BEFORE the rebuild — the same
+// before-append idiom appendPinned uses — and the follow scroll also
+// repairs whatever the teardown did to the position.
 function renderStream(follow = false) {
+  const pinned = autoScroll && isPinned();
   const filtered = history.filter(entryMatches);
   renderLegend(filtered.length);
   renderFilterCounts();
@@ -769,7 +815,7 @@ function renderStream(follow = false) {
     rowsEl.append(card);
     if (entry === openHistoryRun) unchangedRun = card;
   }
-  if (follow && autoScroll && isPinned()) scrollToBottom();
+  if (pinned) scrollToBottom();
 }
 
 function appendLive(entry) {
@@ -1296,9 +1342,10 @@ autoscrollBtn.addEventListener("click", () => {
   autoScroll = !autoScroll;
   autoscrollBtn.setAttribute("aria-pressed", String(autoScroll));
   if (autoScroll) {
-    scrollToBottom(true);
+    settleToBottom();
     showToast(t("debug.autoscroll.enabled"), "success");
   } else {
+    stopSettleScroll();
     showToast(t("debug.autoscroll.paused"), "info");
   }
 });

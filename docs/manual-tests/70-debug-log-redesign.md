@@ -44,7 +44,12 @@ behind the new look.
       and the search box; **Reset Filters** unchecks it, and Clear
       resets it like reopening the window; an idle stretch while it is
       on still collapses into ONE run entry — unchecking renders it as
-      one ×N card, not a pile of ×1 cards.
+      one ×N card, not a pile of ×1 cards; with Auto-scroll on, checking
+      it while pinned must not strand the following — every live pass
+      keeps landing at the bottom through the re-render, and unchecking
+      re-lands a pinned user at the newly revealed view's bottom;
+      checking it while reading mid-view stays put (the mock never
+      scrolls those), and scrolling back to the bottom resumes.
 - [ ] **Cards**: the pass's slowest stage pill carries the amber border +
       ◀; blocks turn emerald when > 0; the total badge goes amber on
       passes ≥ 500ms; the colored latency bar proportions roughly match
@@ -62,7 +67,14 @@ behind the new look.
       "unchanged ×N · capture ~Xms" card that bumps its count in place.
 - [ ] **Auto-scroll**: emerald while on — new cards scroll into view;
       toggling off greys it and stops the following; re-enabling snaps to
-      the newest card and toasts.
+      the newest card and toasts. The re-engage snap must land at the
+      LIVE bottom and keep following even with a hot zone: scroll up
+      while passes stream, let cards pile, click Auto-scroll — passes
+      landing during the snap must not strand the window above the
+      stream (it settles at the live bottom and every later pass
+      follows; a scripted `__TAURI__` harness for this lives in
+      `.scratch/autoscroll-diag/`); pulling away mid-snap wins over the
+      snap, and scrolling back to the bottom resumes following.
 - [ ] **Export modal**: Export… opens the mock's modal with a JSON
       preview; the toggle switches to Plain Text; Copy to Clipboard
       flashes a success toast (or the sticky failure toast if blocked);
