@@ -87,7 +87,16 @@ A release is a tag push; CI does the rest
    git commit -am "vX.Y.Z"
    ```
 
-3. Tag and push:
+3. Write the release notes — add a `## vX.Y.Z` section to
+   `CHANGELOG.md`, grouped under Features / Bug Fixes / Docs / Misc as
+   applicable, written for the people who use the app (not a commit
+   log), and fold it into the commit above. The release workflow
+   extracts that section verbatim as the release body and fails fast
+   when the section is missing, so this is part of the cut, not an
+   afterthought; the auto-generated commit list and Full Changelog link
+   are appended under it on the published release.
+
+4. Tag and push:
 
    ```sh
    git tag vX.Y.Z
@@ -97,7 +106,7 @@ A release is a tag push; CI does the rest
    The tag must be `v` + the config version — the release workflow checks
    this first and fails fast on a mismatch.
 
-4. Watch the **Release** workflow run: tests → model packaging →
+5. Watch the **Release** workflow run: tests → model packaging →
    `cargo tauri build` → portable zip assembly → publish. When green,
    the tag's GitHub Release has five artifacts:
 
@@ -112,7 +121,9 @@ A release is a tag push; CI does the rest
      fetch script embeds this tag's version in those URLs; the
      workflow's tag/version check keeps them pointing at this release)
 
-   Release notes are auto-generated from commits since the previous tag.
+   The release body is the tag's `CHANGELOG.md` section (step 3), with
+   the auto-generated commit list and Full Changelog link appended under
+   it.
 
 ## Artifact details
 
